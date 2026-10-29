@@ -5,6 +5,8 @@
 
 ## [0.0.8.9] — 2026-10-29
 
+Релиз собран в GitHub Actions для Windows x64; публикация выполняется только после успешного тестирования и сборки.
+
 ### Добавлено
 - Локализация Windows Setup boot.wim index 2 и WinPE boot.wim index 1 при наличии подходящих ru-RU CAB и WinPE Add-on для целевой архитектуры.
 - Проверка подписи установщика WinPE Add-on, копирование Setup resources из донорского ISO при совпадении build family/архитектуры, создание lang.ini и установка Setup UI ru-RU.
