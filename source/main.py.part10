@@ -1,0 +1,69 @@
+        ttk.Label(header, text=APP_NAME, font=("Segoe UI", 18, "bold")).pack(anchor="w")
+        ttk.Label(header, text="Подготовка русифицированного ISO Windows IoT Enterprise LTSC", font=("Segoe UI", 10)).pack(anchor="w", pady=(2, 8))
+
+        files = ttk.LabelFrame(root, text="1. Образы", padding=10)
+        files.pack(fill="x", pady=4)
+        self.iso_var = tk.StringVar()
+        self.out_var = tk.StringVar()
+        self.work_var = tk.StringVar(value=str(Path.home() / "IoTLTSC_Russianizer_Work"))
+        self._file_row(files, 0, "Входной ISO Windows:", self.iso_var, self.choose_iso)
+        self._file_row(files, 1, "Итоговый ISO:", self.out_var, self.choose_output)
+        self._file_row(files, 2, "Рабочая папка:", self.work_var, self.choose_work)
+        self.drop_label = ttk.Label(files, text="Перетащите сюда файл ISO (если поддерживается оболочкой)", anchor="center", relief="ridge", padding=9)
+        self.drop_label.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(8, 0))
+        files.columnconfigure(1, weight=1)
+
+        packs = ttk.LabelFrame(root, text="2. Языковые компоненты ru-RU", padding=10)
+        packs.pack(fill="x", pady=4)
+        self.pack_var = tk.StringVar(value=str(app_data_dir() / "Packages"))
+        self.fod_var = tk.StringVar()
+        self._file_row(packs, 0, "Кэш языковых пакетов (автозагрузка):", self.pack_var, self.choose_packages, directory=True)
+        self._file_row(packs, 1, "Локальный FOD-репозиторий (необязательно):", self.fod_var, self.choose_fod, directory=True)
+        ttk.Label(packs, text="Программа автоматически найдёт ru-RU для версии и архитектуры ISO через UUP Dump API, скачает файлы непосредственно с CDN Microsoft и проверит размер/SHA-1. Ручной каталог пакетов не требуется.", wraplength=890).grid(row=2, column=0, columnspan=3, sticky="w", pady=(5, 0))
+        packs.columnconfigure(1, weight=1)
+
+        opts = ttk.LabelFrame(root, text="3. Обработка и проверки", padding=10)
+        opts.pack(fill="x", pady=4)
+        self.keep_var = tk.BooleanVar(value=True)
+        self.setup_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(opts, text="Сохранять рабочие файлы для диагностики", variable=self.keep_var).grid(row=0, column=0, sticky="w")
+        ttk.Checkbutton(opts, text="Попытаться русифицировать Setup/WinPE при наличии подходящих пакетов ADK", variable=self.setup_var).grid(row=0, column=1, sticky="w", padx=(15, 0))
+        ttk.Label(opts, text="WinRE пока не редактируется этой версией; проверка виртуальной машиной не выполняется.", foreground="#8a4b08").grid(row=1, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        opts.columnconfigure(1, weight=1)
+
+        actions = ttk.Frame(root)
+        actions.pack(fill="x", pady=(8, 5))
+        self.start_btn = ttk.Button(actions, text="Проверить условия и создать ISO", command=self.start)
+        self.start_btn.pack(side="left")
+        self.cancel_btn = ttk.Button(actions, text="Отменить", command=self.cancel, state="disabled")
+        self.cancel_btn.pack(side="left", padx=8)
+        ttk.Button(actions, text="Проверить UUP Dump", command=self.check_uup).pack(side="left", padx=(12, 0))
+        ttk.Button(actions, text="Документация Microsoft", command=lambda: webbrowser.open(DOCS_LANG)).pack(side="left", padx=8)
+
+        self.status_var = tk.StringVar(value="Готово к настройке. Ничего не будет изменено до нажатия кнопки запуска.")
+        ttk.Label(root, textvariable=self.status_var, wraplength=900).pack(fill="x", pady=(4, 3))
+        self.progress = ttk.Progressbar(root, mode="indeterminate")
+        self.progress.pack(fill="x", pady=(0, 6))
+        logs_frame = ttk.LabelFrame(root, text="Журнал работы", padding=5)
+        logs_frame.pack(fill="both", expand=True)
+        self.log_text = tk.Text(logs_frame, height=14, wrap="word", state="disabled", font=("Consolas", 9))
+        scroll = ttk.Scrollbar(logs_frame, orient="vertical", command=self.log_text.yview)
+        self.log_text.configure(yscrollcommand=scroll.set)
+        self.log_text.pack(side="left", fill="both", expand=True)
+        scroll.pack(side="right", fill="y")
+
+        footer = ttk.Label(root, text="Windows 10/11 x64 и интернет нужны для автоматической загрузки компонентов. При отсутствии oscdimg программа сама загрузит официальный ADK и установит Deployment Tools в свой каталог. Оригинальный ISO не изменяется.", foreground="#555", wraplength=900)
+        footer.pack(fill="x", pady=(8, 0))
+
+    def _file_row(self, parent, row, label, var, command, directory=False):
+        ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", padx=(0, 10), pady=3)
+        ttk.Entry(parent, textvariable=var).grid(row=row, column=1, sticky="ew", pady=3)
+        ttk.Button(parent, text="Выбрать…", command=command).grid(row=row, column=2, padx=(8, 0), pady=3)
+
+    def _try_enable_dnd(self):
+        if DND_FILES is None:
+            self.drop_label.configure(text="Перетаскивание недоступно в этой сборке; выберите ISO через кнопку «Выбрать…».")
+            return
+        try:
+            self.drop_label.drop_target_register(DND_FILES)
+            self.drop_label.dnd_bind("<<Drop>>", self._on_drop)
