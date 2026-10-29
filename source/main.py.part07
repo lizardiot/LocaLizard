@@ -115,7 +115,18 @@
             self.log("Локализация Setup/WinPE отключена пользователем.")
             return False
         # Find ADK WinPE Russian language files. We only add them if present and never mix OS language CAB blindly.
-        kits = Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Windows Kits" / "10" / "Assessment and Deployment Kit" / "Windows Preinstallation Environment" / "amd64" / "WinPE_OCs" / "ru-ru"
+        target_arch = "x64"
+        for target_image in (media / "sources" / "install.wim", media / "sources" / "install.esd"):
+            if target_image.is_file():
+                try:
+                    target_infos = self.image_info(target_image)
+                    if target_infos:
+                        target_arch = self.arch_token(target_infos[0].get("architecture", "x64"))
+                except Exception as exc:
+                    self.log(f"Не удалось определить архитектуру Setup/WinPE: {exc}")
+                break
+        kit_arch = "amd64" if target_arch == "x64" else target_arch
+        kits = Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Windows Kits" / "10" / "Assessment and Deployment Kit" / "Windows Preinstallation Environment" / kit_arch / "WinPE_OCs" / "ru-ru"
         donor_by_name = {p.name.lower(): p for p in self.donor_setup_files}
         expected = []
         for name in ("lp.cab", "WinPE-Setup_ru-ru.cab", "WinPE-Setup-Client_ru-ru.cab"):

@@ -1,0 +1,463 @@
+# LocaLizard 0.0.8.1 reliability layer; CI assembles this before the app entry point.
+import socket
+
+def _ll_version_key(value: str) -> tuple[int, ...]:
+    nums = [int(x) for x in re.findall(r"\d+", str(value or ""))][:8]
+    return tuple(nums + [0] * (8 - len(nums)))
+
+def _ll_arch_token(value: str) -> str:
+    value = str(value or "").strip().lower().replace("-", "").replace("_", "")
+    if value in ("arm64", "aarch64", "armv8", "arm64ec"): return "arm64"
+    if value in ("x86", "i386", "i486", "i586", "i686", "32bit"): return "x86"
+    if value in ("x64", "amd64", "x8664", "64bit"): return "x64"
+    raise RuntimeError(f"Неизвестная архитектура {value!r}; автоматический выбор языкового CAB остановлен.")
+
+def _ll_trusted_url(url: str) -> bool:
+    try:
+        p = urlparse(str(url)); host = (p.hostname or "").lower().rstrip(".")
+        return p.scheme.lower() == "https" and bool(host) and (host == "microsoft.com" or host.endswith(".microsoft.com") or host == "windowsupdate.com" or host.endswith(".windowsupdate.com"))
+    except Exception: return False
+
+def _ll_hash(path: Path, algorithm="sha256") -> str:
+    digest = hashlib.new(algorithm)
+    with Path(path).open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""): digest.update(chunk)
+    return digest.hexdigest().lower()
+
+def _ll_auto_root(path: Path) -> Path | None:
+    parts = Path(path).parts
+    for i, part in enumerate(parts):
+        if part.lower() == "auto" and i + 1 < len(parts): return Path(*parts[:i + 2])
+    return None
+
+def _ll_verified_cache(path: Path) -> bool:
+    root = _ll_auto_root(path)
+    if root is None: return Path(path).is_file()
+    try:
+        data = json.loads((root / "package_manifest.json").read_text(encoding="utf-8"))
+        item = data["packages"][Path(path).relative_to(root).as_posix()]
+        return Path(path).is_file() and int(item["size"]) == Path(path).stat().st_size and _ll_hash(path) == str(item["sha256"]).lower()
+    except (OSError, ValueError, KeyError, TypeError): return False
+
+def _ll_record_cache(path: Path, expected_sha1=None, source_url=None) -> None:
+    root = _ll_auto_root(path)
+    if root is None or not Path(path).is_file(): return
+    manifest = root / "package_manifest.json"
+    try: data = json.loads(manifest.read_text(encoding="utf-8")) if manifest.is_file() else {}
+    except (OSError, ValueError): data = {}
+    data.setdefault("schema_version", 1); data.setdefault("packages", {})
+    data["packages"][Path(path).relative_to(root).as_posix()] = {
+        "file": Path(path).name, "size": Path(path).stat().st_size, "sha1": _ll_hash(path, "sha1"),
+        "sha256": _ll_hash(path), "api_sha1": expected_sha1,
+        "source_host": (urlparse(source_url).hostname or "").lower() if source_url else None,
+        "downloaded_at": datetime.now().isoformat(timespec="seconds")}
+    temp = manifest.with_suffix(".json.tmp"); temp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"); temp.replace(manifest)
+
+def _ll_retryable(exc: Exception) -> bool:
+    if isinstance(exc, urllib.error.HTTPError): return exc.code in (416,429) or 500 <= exc.code <= 599
+    return isinstance(exc, (urllib.error.URLError, TimeoutError, socket.timeout, ConnectionError))
+
+def _ll_api_json(url: str) -> dict:
+    p = urlparse(url)
+    if p.scheme != "https" or (p.hostname or "").lower() != "api.uupdump.net": raise RuntimeError("Отклонён неожиданный URL UUP Dump API.")
+    req = urllib.request.Request(url, headers={"User-Agent": f"LocaLizard/{APP_VERSION}", "Accept":"application/json"})
+    last = None
+    for attempt in range(4):
+        try:
+            with urllib.request.urlopen(req, timeout=40) as response:
+                final = urlparse(response.geturl())
+                if final.scheme != "https" or (final.hostname or "").lower() != "api.uupdump.net": raise RuntimeError("UUP API перенаправил запрос на непроверенный домен.")
+                data = json.loads(response.read().decode("utf-8", "replace"))
+            body = data.get("response", {})
+            if body.get("error"): raise RuntimeError(f"UUP Dump API: {body.get('error')}")
+            return body
+        except Exception as exc:
+            last = exc
+            if attempt == 3 or not _ll_retryable(exc): break
+            time.sleep(min(8, 1.5 * (2 ** attempt)))
+    raise RuntimeError(f"UUP Dump API не ответил после повторных попыток: {last}")
+
+def _ll_download_file(self, url: str, dest: Path, expected_sha1: str | None, expected_size: int | None, expected_sha256: str | None = None) -> None:
+    if not _ll_trusted_url(url): raise RuntimeError(f"Отклонена ссылка с непроверенного домена: {urlparse(url).hostname or '(нет домена)'}")
+    dest.parent.mkdir(parents=True, exist_ok=True); temp = dest.with_suffix(dest.suffix + ".download"); last = None
+    for attempt in range(4):
+        self.check_cancel(); offset = temp.stat().st_size if temp.is_file() else 0
+        headers = {"User-Agent": f"{APP_NAME}/{APP_VERSION}", "Accept-Encoding":"identity"}
+        if offset: headers["Range"] = f"bytes={offset}-"
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=60) as response:
+                final_url = response.geturl()
+                if not _ll_trusted_url(final_url): raise RuntimeError(f"Redirect на непроверенный домен: {urlparse(final_url).hostname or '(нет домена)'}")
+                status = getattr(response, "status", None) or response.getcode()
+                resume = bool(offset and status == 206)
+                if offset and not resume: offset = 0
+                hdr = response.headers.get("Content-Length"); rem = int(hdr) if hdr and hdr.isdigit() else None
+                total = offset + rem if rem is not None else expected_size; written = offset
+                with temp.open("ab" if resume else "wb") as stream:
+                    while True:
+                        self.check_cancel(); block = response.read(1024 * 1024)
+                        if not block: break
+                        stream.write(block); written += len(block)
+                        if total: self.emit("progress", f"Загрузка компонента: {dest.name} — {human_bytes(written)} / {human_bytes(total)}")
+            if not temp.is_file() or temp.stat().st_size == 0: raise ValueError("Загружен пустой файл.")
+            size = temp.stat().st_size
+            if expected_size is not None and size != int(expected_size): raise ValueError(f"Размер {dest.name}: {size}; ожидается {expected_size}")
+            sha1, sha256 = _ll_hash(temp, "sha1"), _ll_hash(temp)
+            if expected_sha1 and sha1 != str(expected_sha1).lower(): raise ValueError(f"SHA-1 не совпал для {dest.name}.")
+            if expected_sha256 and sha256 != str(expected_sha256).lower(): raise ValueError(f"SHA-256 не совпал для {dest.name}.")
+            temp.replace(dest); _ll_record_cache(dest, expected_sha1, final_url); return
+        except Exception as exc:
+            last = exc
+            fatal = isinstance(exc, urllib.error.HTTPError) and exc.code not in (416,429,500,502,503,504)
+            if isinstance(exc, ValueError) or fatal: temp.unlink(missing_ok=True); raise
+            if isinstance(exc, urllib.error.HTTPError) and exc.code == 416: temp.unlink(missing_ok=True)
+            if attempt == 3 or not _ll_retryable(exc): raise RuntimeError(f"Не удалось скачать {dest.name}: {exc}") from exc
+            self.log(f"Временная ошибка загрузки {dest.name}; повтор {attempt + 2}/4: {exc}"); time.sleep(min(8, 1.5 * (2 ** attempt)))
+    raise RuntimeError(f"Не удалось скачать {dest.name}: {last}")
+
+def _ll_packages_for_info(self, info: dict) -> list[Path]:
+    target = f"{self.build_family(info.get('version',''))}_{self.arch_token(info.get('architecture',''))}"
+    items = []
+    for p in self.find_packages(self.cfg.package_root):
+        root = _ll_auto_root(p)
+        if root is not None and (root.name != target or not _ll_verified_cache(p)): continue
+        items.append(p)
+    return sorted({str(p.resolve()).lower():p for p in items}.values(), key=lambda p:(0 if _ll_auto_root(p) is None else 1,str(p).lower()))
+
+def _ll_is_lp(path: Path, architecture: str) -> bool:
+    n = Path(path).name.lower()
+    if Path(path).suffix.lower() != ".cab" or "ru-ru" not in n: return False
+    if not any(t in n for t in ("client-language-pack","client-languagepack","clientlanguagepack","language-pack","languagepack")): return False
+    if any(t in n for t in ("server","winpe","setup","recovery","languagefeatures","local-experience-pack","languageexperiencepack")): return False
+    arch = _ll_arch_token(architecture)
+    if arch == "arm64": return "arm64" in n
+    if arch == "x86": return any(t in n for t in ("_x86_","-x86-","~x86~")) and not any(t in n for t in ("x86_64","x86-64"))
+    return any(t in n for t in ("_x64_","_amd64_","x86_64","amd64","x64"))
+
+def _ll_auto_download(self, info: dict) -> list[Path]:
+    build, arch = self.build_family(info.get("version","")), self.arch_token(info.get("architecture",""))
+    if not build: raise RuntimeError(f"Не удалось определить сборку Windows: {info.get('version')!r}")
+    self.cfg.package_root.mkdir(parents=True, exist_ok=True)
+    target = self.cfg.package_root / "auto" / f"{build}_{arch}"; target.mkdir(parents=True, exist_ok=True)
+    current = self.packages_for_info(info)
+    if self.locate_ru_lp(info,current): return current
+    terms = [str(build)] + (["19041"] if 19042 <= build <= 19045 else [])
+    candidates, seen = [], set()
+    for term in terms:
+        try: body = self.api_json(UUP_API + "/listid.php?" + urllib.parse.urlencode({"search":term,"sortByDate":"1"}))
+        except Exception as exc: self.log(f"Поиск UUP Dump по ветке {term} не удался: {exc}"); continue
+        for item in body.get("builds",[]):
+            uid = str(item.get("uuid","")).strip()
+            if not uid or uid in seen: continue
+            try:
+                if self.arch_token(str(item.get("arch",""))) != arch: continue
+            except RuntimeError: continue
+            title = str(item.get("title","")).lower()
+            if any(x in title for x in ("insider","canary","dev channel","beta channel","flight","preview")): continue
+            raw = str(item.get("build","")); nums = re.findall(r"\d+",raw)
+            if not nums: continue
+            family = int(nums[2]) if raw.startswith("10.0.") and len(nums)>=3 else int(nums[0])
+            if family not in ({build} | ({19041} if 19042 <= build <= 19045 else set())): continue
+            item["_ll_family"], item["_ll_key"] = family, _ll_version_key(raw); candidates.append(item); seen.add(uid)
+    candidates.sort(key=lambda x:(x["_ll_family"]==build,x["_ll_key"]),reverse=True)
+    if not candidates: raise RuntimeError(f"UUP Dump не нашёл стабильную сборку {build}/{arch}.")
+    last = None
+    for rank, candidate in enumerate(candidates[:2],1):
+        self.check_cancel(); uid = str(candidate["uuid"]); title = str(candidate.get("title",uid))
+        folder = target / f"{rank:02d}-{uid}"; folder.mkdir(parents=True,exist_ok=True)
+        try:
+            body = self.api_json(UUP_API + "/get.php?" + urllib.parse.urlencode({"id":uid,"lang":"ru-ru"}))
+            base, optional = [], []
+            for name, meta in body.get("files",{}).items():
+                low = str(name).lower()
+                if not low.endswith(".cab") or "ru-ru" not in low or not isinstance(meta,dict): continue
+                if _ll_is_lp(Path(name.replace("\\","/")).name,arch): base.append((str(name),meta))
+                elif any(t in low for t in ("languagefeatures-basic","languagefeatures-ocr","languagefeatures-speech","languagefeatures-texttospeech","languagefeatures-text-to-speech","languagefeatures-handwriting")): optional.append((str(name),meta))
+            base.sort(key=lambda x:(0 if "client-language-pack" in x[0].lower() else 1,x[0].lower()))
+            if not base: self.log(f"В UUP-записи нет базового Client LP: {title}"); continue
+            name, meta = base[0]; url = str(meta.get("url",""))
+            try:
+                expiry = float(meta.get("expire",0))
+                if expiry > 100000000 and expiry < time.time(): self.log(f"Просроченная ссылка: {Path(name).name}"); continue
+            except (ValueError,TypeError): pass
+            if not _ll_trusted_url(url): self.log(f"Отклонён URL базового CAB записи {title}"); continue
+            path = folder / Path(name.replace("\\","/")).name
+            sha = str(meta.get("sha1","") or ""); size = int(meta["size"]) if str(meta.get("size","")).isdigit() else None
+            valid = _ll_verified_cache(path)
+            if valid and size is not None and path.stat().st_size != size: valid = False
+            if valid and sha and _ll_hash(path,"sha1") != sha.lower(): valid = False
+            if not valid: path.unlink(missing_ok=True); self.download_file(url,path,sha or None,size)
+            if rank == 1:
+                for oname, ometa in optional:
+                    ourl = str(ometa.get("url",""))
+                    if not _ll_trusted_url(ourl): continue
+                    opath = folder / Path(oname.replace("\\","/")).name
+                    osha = str(ometa.get("sha1","") or ""); osize = int(ometa["size"]) if str(ometa.get("size","")).isdigit() else None
+                    ok = _ll_verified_cache(opath)
+                    if ok and osize is not None and opath.stat().st_size != osize: ok = False
+                    if ok and osha and _ll_hash(opath,"sha1") != osha.lower(): ok = False
+                    try:
+                        if not ok: opath.unlink(missing_ok=True); self.download_file(ourl,opath,osha or None,osize)
+                    except Exception as exc: self.log(f"Не удалось скачать optional CAB {opath.name}: {exc}")
+        except Exception as exc: last = exc; self.log(f"Кандидат UUP {title} не подошёл: {exc}")
+    result = self.packages_for_info(info)
+    if not self.locate_ru_lp(info,result): raise RuntimeError(f"Не найден проверенный Client Language Pack ru-RU: {last or 'подходящий CAB отсутствует'}.")
+    return result
+
+def _ll_run_cmd(self, args: list[str], *, check=True, timeout=None, cwd=None, respect_cancel=True) -> subprocess.CompletedProcess:
+    if respect_cancel: self.check_cancel()
+    args = list(args)
+    if args and Path(str(args[0])).name.lower() == "dism.exe":
+        path = self.find_adk_dism()
+        if path: args[0] = path
+    self.log("Выполнение: " + quote_cmd(args))
+    proc = subprocess.Popen(args,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,encoding="utf-8",errors="replace",cwd=cwd,creationflags=getattr(subprocess,"CREATE_NO_WINDOW",0))
+    started = time.monotonic()
+    try:
+        while True:
+            try: output,_ = proc.communicate(timeout=0.5); break
+            except subprocess.TimeoutExpired:
+                if timeout is not None and time.monotonic()-started >= timeout:
+                    proc.terminate()
+                    try: output,_ = proc.communicate(timeout=8)
+                    except subprocess.TimeoutExpired: proc.kill(); output,_ = proc.communicate(timeout=5)
+                    raise TimeoutError(f"Команда превысила таймаут {timeout} секунд: {args[0]}")
+    except Exception:
+        if proc.poll() is None:
+            proc.terminate()
+            try: proc.communicate(timeout=5)
+            except Exception:
+                proc.kill()
+                try: proc.communicate(timeout=5)
+                except Exception: pass
+        raise
+    if output:
+        for line in output.splitlines(): self.log(line.rstrip())
+    result = subprocess.CompletedProcess(args,proc.returncode,output,None)
+    if check and result.returncode: raise RuntimeError(f"Команда завершилась с кодом {result.returncode}: {args[0]}")
+    if respect_cancel: self.check_cancel()
+    return result
+
+def _ll_preflight(self):
+    src,out = self.cfg.source_iso,self.cfg.output_iso
+    if not src.is_file(): raise RuntimeError("Входной ISO не найден; ADK не устанавливался.")
+    if src.resolve()==out.resolve(): raise RuntimeError("Входной и выходной ISO должны различаться.")
+    if out.exists(): raise RuntimeError("Выходной ISO уже существует; выберите другое имя.")
+    if not out.parent.is_dir(): raise RuntimeError("Каталог выходного ISO не существует.")
+    with src.open("rb") as stream: stream.seek(32769); marker = stream.read(5)
+    if marker != b"CD001": raise RuntimeError("Не найден ISO 9660 CD001; ADK не устанавливался. Проверьте входной образ.")
+    estimate = int(src.stat().st_size*3.5 + 8*1024**3)
+    work = self.cfg.work_root
+    while not work.exists() and work != work.parent: work = work.parent
+    if not work.exists(): raise RuntimeError("Не удалось определить диск рабочей папки.")
+    free_work,free_out = shutil.disk_usage(work).free,shutil.disk_usage(out.parent).free
+    self.log(f"Preflight: ISO {human_bytes(src.stat().st_size)}; рабочий диск {human_bytes(free_work)}; результат {human_bytes(free_out)}.")
+    if free_work < estimate: raise RuntimeError(f"Недостаточно места: нужно около {human_bytes(estimate)}, доступно {human_bytes(free_work)}. ADK не устанавливался.")
+    if free_out < int(src.stat().st_size*1.1): raise RuntimeError("На диске результата недостаточно места для итогового ISO.")
+
+def _ll_ensure_oscdimg(self):
+    _ll_preflight(self); found = find_oscdimg()
+    if found: self.oscdimg=found; self.log(f"Найден oscdimg: {found}"); return found
+    if not is_windows(): raise RuntimeError("Установка ADK доступна только в Windows.")
+    folder = app_data_dir()/"download"; folder.mkdir(parents=True,exist_ok=True); setup=folder/"adksetup.exe"
+    if not setup.exists() or setup.stat().st_size < 100000: self.download_file(ADK_SETUP_URL,setup,expected_sha1=None,expected_size=None)
+    q = str(setup).replace("'","''")
+    cmd = "$s=Get-AuthenticodeSignature -LiteralPath '"+q+"'; if ($s.Status -ne 'Valid' -or $s.SignerCertificate.Subject -notmatch 'Microsoft') { exit 81 }; Write-Output 'AUTHENTICODE_VALID'"
+    sig = self.run_cmd(["powershell.exe","-NoProfile","-NonInteractive","-Command",cmd],check=False,respect_cancel=False,timeout=45)
+    if sig.returncode or "AUTHENTICODE_VALID" not in (sig.stdout or ""): raise RuntimeError("Установщик ADK не прошёл проверку подписи Microsoft; запуск запрещён.")
+    root=app_data_dir()/"ADK"; root.mkdir(parents=True,exist_ok=True)
+    self.run_cmd([str(setup),"/quiet","/norestart","/installpath",str(root),"/features","OptionId.DeploymentTools"],check=True,respect_cancel=False,timeout=1800)
+    found=find_oscdimg()
+    if not found:
+        ps=list(root.rglob("oscdimg.exe")); found=str(ps[0]) if ps else None
+    if not found: raise RuntimeError("ADK установлен, но oscdimg.exe не найден.")
+    self.oscdimg=found; return found
+
+def _ll_dism_image(self, media, image_wim, info, package_files, fod_root):
+    idx,arch=info["index"],self.arch_token(info.get("architecture",""))
+    candidates=sorted({str(p.resolve()).lower():p for p in package_files if _ll_is_lp(p,arch)}.values(),key=lambda p:(0 if _ll_auto_root(p) is None else 1,p.parent.name.lower(),p.name.lower()))
+    if not candidates: raise RuntimeError(f"Для индекса {idx} не найден Client Language Pack ru-RU для {arch}.")
+    mount=self.work/f"mount_install_{idx}"; selected=None; last=None
+    for lp in candidates:
+        self.check_cancel(); mount.mkdir(parents=True,exist_ok=True)
+        if mount not in self.mounts: self.mounts.append(mount)
+        try:
+            self.run_cmd(["dism.exe","/Mount-Image",f"/ImageFile:{image_wim}",f"/Index:{idx}",f"/MountDir:{mount}","/CheckIntegrity"])
+            self.log(f"Индекс {idx}: попытка добавить {lp.name}")
+            self.run_cmd(["dism.exe",f"/Image:{mount}","/Add-Package",f"/PackagePath:{lp}","/NoRestart"])
+            selected=lp; break
+        except Exception as exc:
+            last=exc; self.log(f"DISM отклонил {lp.name}; откат и следующий кандидат: {exc}")
+            try: self.run_cmd(["dism.exe","/Unmount-Image",f"/MountDir:{mount}","/Discard"],check=False,respect_cancel=False)
+            except Exception: pass
+            if mount in self.mounts: self.mounts.remove(mount)
+            shutil.rmtree(mount,ignore_errors=True)
+            if self.cancel_event.is_set(): raise RuntimeError("Отмена после завершения текущей операции DISM.") from exc
+    if selected is None: raise RuntimeError(f"DISM отклонил все {len(candidates)} кандидатов для индекса {idx}: {last}")
+    if not hasattr(self,"language_component_report"): self.language_component_report=[]
+    self.language_component_report.append({"index":idx,"image":image_wim.name,"architecture":arch,"language_pack":selected.name,"language_pack_sha256":_ll_hash(selected),"capabilities":[]})
+    self._ll_used_packages=getattr(self,"_ll_used_packages",[])+[str(selected)]
+    try:
+        for cap in ("Language.Basic~~~ru-RU~0.0.1.0","Language.Fonts~~~ru-RU~0.0.1.0","Language.OCR~~~ru-RU~0.0.1.0","Language.Speech~~~ru-RU~0.0.1.0","Language.TextToSpeech~~~ru-RU~0.0.1.0","Language.Handwriting~~~ru-RU~0.0.1.0"):
+            self.check_cancel(); cmd=["dism.exe",f"/Image:{mount}","/Add-Capability",f"/CapabilityName:{cap}"]
+            if fod_root:
+                source=Path(fod_root)
+                if source.is_file(): raise RuntimeError(f"FOD-источник должен быть каталогом, а не файлом: {source}")
+                if not source.is_dir():
+                    self.log(f"FOD-репозиторий недоступен; пропускаю {cap}."); self.language_component_report[-1]["capabilities"].append({"name":cap,"status":"source_missing"}); continue
+                cmd.extend([f"/Source:{source}","/LimitAccess"])
+            cp=self.run_cmd(cmd,check=False)
+            self.language_component_report[-1]["capabilities"].append({"name":cap,"status":"installed" if cp.returncode==0 else "unavailable","dism_returncode":cp.returncode})
+        for setting in ("/Set-AllIntl:ru-RU","/Set-UILang:ru-RU","/Set-UserLocale:ru-RU","/Set-SystemLocale:ru-RU","/Set-InputLocale:0419:00000419"):
+            self.run_cmd(["dism.exe",f"/Image:{mount}",setting])
+        intl=self.run_cmd(["dism.exe",f"/Image:{mount}","/Get-Intl"])
+        if "ru-ru" not in (intl.stdout or "").lower(): raise RuntimeError(f"DISM не подтвердил ru-RU для индекса {idx}.")
+        self.language_component_report[-1]["intl_ru_ru_confirmed"]=True
+        cap_text=self.run_cmd(["dism.exe",f"/Image:{mount}","/Get-Capabilities"],check=False).stdout or ""
+        for item in self.language_component_report[-1]["capabilities"]:
+            match=re.search(re.escape(item["name"])+r"\s*:\s*([^\r\n]+)",cap_text,re.I)
+            if match:
+                item["reported_state"]=match.group(1).strip()
+                if "installed" in match.group(1).lower(): item["status"]="installed"
+        self.run_cmd(["dism.exe","/Unmount-Image",f"/MountDir:{mount}","/Commit","/CheckIntegrity"])
+        if mount in self.mounts: self.mounts.remove(mount)
+    except Exception:
+        try: self.run_cmd(["dism.exe","/Unmount-Image",f"/MountDir:{mount}","/Discard"],check=False,respect_cancel=False)
+        except Exception: pass
+        if mount in self.mounts: self.mounts.remove(mount)
+        raise
+
+_LL_ORIGINAL_WORKER_RUN=Worker.run
+def _ll_write_audit(self):
+    try:
+        if not self.cfg.output_iso.is_file(): return
+        data={"application":APP_NAME,"version":APP_VERSION,"created_at":datetime.now().isoformat(timespec="seconds"),"source_iso":str(self.cfg.source_iso),"requested_fod_source":getattr(self,"_ll_requested_fod_iso",str(self.cfg.fod_root) if self.cfg.fod_root else None),"used_packages":getattr(self,"_ll_used_packages",[]),"image_language_checks":getattr(self,"language_component_report",[]),"checks":{"cache_sha256_manifest":True,"redirect_host_revalidated":True,"partial_resume":True,"capability_audit":True,"vm_boot_test":False,"winre_modified":False,"winpe_index_1_modified":False},"limitations":["Статическая проверка не заменяет запуск в VM.","WinPE index 1 и WinRE не меняются.","OOBE может влиять на preferred UI первого пользователя.","Checkpoint CU/актуальный LCU автоматически не интегрируются."]}
+        target=self.cfg.output_iso.with_suffix(".localization-audit.json"); target.write_text(json.dumps(data,ensure_ascii=False,indent=2),encoding="utf-8"); self.log(f"Дополнительный JSON-аудит сохранён: {target}")
+    except Exception as exc:
+        try: self.log(f"Не удалось сохранить аудит: {exc}")
+        except Exception: pass
+
+def _ll_worker_run(self):
+    requested,mounted=self.cfg.fod_root,False
+    try:
+        if requested and requested.is_file() and requested.suffix.lower()==".iso":
+            if not is_windows() or not is_admin(): return _LL_ORIGINAL_WORKER_RUN(self)
+            q=str(requested).replace("'","''")
+            cmd="$v=Mount-DiskImage -ImagePath '"+q+"' -PassThru | Get-Volume | Where-Object { $_.DriveLetter } | Select-Object -First 1 -ExpandProperty DriveLetter; Write-Output $v"
+            cp=self.run_cmd(["powershell.exe","-NoProfile","-NonInteractive","-Command",cmd],check=True,respect_cancel=False,timeout=120)
+            letters=[x.strip().rstrip(":") for x in (cp.stdout or "").splitlines() if re.fullmatch(r"[A-Za-z]:?",x.strip())]
+            if not letters: raise RuntimeError("FOD ISO смонтирован без буквы тома.")
+            root=Path(letters[-1]+":\\"); nested=root/"LanguagesAndOptionalFeatures"
+            self.cfg.fod_root=nested if nested.is_dir() else root; self._ll_requested_fod_iso=str(requested); mounted=True
+            self.log(f"FOD ISO смонтирован; источник DISM: {self.cfg.fod_root}")
+        return _LL_ORIGINAL_WORKER_RUN(self)
+    except Exception as exc:
+        self.log(f"Не удалось подготовить FOD ISO: {exc}"); self.emit("error",f"Не удалось смонтировать/прочитать FOD ISO: {exc}")
+    finally:
+        if mounted:
+            q=str(requested).replace("'","''")
+            try: self.run_cmd(["powershell.exe","-NoProfile","-NonInteractive","-Command",f"Dismount-DiskImage -ImagePath '{q}'"],check=False,respect_cancel=False,timeout=120)
+            except Exception as exc: self.log(f"Не удалось отмонтировать FOD ISO: {exc}")
+            self.cfg.fod_root=requested
+        _ll_write_audit(self)
+
+Worker.arch_token=staticmethod(_ll_arch_token)
+Worker.api_json=staticmethod(_ll_api_json)
+Worker.download_file=_ll_download_file
+Worker.packages_for_info=_ll_packages_for_info
+Worker.auto_download_ru_assets=_ll_auto_download
+Worker.run_cmd=_ll_run_cmd
+Worker.ensure_oscdimg=_ll_ensure_oscdimg
+Worker.dism_image=_ll_dism_image
+Worker.run=_ll_worker_run
+
+_LL_ORIGINAL_CLASSIFIER=Worker.classify_donor_package
+def _ll_classify_donor_package(path: Path):
+    low=str(path).replace("\\","/").lower()
+    if Path(low).name=="lp.cab" and "/sources/langpacks/ru-ru/" in low: return None
+    return _LL_ORIGINAL_CLASSIFIER(path)
+Worker.classify_donor_package=staticmethod(_ll_classify_donor_package)
+
+def _ll_read_settings(self):
+    try: data=json.loads((app_data_dir()/"settings.json").read_text(encoding="utf-8"))
+    except (OSError,ValueError): return
+    for key,attr in (("source_iso","iso_var"),("donor_iso","donor_iso_var"),("output_iso","out_var"),("work_root","work_var"),("package_root","pack_var"),("fod_source","fod_var")):
+        var=getattr(self,attr,None)
+        if var is not None and isinstance(data.get(key),str) and data[key]: var.set(data[key])
+
+def _ll_save_settings(self):
+    data={}
+    for key,attr in (("source_iso","iso_var"),("donor_iso","donor_iso_var"),("output_iso","out_var"),("work_root","work_var"),("package_root","pack_var"),("fod_source","fod_var")):
+        var=getattr(self,attr,None)
+        if var is not None: data[key]=str(var.get()).strip()
+    try:
+        target=app_data_dir()/"settings.json"; target.parent.mkdir(parents=True,exist_ok=True)
+        temp=target.with_suffix(".json.tmp"); temp.write_text(json.dumps(data,ensure_ascii=False,indent=2),encoding="utf-8"); temp.replace(target)
+    except OSError: pass
+
+def _ll_local_plan(self):
+    lines=[f"LocaLizard {APP_VERSION}: предварительная проверка"]
+    st,ot,wt=self.iso_var.get().strip(),self.out_var.get().strip(),self.work_var.get().strip()
+    pt,ft=self.pack_var.get().strip() or str(app_data_dir()/"Packages"),self.fod_var.get().strip()
+    if st and Path(st).is_file():
+        src=Path(st)
+        with src.open("rb") as stream: stream.seek(32769); marker=stream.read(5)==b"CD001"
+        lines.append(f"Входной ISO: {human_bytes(src.stat().st_size)}; CD001={'да' if marker else 'нет'}")
+    else: lines.append("ОШИБКА: входной ISO не выбран или не существует.")
+    if ot:
+        out=Path(ot); lines.append(f"Выходной ISO: {'уже существует — перезапись запрещена' if out.exists() else 'новый файл'}; папка есть: {out.parent.is_dir()}")
+        if out.parent.is_dir(): lines.append(f"Свободно на диске результата: {human_bytes(shutil.disk_usage(out.parent).free)}")
+    if wt:
+        work=Path(wt)
+        while not work.exists() and work!=work.parent: work=work.parent
+        if work.exists(): lines.append(f"Свободно на рабочем диске: {human_bytes(shutil.disk_usage(work).free)}")
+    root=Path(pt); pkgs=[]
+    if root.exists():
+        for pattern in ("*.cab","*.msu","*.appx","*.msix","*.appxbundle","*.msixbundle"): pkgs.extend(root.rglob(pattern))
+    lines.append(f"Файлов пакетов: {len(pkgs)}; валидных managed-cache: {sum(1 for p in pkgs if _ll_auto_root(p) is None or _ll_verified_cache(p))}")
+    if ft:
+        fod=Path(ft); lines.append("FOD-источник: "+("каталог" if fod.is_dir() else "ISO" if fod.is_file() and fod.suffix.lower()==".iso" else "НЕВЕРНЫЙ ПУТЬ"))
+    else: lines.append("FOD не указан: базовая локаль возможна, дополнительные возможности могут остаться недоступны.")
+    lines.extend(["","План: Client LP → проверенная загрузка → DISM Add-Package → Add-Capability для FOD → локали → ISO → статическая проверка.","Ограничения: WinPE index 1 / WinRE не меняются; checkpoint CU/LCU автоматически не интегрируются; VM boot-test не выполняется; OOBE может влиять на язык первого пользователя."])
+    return "\n".join(lines)
+
+def _ll_check_sources(self):
+    _ll_save_settings(self)
+    def background():
+        lines=[_ll_local_plan(self),"","Проверка доступности UUP Dump..."]
+        try:
+            data=Worker.api_json(UUP_API+"/listid.php?"+urllib.parse.urlencode({"search":"26100","sortByDate":"1"}))
+            lines.append(f"UUP Dump отвечает; записей сборок: {len(data.get('builds',[]))}.")
+        except Exception as exc: lines.append(f"UUP Dump недоступен/ограничивает запрос: {exc}. Проверьте кэш или ISO-источник.")
+        self.events.put(("uup","\n".join(lines)))
+    threading.Thread(target=background,daemon=True,name="LocaLizardSourceCheck").start()
+
+def _ll_show_plan(self): messagebox.showinfo("План обработки LocaLizard",_ll_local_plan(self))
+
+_LL_ORIGINAL_BUILD_UI=App._build_ui
+def _ll_build_ui(self):
+    _LL_ORIGINAL_BUILD_UI(self); _ll_read_settings(self)
+    try:
+        root=self.winfo_children()[0]; row=ttk.Frame(root); row.pack(side="bottom",fill="x",pady=(8,0))
+        ttk.Button(row,text="Проверить источники и сеть",command=lambda:_ll_check_sources(self)).pack(side="left",padx=(0,8))
+        ttk.Button(row,text="Показать план",command=lambda:_ll_show_plan(self)).pack(side="left")
+        ttk.Label(row,text="Для окончательной проверки требуется тест в VM.",wraplength=280).pack(side="right",padx=(8,0))
+    except Exception: pass
+App._build_ui=_ll_build_ui
+
+_LL_ORIGINAL_APP_START=App.start
+def _ll_app_start(self):
+    _ll_save_settings(self); text=self.fod_var.get().strip()
+    if text:
+        fod=Path(text)
+        if not fod.is_dir() and not (fod.is_file() and fod.suffix.lower()==".iso"):
+            messagebox.showerror(APP_NAME,"FOD-источник должен быть каталогом Language and Optional Features или существующим ISO."); return
+    return _LL_ORIGINAL_APP_START(self)
+App.start=_ll_app_start
+
+def _ll_choose_fod(self):
+    if messagebox.askyesno("FOD-источник","Выбрать ISO Language and Optional Features?\n\nДа — выбрать ISO.\nНет — выбрать каталог FOD."):
+        choice=filedialog.askopenfilename(title="Выберите Language and Optional Features ISO",filetypes=[("Образы ISO","*.iso"),("Все файлы","*.*")])
+    else: choice=filedialog.askdirectory(title="Выберите каталог Language and Optional Features / FOD")
+    if choice: self.fod_var.set(choice)
+App.choose_fod=_ll_choose_fod

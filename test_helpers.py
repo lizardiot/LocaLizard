@@ -27,6 +27,10 @@ class HelperTests(unittest.TestCase):
         self.assertEqual(main.Worker.arch_token("x64"), "x64")
         self.assertEqual(main.Worker.arch_token("ARM64"), "arm64")
         self.assertEqual(main.Worker.arch_token("x86"), "x86")
+        self.assertEqual(main._ll_version_key("10.0.26100.100"), (10, 0, 26100, 100, 0, 0, 0, 0))
+        self.assertGreater(main._ll_version_key("10.0.26100.100"), main._ll_version_key("10.0.26100.20"))
+        with self.assertRaises(RuntimeError):
+            main.Worker.arch_token("mips")
 
     def test_accept_generic_cross_edition_client_language_pack(self):
         # The edition name is not a filter: the same compatible client base can serve IoT/Enterprise SKUs.
@@ -48,11 +52,35 @@ class HelperTests(unittest.TestCase):
         )
         self.assertEqual(
             main.Worker.classify_donor_package(Path("sources/langpacks/ru-ru/lp.cab")),
-            "setup",
+            None,
         )
         self.assertIsNone(
             main.Worker.classify_donor_package(Path("Microsoft-Windows-Server-Language-Pack_x64_ru-ru.cab"))
         )
+
+    def test_trusted_download_urls(self):
+        self.assertTrue(main._ll_trusted_url("https://download.microsoft.com/test.cab"))
+        self.assertTrue(main._ll_trusted_url("https://catalog.s.download.windowsupdate.com/test.cab"))
+        self.assertFalse(main._ll_trusted_url("https://microsoft.com.evil.example/test.cab"))
+        self.assertFalse(main._ll_trusted_url("http://download.microsoft.com/test.cab"))
+
+    def test_managed_cache_manifest_and_tamper_detection(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "Packages" / "auto" / "26100_x64"
+            item = root / "01-candidate" / "Microsoft-Windows-Client-Language-Pack_x64_ru-ru.cab"
+            item.parent.mkdir(parents=True)
+            item.write_bytes(b"unit-test-package")
+            self.assertFalse(main._ll_verified_cache(item))
+            main._ll_record_cache(item, "test-sha1", "https://download.microsoft.com/test.cab")
+            self.assertTrue(main._ll_verified_cache(item))
+            item.write_bytes(b"tampered")
+            self.assertFalse(main._ll_verified_cache(item))
+
+    def test_strict_client_lp_classifier(self):
+        self.assertTrue(main._ll_is_lp(Path("Microsoft-Windows-Client-Language-Pack_x64_ru-ru.cab"), "x64"))
+        self.assertFalse(main._ll_is_lp(Path("WinPE-Setup_ru-ru.cab"), "x64"))
+        self.assertFalse(main._ll_is_lp(Path("Microsoft-Windows-Server-Language-Pack_x64_ru-ru.cab"), "x64"))
+        self.assertFalse(main._ll_is_lp(Path("Microsoft-Windows-Client-Language-Pack_arm64_ru-ru.cab"), "x64"))
 
     def test_reject_server_and_winpe_language_packs(self):
         with tempfile.TemporaryDirectory() as td:

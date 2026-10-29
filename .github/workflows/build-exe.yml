@@ -1,31 +1,23 @@
 name: Build LocaLizard Windows EXE
-
 on:
   push:
     branches: [main]
+    tags: ["0.0.*", "v*"]
   workflow_dispatch:
-
 permissions:
   contents: write
-
-concurrency:
-  group: localizard-windows-release-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   build:
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
-      - name: Checkout source
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+        name: Checkout source
+      - uses: actions/setup-python@v5
+        name: Set up Python
         with:
           python-version: "3.12"
           architecture: x64
-
       - name: Assemble application source
         shell: pwsh
         run: |
@@ -33,20 +25,19 @@ jobs:
           if (-not $parts -or $parts.Count -lt 2) { throw "Application source parts are missing." }
           $content = ($parts | ForEach-Object { Get-Content -Raw -Encoding UTF8 $_.FullName }) -join ""
           $content = $content.Replace("IoT LTSC Russianizer", "LocaLizard").Replace("IoTLTSC_Russianizer", "LocaLizard").Replace("IoT_LTSC_Russianizer", "LocaLizard")
-          $content = [regex]::Replace($content, 'APP_VERSION = "[^"]+"', 'APP_VERSION = "0.0.2.0"')
+          $content = [regex]::Replace($content, '(?m)^if __name__ == "__main__":\r?\n    main\(\)\r?\n?', "")
+          $content = [regex]::Replace($content, 'APP_VERSION = "[^"]+"', 'APP_VERSION = "0.0.8.1"')
+          $content += [Environment]::NewLine + 'if __name__ == "__main__":' + [Environment]::NewLine + '    main()' + [Environment]::NewLine
           Set-Content -Path "main.py" -Value $content -Encoding UTF8
           python -m py_compile main.py
-
       - name: Install build dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install pyinstaller tkinterdnd2
-
       - name: Run automated tests
         run: |
           python -m py_compile main.py test_helpers.py
           python -m unittest -v test_helpers
-
       - name: Build standalone EXE
         shell: pwsh
         run: |
@@ -56,8 +47,8 @@ jobs:
           if ($f.Length -lt 1000000) { throw "EXE is unexpectedly small ($($f.Length) bytes)." }
           Get-FileHash "dist/LocaLizard.exe" -Algorithm SHA256 | Format-List | Out-File "dist/SHA256.txt"
           Copy-Item "README.md" "dist/README.md"
+          Copy-Item "README_RU.md" "dist/README_RU.md"
           Copy-Item "CHANGELOG.md" "dist/CHANGELOG.md"
-
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
@@ -66,23 +57,28 @@ jobs:
             dist/LocaLizard.exe
             dist/SHA256.txt
             dist/README.md
+            dist/README_RU.md
             dist/CHANGELOG.md
           if-no-files-found: error
           retention-days: 30
-
-      - name: Publish LocaLizard 0.0.2.0 and preserve previous releases
-        if: success() && github.ref == 'refs/heads/main'
+      - name: Publish versioned release
+        if: success() && ((startsWith(github.ref, 'refs/tags/')) || (github.ref == 'refs/heads/main' && github.event_name == 'push' && startsWith(github.event.head_commit.message, 'release:')))
         env:
           GH_TOKEN: ${{ github.token }}
         shell: pwsh
         run: |
-          # A newer commit cancels/invalidates this release run so an older build cannot overwrite the latest release.
-          $head = gh api "repos/$env:GITHUB_REPOSITORY/commits/main" --jq ".sha"
-          if ($head -ne $env:GITHUB_SHA) {
-            Write-Host "Skipping release because main has advanced to $head."
-            exit 0
+          $m = [regex]::Match((Get-Content -Raw -Encoding UTF8 "main.py"), 'APP_VERSION = "([^"]+)"')
+          if (-not $m.Success) { throw "Could not detect APP_VERSION." }
+          $version = $m.Groups[1].Value
+          if ($env:GITHUB_REF -like "refs/tags/*") {
+            $tag = $env:GITHUB_REF_NAME
+            if (($tag -replace '^v', '') -ne $version) { throw "Tag $tag does not match source version $version." }
+          } else {
+            $tag = $version
+            $event = Get-Content -Raw $env:GITHUB_EVENT_PATH | ConvertFrom-Json
+            if (-not $event.head_commit.message.StartsWith("release:") -or $event.head_commit.message -notlike "*$version*") { throw "Release commit must start with release: and include $version." }
           }
-
-          # Keep existing releases and tags; publish this version under its own semver tag.
-          gh release create "0.0.2.0" "dist/LocaLizard.exe" "dist/SHA256.txt" "README.md" "CHANGELOG.md" --title "LocaLizard 0.0.2.0" --notes-file "CHANGELOG.md" --latest
-          if ($LASTEXITCODE -ne 0) { throw "Failed to publish release LocaLizard 0.0.2.0" }
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) { Write-Host "Release $tag already exists; preserving it."; exit 0 }
+          gh release create "$tag" "dist/LocaLizard.exe" "dist/SHA256.txt" "README.md" "README_RU.md" "CHANGELOG.md" --target "$env:GITHUB_SHA" --title "LocaLizard $version" --notes-file "CHANGELOG.md" --latest
+          if ($LASTEXITCODE -ne 0) { throw "Failed to publish release $tag" }

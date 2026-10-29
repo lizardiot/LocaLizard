@@ -87,6 +87,6 @@
         if source.resolve() == output.resolve(): messagebox.showerror(APP_NAME, "Входной и выходной ISO должны быть разными файлами."); return
         if donor and donor.resolve() in (source.resolve(), output.resolve()):
             messagebox.showerror(APP_NAME, "Русский ISO-источник должен отличаться от входного и выходного ISO."); return
-        if fod and not fod.is_dir(): messagebox.showerror(APP_NAME, "Указанный каталог FOD не существует."); return
+        if fod and not fod.is_dir() and not (fod.is_file() and fod.suffix.lower() == ".iso"): messagebox.showerror(APP_NAME, "FOD-источник должен быть каталогом или ISO."); return
         free = shutil.disk_usage(work.parent if not work.exists() else work).free
         required = int(source.stat().st_size * 3.5 + 8 * 1024**3)
