@@ -1,4 +1,4 @@
-# LocaLizard 0.0.9.2
+# LocaLizard 0.0.9.3
 
 **LocaLizard** — графическая утилита для подготовки установочного ISO Windows IoT Enterprise LTSC с русским языком по умолчанию.
 
@@ -6,7 +6,7 @@
 
 - [Последний релиз LocaLizard](https://github.com/lizardiot/LocaLizard/releases/latest)
 - [Все релизы](https://github.com/lizardiot/LocaLizard/releases)
-- [LocaLizard.exe для Windows x64 — версия 0.0.9.2](https://github.com/lizardiot/LocaLizard/releases/download/0.0.9.2/LocaLizard.exe)
+- [LocaLizard.exe для Windows x64 — версия 0.0.9.3](https://github.com/lizardiot/LocaLizard/releases/download/0.0.9.3/LocaLizard.exe)
 
 ## Возможности
 
@@ -33,8 +33,8 @@
 
 ## Запуск
 
-1. Скачайте `LocaLizard.exe` из [релиза 0.0.9.2](https://github.com/lizardiot/LocaLizard/releases/tag/0.0.9.2).
-2. Запустите программу и подтвердите запрос прав администратора Windows.
+1. Скачайте `LocaLizard.exe` из [релиза 0.0.9.3](https://github.com/lizardiot/LocaLizard/releases/tag/0.0.9.3).
+2. Запустите программу. Главное окно работает без повышения прав, поэтому ISO можно перетащить из Проводника Windows. Подтвердите запрос UAC, когда программа начнёт операцию, требующую прав администратора.
 3. Выберите исходный Windows ISO, путь для выходного ISO и рабочую папку.
 4. При необходимости задайте русский ISO-источник, FOD/L&O и каталог обновлений.
 5. Нажмите **«Проверить условия и создать ISO»**. Для Hyper-V теста также требуется установленный Hyper-V и визуальное подтверждение пользователя.
@@ -43,8 +43,11 @@ Python и инструменты разработки устанавливать
 
 ## История версий
 
-### [0.0.9.2](https://github.com/lizardiot/LocaLizard/releases/tag/0.0.9.2) — текущий выпуск
-Исправлено подключение ISO и диагностика отсутствующего Windows Virtual Disk provider.
+### [0.0.9.3](https://github.com/lizardiot/LocaLizard/releases/tag/0.0.9.3) — текущий выпуск
+Исправлено перетаскивание ISO из Проводника Windows: главное окно запускается без прав администратора, а повышение прав запрашивается только при начале требующей их операции. Добавлены проверки передачи параметров в повышенный экземпляр.
+
+### [0.0.9.2](https://github.com/lizardiot/LocaLizard/releases/tag/0.0.9.2) — предыдущий выпуск
+Исправлено подключение ISO и добавлена диагностика отсутствующего Windows Virtual Disk provider.
 
 ### [0.0.9.1](https://github.com/lizardiot/LocaLizard/releases/tag/0.0.9.1) — предыдущий выпуск
 Исправлена установка ADK после ошибки проверки хеша; актуализированы ссылки на установщики Microsoft.
