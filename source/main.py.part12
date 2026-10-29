@@ -1,0 +1,57 @@
+        msg = (f"Входной ISO: {source}\nВыходной ISO: {output}\nСвободное место в рабочем каталоге: {human_bytes(free)}\n" 
+               f"Оценка требуемого места: около {human_bytes(required)} (консервативная оценка, зависит от WIM/ESD).\n\n" 
+               "Языковые пакеты и недостающие инструменты будут загружены автоматически при наличии интернета. Все индексы install.wim будут обработаны. Исходный ISO останется без изменений. Продолжить?")
+        if free < required:
+            messagebox.showerror(APP_NAME, msg + "\n\nНедостаточно места. Выберите другой рабочий диск."); return
+        if not messagebox.askyesno(APP_NAME, msg): return
+        cfg = RunConfig(source, output, pack, fod, work, self.keep_var.get(), self.setup_var.get())
+        self.cancel_event.clear()
+        self.start_btn.configure(state="disabled")
+        self.cancel_btn.configure(state="normal")
+        self.progress.start(10)
+        self.status_var.set("Обработка запущена. Не закрывайте программу и не прерывайте DISM.")
+        self.worker_thread = threading.Thread(target=Worker(self.events, self.cancel_event, cfg).run, daemon=True)
+        self.worker_thread.start()
+
+    def cancel(self):
+        if messagebox.askyesno(APP_NAME, "Попросить обработку остановиться? Незавершённый образ может остаться в рабочей папке."):
+            self.cancel_event.set()
+            self.status_var.set("Запрошена отмена. Останавливается после текущего шага.")
+
+    def _append_log(self, line):
+        self.log_text.configure(state="normal")
+        self.log_text.insert("end", line + "\n")
+        self.log_text.see("end")
+        self.log_text.configure(state="disabled")
+
+    def _poll_events(self):
+        try:
+            while True:
+                kind, payload = self.events.get_nowait()
+                if kind == "log": self._append_log(payload)
+                elif kind == "progress": self.status_var.set(payload)
+                elif kind == "done":
+                    self.progress.stop(); self.start_btn.configure(state="normal"); self.cancel_btn.configure(state="disabled")
+                    self.status_var.set("Готово: " + payload)
+                    messagebox.showinfo(APP_NAME, f"Создание ISO завершено.\n\n{payload}\nОтчёт: {Path(payload).with_suffix('.report.json')}")
+                elif kind == "error":
+                    self.progress.stop(); self.start_btn.configure(state="normal"); self.cancel_btn.configure(state="disabled")
+                    self.status_var.set("Обработка остановлена. Смотрите журнал и рабочую папку.")
+                    messagebox.showerror(APP_NAME, "Обработка остановлена из-за ошибки. Рабочие файлы и журнал сохранены, если они успели создаться.\n\n" + payload)
+                elif kind == "uup":
+                    self.status_var.set("Проверка UUP Dump завершена.")
+                    messagebox.showinfo("UUP Dump", payload)
+        except queue.Empty:
+            pass
+        self.after(150, self._poll_events)
+
+
+def main():
+    if not is_windows():
+        print(f"{APP_NAME} предназначен для Windows 10/11 x64. На этой платформе GUI можно открыть только для просмотра.")
+    app = App()
+    app.mainloop()
+
+
+if __name__ == "__main__":
+    main()
