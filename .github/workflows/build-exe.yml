@@ -32,6 +32,8 @@ jobs:
           $parts = Get-ChildItem -Path "source" -Filter "main.py.part*" | Sort-Object Name
           if (-not $parts -or $parts.Count -lt 2) { throw "Application source parts are missing." }
           $content = ($parts | ForEach-Object { Get-Content -Raw -Encoding UTF8 $_.FullName }) -join ""
+          $content = $content.Replace("IoT LTSC Russianizer", "LocaLizard").Replace("IoTLTSC_Russianizer", "LocaLizard").Replace("IoT_LTSC_Russianizer", "LocaLizard")
+          $content = $content.Replace('APP_VERSION = "0.2.0"', 'APP_VERSION = "0.0.1.8"')
           Set-Content -Path "main.py" -Value $content -Encoding UTF8
           python -m py_compile main.py
 
