@@ -37,7 +37,28 @@ Python и инструменты разработки устанавливать
 
 ## История версий
 
-### 0.0.8.9
-Предыдущий выпуск добавил устойчивые загрузки и манифест кэша, явные цепочки обновлений через `updates.json`, локализацию Setup/WinPE/WinRE при наличии совместимых источников, поддержку SWM и обработку существующего WIM. Автопоиск LCU через Microsoft Update Catalog добавлен только в 0.0.9.
+### [0.0.9.2](https://github.com/lizardiot/LocaLizard/releases/tag/0.0.9.2)
+Исправлено монтирование ISO и добавлена диагностика ошибки Windows Virtual Disk provider.
+
+### [0.0.9.1](https://github.com/lizardiot/LocaLizard/releases/tag/0.0.9.1)
+Исправлена установка ADK при ошибке проверки хеша `0x80091007`; актуализированы ссылки на установщики Microsoft.
+
+### [0.0.9](https://github.com/lizardiot/LocaLizard/releases/tag/0.0.9)
+Добавлен поиск и подготовка накопительных обновлений через Microsoft Update Catalog и интерактивная Hyper-V проверка.
+
+### [0.0.8.9](https://github.com/lizardiot/LocaLizard/releases/tag/0.0.8.9)
+Добавлены манифест кэша, цепочки обновлений, обработка Setup/WinPE/WinRE при наличии совместимых ресурсов, поддержка SWM и обслуживание существующего WIM.
+
+### [0.0.8.1](https://github.com/lizardiot/LocaLizard/releases/tag/0.0.8.1) — предыдущий выпуск
+Улучшены подбор и фильтрация кандидатов UUP по ветке и архитектуре, повторные и возобновляемые загрузки, проверка целостности управляемого кэша, диагностика DISM и предварительная проверка условий обработки ISO.
+
+### [0.0.2](https://github.com/lizardiot/LocaLizard/releases/tag/0.0.2) — исторический выпуск
+Добавлен дополнительный русский ISO-источник для поиска и копирования отдельных CAB языкового пакета, FOD и компонентов Setup/WinPE. Целевой ISO проверяется отдельно, образ из дополнительного ISO не подменяет целевой IoT-образ.
+
+### [0.0.1.9](https://github.com/lizardiot/LocaLizard/releases/tag/0.0.1.9) — исторический выпуск
+Улучшен поиск базового Client Language Pack ru-RU: разрешены распространённые варианты имени CAB без строгого совпадения названия редакции; архитектура и подходящая ветка Windows по-прежнему проверяются.
+
+### [0.0.1.8](https://github.com/lizardiot/LocaLizard/releases/tag/0.0.1.8) — первый выпуск под именем LocaLizard
+Проект переименован в LocaLizard; добавлены Windows GUI, выбор ISO, базовая проверка структуры, журнал и JSON-отчёт, поиск ru-RU пакетов через UUP Dump API и CI-сборка автономного Windows x64 EXE.
 
 [Последние релизы](https://github.com/lizardiot/LocaLizard/releases) · [История изменений репозитория](CHANGELOG.md) · [Документация Microsoft по языковым пакетам](https://learn.microsoft.com/windows-hardware/manufacture/desktop/add-language-packs-to-windows?view=windows-11)
