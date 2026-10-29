@@ -255,23 +255,80 @@ def _ll_preflight(self):
     if free_work < estimate: raise RuntimeError(f"Недостаточно места: нужно около {human_bytes(estimate)}, доступно {human_bytes(free_work)}. ADK не устанавливался.")
     if free_out < int(src.stat().st_size*1.1): raise RuntimeError("На диске результата недостаточно места для итогового ISO.")
 
+def _ll_adk_hash_mismatch(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return "0x80091007" in message or "2148077575" in message
+
+
 def _ll_ensure_oscdimg(self):
-    _ll_preflight(self); found = find_oscdimg()
-    if found: self.oscdimg=found; self.log(f"Найден oscdimg: {found}"); return found
-    if not is_windows(): raise RuntimeError("Установка ADK доступна только в Windows.")
-    folder = app_data_dir()/"download"; folder.mkdir(parents=True,exist_ok=True); setup=folder/"adksetup.exe"
-    if not setup.exists() or setup.stat().st_size < 100000: self.download_file(ADK_SETUP_URL,setup,expected_sha1=None,expected_size=None)
-    q = str(setup).replace("'","''")
-    cmd = "$s=Get-AuthenticodeSignature -LiteralPath '"+q+"'; if ($s.Status -ne 'Valid' -or $s.SignerCertificate.Subject -notmatch 'Microsoft') { exit 81 }; Write-Output 'AUTHENTICODE_VALID'"
-    sig = self.run_cmd(["powershell.exe","-NoProfile","-NonInteractive","-Command",cmd],check=False,respect_cancel=False,timeout=45)
-    if sig.returncode or "AUTHENTICODE_VALID" not in (sig.stdout or ""): raise RuntimeError("Установщик ADK не прошёл проверку подписи Microsoft; запуск запрещён.")
-    root=app_data_dir()/"ADK"; root.mkdir(parents=True,exist_ok=True)
-    self.run_cmd([str(setup),"/quiet","/norestart","/installpath",str(root),"/features","OptionId.DeploymentTools"],check=True,respect_cancel=False,timeout=1800)
-    found=find_oscdimg()
+    _ll_preflight(self)
+    found = find_oscdimg()
+    if found:
+        self.oscdimg = found
+        self.log(f"Найден oscdimg: {found}")
+        return found
+    if not is_windows():
+        raise RuntimeError("Установка ADK доступна только в Windows.")
+
+    folder = app_data_dir() / "download"
+    folder.mkdir(parents=True, exist_ok=True)
+    setup = folder / "adksetup.exe"
+    root = app_data_dir() / "ADK"
+    root.mkdir(parents=True, exist_ok=True)
+    install_args = [
+        str(setup), "/quiet", "/norestart", "/installpath", str(root),
+        "/features", "OptionId.DeploymentTools",
+    ]
+
+    # Always refresh the small bootstrapper: older cached launchers can point at
+    # superseded ADK payloads. The fwlink resolves to Microsoft's current release.
+    for attempt in range(2):
+        if attempt == 1:
+            self.log("Повторная попытка установки ADK: заново загружаю официальный установщик Microsoft.")
+        self.download_file(ADK_SETUP_URL, setup, expected_sha1=None, expected_size=None)
+
+        quoted = str(setup).replace("'", "''")
+        signature_cmd = (
+            "$s=Get-AuthenticodeSignature -LiteralPath '" + quoted + "'; "
+            "if ($s.Status -ne 'Valid' -or $s.SignerCertificate.Subject -notmatch 'Microsoft') { exit 81 }; "
+            "Write-Output 'AUTHENTICODE_VALID'"
+        )
+        signature = self.run_cmd(
+            ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", signature_cmd],
+            check=False, respect_cancel=False, timeout=45,
+        )
+        if signature.returncode or "AUTHENTICODE_VALID" not in (signature.stdout or ""):
+            raise RuntimeError("Установщик ADK не прошёл проверку подписи Microsoft; запуск запрещён.")
+
+        try:
+            self.run_cmd(install_args, check=True, respect_cancel=False, timeout=1800)
+            break
+        except RuntimeError as exc:
+            if not _ll_adk_hash_mismatch(exc):
+                raise
+            if attempt == 0:
+                self.log(
+                    "Установщик ADK сообщил об ошибке проверки хеша 0x80091007. "
+                    "Повторно загружаю установщик и проверяю его подпись перед одной повторной попыткой."
+                )
+                continue
+            raise RuntimeError(
+                "Установка Windows ADK дважды завершилась ошибкой проверки хеша (0x80091007), "
+                "в том числе после повторной загрузки установщика Microsoft. Проверьте стабильность "
+                "соединения, VPN/прокси и антивирусную HTTPS-проверку, затем повторите запуск. "
+                "При необходимости скачайте ADK вручную с https://learn.microsoft.com/windows-hardware/get-started/adk-install."
+            ) from exc
+
+    found = find_oscdimg()
     if not found:
-        ps=list(root.rglob("oscdimg.exe")); found=str(ps[0]) if ps else None
-    if not found: raise RuntimeError("ADK установлен, но oscdimg.exe не найден.")
-    self.oscdimg=found; return found
+        candidates = list(root.rglob("oscdimg.exe"))
+        found = str(candidates[0]) if candidates else None
+    if not found:
+        raise RuntimeError("ADK установлен, но oscdimg.exe не найден.")
+    self.oscdimg = found
+    self.log(f"Средства сборки готовы: {found}")
+    return found
+
 
 def _ll_dism_image(self, media, image_wim, info, package_files, fod_root):
     idx,arch=info["index"],self.arch_token(info.get("architecture",""))

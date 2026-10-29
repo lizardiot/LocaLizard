@@ -190,5 +190,11 @@ class HelperTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             main._ll_catalog_query_for_build(99999, "x64")
 
+    def test_adk_hash_mismatch_recognizes_hex_and_decimal_exit_codes(self):
+        self.assertTrue(main._ll_adk_hash_mismatch(RuntimeError("exit code 2148077575")))
+        self.assertTrue(main._ll_adk_hash_mismatch(RuntimeError("0x80091007")))
+        self.assertFalse(main._ll_adk_hash_mismatch(RuntimeError("exit code 2")))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

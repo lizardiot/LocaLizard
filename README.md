@@ -1,4 +1,4 @@
-# LocaLizard 0.0.9
+# LocaLizard 0.0.9.1
 
 **LocaLizard** — графическая утилита для подготовки установочного ISO Windows IoT Enterprise LTSC с русским языком по умолчанию.
 
@@ -6,7 +6,7 @@
 
 - [Последний релиз LocaLizard](https://github.com/lizardiot/LocaLizard/releases/latest)
 - [Все релизы](https://github.com/lizardiot/LocaLizard/releases)
-- [LocaLizard.exe для Windows x64 — версия 0.0.9](https://github.com/lizardiot/LocaLizard/releases/download/0.0.9/LocaLizard.exe)
+- [LocaLizard.exe для Windows x64 — версия 0.0.9](https://github.com/lizardiot/LocaLizard/releases/download/0.0.9.1/LocaLizard.exe)
 
 ## Возможности
 
@@ -23,7 +23,7 @@
 
 ## Запуск
 
-1. Скачайте `LocaLizard.exe` из [релиза 0.0.9](https://github.com/lizardiot/LocaLizard/releases/tag/0.0.9).
+1. Скачайте `LocaLizard.exe` из [релиза 0.0.9.1](https://github.com/lizardiot/LocaLizard/releases/tag/0.0.9).
 2. Запустите программу и подтвердите запрос прав администратора Windows.
 3. Выберите исходный Windows ISO, путь для выходного ISO и рабочую папку.
 4. При необходимости задайте русский ISO-источник, FOD/L&O и каталог обновлений.
@@ -40,9 +40,16 @@ Python и инструменты разработки устанавливать
 - Hyper-V тест требует Windows, Hyper-V, прав администратора и ручного подтверждения экрана Setup. Он не запускается в GitHub CI.
 - Перед рабочим развёртыванием проверьте созданный ISO на отдельной тестовой машине.
 
+## Исправлено в версии 0.0.9.1
+
+Установка Windows ADK использует актуальный загрузчик Microsoft и повторяет загрузку один раз при ошибке проверки хеша. Очистка ISO больше не пытается отмонтировать образ, который программа не подключала.
+
 ## История версий
 
-### 0.0.9 — текущий выпуск
+### 0.0.9.1 — текущий выпуск
+Исправлена установка ADK после ошибки проверки хеша; актуализированы ссылки на установщики Microsoft.
+
+### 0.0.9 — предыдущий выпуск
 Поиск и подготовка обновлений через Microsoft Update Catalog; релиз содержит только журнал изменений версии 0.0.9. Интерактивная Hyper-V проверка просит подтвердить экран Setup.
 
 ### 0.0.8.9 — предыдущий выпуск
