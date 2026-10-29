@@ -1,0 +1,82 @@
+            # Auto-fetch the base language pack for each build/architecture before modifying any image.
+            packages_by_index: dict[tuple[str, int], list[Path]] = {}
+            missing_packages = []
+            for image_path, info in image_plan:
+                pkgs = self.packages_for_info(info)
+                if not self.locate_ru_lp(info, pkgs):
+                    pkgs = self.auto_download_ru_assets(info)
+                if not self.locate_ru_lp(info, pkgs):
+                    missing_packages.append(f"{Path(image_path).name} index {info['index']} ({info['architecture']})")
+                packages_by_index[(str(image_path), int(info["index"]))] = pkgs
+            if missing_packages:
+                raise RuntimeError("Автозагрузка не обеспечила совместимый CAB языкового пакета ru-RU для индексов: " + "; ".join(missing_packages))
+            for position, (install_wim, info) in enumerate(image_plan, start=1):
+                self.check_cancel()
+                self.emit("progress", f"Обработка образа {position} из {len(image_plan)}: {Path(install_wim).name}, индекс {info['index']}")
+                image_packages = packages_by_index[(str(install_wim), int(info["index"]))]
+                self.dism_image(media, install_wim, info, image_packages, self.cfg.fod_root)
+            infos = [info for _, info in image_plan]
+            expected_indexes = {}
+            for image_path in install_images:
+                expected_indexes[Path(image_path).name] = len([1 for img_path, _ in image_plan if img_path == image_path])
+            all_downloaded_packages = sorted({p.resolve(): p for values in packages_by_index.values() for p in values}.values())
+            setup_done = self.process_setup_wim(media, all_downloaded_packages)
+            struct = self.validate_media_structure(media)
+            self.log("Промежуточная проверка пройдена. Начинаю создание загрузочного ISO.")
+            self.build_iso(media)
+            final_check = self.verify_final_iso(expected_indexes)
+            report = {
+                "application": APP_NAME, "version": APP_VERSION, "completed": datetime.now().isoformat(timespec="seconds"),
+                "source_iso": str(self.cfg.source_iso), "output_iso": str(self.cfg.output_iso),
+                "indexes_processed": infos, "setup_winpe_localization_attempted": self.cfg.process_setup,
+                "setup_winpe_localization_succeeded": setup_done, "structure_check": struct,
+                "final_iso_static_verification": final_check,
+                "fod_source": str(self.cfg.fod_root) if self.cfg.fod_root else None,
+                "limitations": ["Речь, OCR и рукописный ввод не гарантируются: их наличие зависит от версии и FOD-репозитория.",
+                                "WinRE не изменялся в этой версии.",
+                                "Проверки виртуальной машины не запускались.",
+                                "Совместимость пакетов оценивалась по имени/архитектуре и ответу DISM; конкретный пакет должен соответствовать точной версии образа."]
+            }
+            report_path = self.cfg.output_iso.with_suffix(".report.json")
+            report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+            self.log(f"Отчёт сохранён: {report_path}")
+            self.log("ГОТОВО. Исходный ISO не изменён. Перед развёртыванием рекомендуется тестирование на отдельной машине/VM; данная версия VM не запускала.")
+            if not self.cfg.keep_work:
+                try: shutil.rmtree(self.work, ignore_errors=True)
+                except Exception: pass
+            self.emit("done", str(self.cfg.output_iso))
+        except Exception as exc:
+            # Best-effort cleanup after failure/cancellation. Never touch the user-selected source file itself.
+            for mount in list(self.mounts):
+                try:
+                    self.run_cmd(["dism.exe", "/Unmount-Image", f"/MountDir:{mount}", "/Discard"], check=False, respect_cancel=False)
+                except Exception: pass
+            try:
+                if is_windows() and self.cfg.source_iso.exists():
+                    source_q = str(self.cfg.source_iso).replace("'", "''")
+                    self.powershell(f"Dismount-DiskImage -ImagePath '{source_q}'", check=False, respect_cancel=False)
+            except Exception: pass
+            self.log("КРИТИЧЕСКАЯ ОШИБКА: " + str(exc))
+            self.log(traceback.format_exc())
+            self.emit("error", str(exc))
+
+
+class App(BaseTk):
+    def __init__(self):
+        super().__init__()
+        self.title(f"{APP_NAME} — v{APP_VERSION}")
+        self.geometry("980x760")
+        self.minsize(850, 650)
+        self.events: queue.Queue = queue.Queue()
+        self.cancel_event = threading.Event()
+        self.worker_thread: threading.Thread | None = None
+        self._build_ui()
+        self._try_enable_dnd()
+        self.after(150, self._poll_events)
+        self.after(300, self._check_elevation)
+
+    def _build_ui(self):
+        root = ttk.Frame(self, padding=14)
+        root.pack(fill="both", expand=True)
+        header = ttk.Frame(root)
+        header.pack(fill="x")
