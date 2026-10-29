@@ -1,0 +1,76 @@
+                    if branch not in allowed: continue
+                    build["_branch"] = branch
+                    candidates.append(build); seen.add(uid)
+            except Exception as exc:
+                self.log(f"Поиск сборок UUP Dump по запросу {term} не удался: {exc}")
+        candidates.sort(key=lambda x: (x.get("_branch") == target_build, str(x.get("build", ""))), reverse=True)
+        if not candidates:
+            raise RuntimeError(f"UUP Dump не вернул подходящих записей для сборки {target_build}/{arch}. Не буду использовать языковой пакет от другой ветки Windows.")
+        seen_names: set[str] = set()
+        last_error = None
+        for candidate in candidates[:20]:
+            self.check_cancel()
+            uid = str(candidate.get("uuid"))
+            title = str(candidate.get("title", uid))
+            url = UUP_API + "/get.php?" + urllib.parse.urlencode({"id": uid, "lang": "ru-ru"})
+            try:
+                package_info = self.api_json(url)
+                files = package_info.get("files", {})
+                lp_candidates = []
+                optional = []
+                for name, meta in files.items():
+                    low = name.lower()
+                    if not low.endswith(".cab") or "ru-ru" not in low: continue
+                    if "client-language-pack" in low and not any(bad in low for bad in ("server", "winpe", "setup", "recovery")):
+                        if arch == "x64" and ("_x64_" in low or "_amd64_" in low): lp_candidates.append((name, meta))
+                        elif arch == "arm64" and "arm64" in low: lp_candidates.append((name, meta))
+                        elif arch == "x86" and "_x86_" in low: lp_candidates.append((name, meta))
+                    elif any(token in low for token in ("languagefeatures-basic", "languagefeatures-ocr", "languagefeatures-speech", "languagefeatures-texttospeech", "languagefeatures-handwriting")):
+                        optional.append((name, meta))
+                if not lp_candidates: continue
+                self.log(f"Найдена запись UUP Dump: {title}; файлов набора: {len(files)}.")
+                downloaded: list[Path] = []
+                # Base language pack is mandatory. If SHA-1 or direct URL verification fails, try another candidate.
+                base_name, base_meta = lp_candidates[0]
+                base_url = base_meta.get("url")
+                if not base_url: continue
+                base_path = target_dir / Path(base_name).name
+                if not base_path.is_file():
+                    self.download_file(str(base_url), base_path, base_meta.get("sha1"), int(base_meta["size"]) if str(base_meta.get("size", "")).isdigit() else None)
+                else:
+                    actual = hashlib.sha1(base_path.read_bytes()).hexdigest().lower()
+                    if base_meta.get("sha1") and actual != str(base_meta["sha1"]).lower():
+                        base_path.unlink(missing_ok=True)
+                        self.download_file(str(base_url), base_path, base_meta.get("sha1"), int(base_meta["size"]) if str(base_meta.get("size", "")).isdigit() else None)
+                downloaded.append(base_path)
+                # Optional capabilities are fetched only when UUP exposes matching CABs for this same build family.
+                for name, meta in optional:
+                    if name.lower() in seen_names or not meta.get("url"): continue
+                    optional_path = target_dir / Path(name).name
+                    try:
+                        if not optional_path.is_file():
+                            self.download_file(str(meta["url"]), optional_path, meta.get("sha1"), int(meta["size"]) if str(meta.get("size", "")).isdigit() else None)
+                        downloaded.append(optional_path); seen_names.add(name.lower())
+                    except Exception as opt_exc:
+                        self.log(f"Не удалось скачать необязательный компонент {name}: {opt_exc}")
+                self.log(f"Базовый языковой пакет сохранён: {base_path}")
+                return self.packages_for_info(image_info)
+            except Exception as exc:
+                last_error = exc
+                self.log(f"Не подошла запись UUP Dump {title}: {exc}")
+        raise RuntimeError(f"Не удалось автоматически загрузить совместимый Client Language Pack ru-RU через UUP Dump. Последняя ошибка: {last_error or 'подходящий CAB отсутствует в наборах UUP'}")
+
+    def powershell(self, command: str, check=True, respect_cancel=True) -> subprocess.CompletedProcess:
+        return self.run_cmd(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command], check=check, respect_cancel=respect_cancel)
+
+    def find_packages(self, root: Path) -> list[Path]:
+        if not root.exists(): return []
+        out = []
+        for ext in ("*.cab", "*.msu", "*.appx", "*.msix", "*.appxbundle", "*.msixbundle"):
+            out.extend(root.rglob(ext))
+        return out
+
+    def inspect_iso_mount_and_copy(self) -> Path:
+        self.check_cancel()
+        self.work = self.cfg.work_root / f"IoTLTSC_Russianizer_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        dist = self.work / "media"
