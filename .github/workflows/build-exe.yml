@@ -26,7 +26,7 @@ jobs:
           $content = ($parts | ForEach-Object { Get-Content -Raw -Encoding UTF8 $_.FullName }) -join ""
           $content = $content.Replace("IoT LTSC Russianizer", "LocaLizard").Replace("IoTLTSC_Russianizer", "LocaLizard").Replace("IoT_LTSC_Russianizer", "LocaLizard")
           $content = [regex]::Replace($content, '(?m)^if __name__ == "__main__":\r?\n    main\(\)\r?\n?', "")
-          $content = [regex]::Replace($content, 'APP_VERSION = "[^"]+"', 'APP_VERSION = "0.0.8.1"')
+          # APP_VERSION is read from source/main.py.part01; do not overwrite it here.
           $content += [Environment]::NewLine + 'if __name__ == "__main__":' + [Environment]::NewLine + '    main()' + [Environment]::NewLine
           Set-Content -Path "main.py" -Value $content -Encoding UTF8
           python -m py_compile main.py
