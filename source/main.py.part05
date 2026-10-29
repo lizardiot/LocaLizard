@@ -100,3 +100,35 @@
                 exact.append(p)
         # Stable order makes selection deterministic if the catalog contains multiple matching CABs.
         return sorted(exact, key=lambda p: (0 if "client-language-pack" in p.name.lower() else 1, p.name.lower()))[0] if exact else None
+
+
+    @staticmethod
+    def classify_donor_package(path: Path) -> str | None:
+        """Classify recognizable Russian CABs in a donor ISO.
+
+        Generic sources/langpacks/ru-ru/lp.cab belongs to Setup, not necessarily to
+        the installed client OS, so it must not be treated as the base client LP.
+        """
+        if path.suffix.lower() != ".cab":
+            return None
+        name = path.name.lower()
+        normalized = str(path).replace("\\", "/").lower()
+        if name == "lp.cab" and "/langpacks/ru-ru/" in normalized:
+            return "setup"
+        if "ru-ru" in name and any(token in name for token in ("winpe-setup", "winpe-rejuv")):
+            return "setup"
+        fod_tokens = (
+            "languagefeatures-basic", "languagefeatures-ocr", "languagefeatures-speech",
+            "languagefeatures-texttospeech", "languagefeatures-text-to-speech",
+            "languagefeatures-handwriting",
+        )
+        if "ru-ru" in name and any(token in name for token in fod_tokens):
+            return "fod"
+        lp_markers = (
+            "client-language-pack", "client-languagepack", "clientlanguagepack",
+            "language-pack", "languagepack",
+        )
+        forbidden = ("server", "winpe", "setup", "recovery", "languagefeatures", "local-experience-pack")
+        if "ru-ru" in name and any(token in name for token in lp_markers) and not any(token in name for token in forbidden):
+            return "client_lp"
+        return None

@@ -1,10 +1,10 @@
-        msg = (f"Входной ISO: {source}\nВыходной ISO: {output}\nСвободное место в рабочем каталоге: {human_bytes(free)}\n" 
+        msg = (f"Входной ISO: {source}\nРусский ISO-источник: {donor or '(не выбран)'}\nВыходной ISO: {output}\nСвободное место в рабочем каталоге: {human_bytes(free)}\n" 
                f"Оценка требуемого места: около {human_bytes(required)} (консервативная оценка, зависит от WIM/ESD).\n\n" 
                "Языковые пакеты и недостающие инструменты будут загружены автоматически при наличии интернета. Все индексы install.wim будут обработаны. Исходный ISO останется без изменений. Продолжить?")
         if free < required:
             messagebox.showerror(APP_NAME, msg + "\n\nНедостаточно места. Выберите другой рабочий диск."); return
         if not messagebox.askyesno(APP_NAME, msg): return
-        cfg = RunConfig(source, output, pack, fod, work, self.keep_var.get(), self.setup_var.get())
+        cfg = RunConfig(source, donor, output, pack, fod, work, self.keep_var.get(), self.setup_var.get())
         self.cancel_event.clear()
         self.start_btn.configure(state="disabled")
         self.cancel_btn.configure(state="normal")

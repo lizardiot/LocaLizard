@@ -33,7 +33,7 @@ jobs:
           if (-not $parts -or $parts.Count -lt 2) { throw "Application source parts are missing." }
           $content = ($parts | ForEach-Object { Get-Content -Raw -Encoding UTF8 $_.FullName }) -join ""
           $content = $content.Replace("IoT LTSC Russianizer", "LocaLizard").Replace("IoTLTSC_Russianizer", "LocaLizard").Replace("IoT_LTSC_Russianizer", "LocaLizard")
-          $content = [regex]::Replace($content, 'APP_VERSION = "[^"]+"', 'APP_VERSION = "0.0.1.9"')
+          $content = [regex]::Replace($content, 'APP_VERSION = "[^"]+"', 'APP_VERSION = "0.0.2.0"')
           Set-Content -Path "main.py" -Value $content -Encoding UTF8
           python -m py_compile main.py
 
@@ -70,7 +70,7 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Publish LocaLizard 0.0.1.9 and preserve previous releases
+      - name: Publish LocaLizard 0.0.2.0 and preserve previous releases
         if: success() && github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -84,5 +84,5 @@ jobs:
           }
 
           # Keep existing releases and tags; publish this version under its own semver tag.
-          gh release create "0.0.1.9" "dist/LocaLizard.exe" "dist/SHA256.txt" "README.md" "CHANGELOG.md" --title "LocaLizard 0.0.1.9" --notes-file "CHANGELOG.md" --latest
-          if ($LASTEXITCODE -ne 0) { throw "Failed to publish release LocaLizard 0.0.1.9" }
+          gh release create "0.0.2.0" "dist/LocaLizard.exe" "dist/SHA256.txt" "README.md" "CHANGELOG.md" --title "LocaLizard 0.0.2.0" --notes-file "CHANGELOG.md" --latest
+          if ($LASTEXITCODE -ne 0) { throw "Failed to publish release LocaLizard 0.0.2.0" }

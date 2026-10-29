@@ -15,11 +15,17 @@
 
         packs = ttk.LabelFrame(root, text="2. Языковые компоненты ru-RU", padding=10)
         packs.pack(fill="x", pady=4)
+        self.donor_iso_var = tk.StringVar()
         self.pack_var = tk.StringVar(value=str(app_data_dir() / "Packages"))
         self.fod_var = tk.StringVar()
-        self._file_row(packs, 0, "Кэш языковых пакетов (автозагрузка):", self.pack_var, self.choose_packages, directory=True)
-        self._file_row(packs, 1, "Локальный FOD-репозиторий (необязательно):", self.fod_var, self.choose_fod, directory=True)
-        ttk.Label(packs, text="Программа автоматически найдёт ru-RU для версии и архитектуры ISO через UUP Dump API, скачает файлы непосредственно с CDN Microsoft и проверит размер/SHA-1. Ручной каталог пакетов не требуется.", wraplength=890).grid(row=2, column=0, columnspan=3, sticky="w", pady=(5, 0))
+        self._file_row(packs, 0, "Русский ISO-источник (необязательно):", self.donor_iso_var, self.choose_donor_iso)
+        self._file_row(packs, 1, "Кэш языковых пакетов (автозагрузка):", self.pack_var, self.choose_packages, directory=True)
+        self._file_row(packs, 2, "Локальный FOD-репозиторий (необязательно):", self.fod_var, self.choose_fod, directory=True)
+        ttk.Label(
+            packs,
+            text="Если UUP Dump недоступен, программа проверит дополнительный русский ISO и попробует использовать совместимые отдельные CAB. Русский язык, встроенный только в install.wim/install.esd, не гарантирует наличия извлекаемого базового CAB.",
+            wraplength=920
+        ).grid(row=3, column=0, columnspan=3, sticky="w", pady=(5, 0))
         packs.columnconfigure(1, weight=1)
 
         opts = ttk.LabelFrame(root, text="3. Обработка и проверки", padding=10)
@@ -52,7 +58,7 @@
         self.log_text.pack(side="left", fill="both", expand=True)
         scroll.pack(side="right", fill="y")
 
-        footer = ttk.Label(root, text="Windows 10/11 x64 и интернет нужны для автоматической загрузки компонентов. При отсутствии oscdimg программа сама загрузит официальный ADK и установит Deployment Tools в свой каталог. Оригинальный ISO не изменяется.", foreground="#555", wraplength=900)
+        footer = ttk.Label(root, text="Windows 10/11 x64 и интернет нужны для автоматической загрузки компонентов, если пакеты не найдены в русском ISO или локальном кэше. При отсутствии oscdimg программа сама загрузит официальный ADK и установит Deployment Tools в свой каталог. Оригинальный ISO не изменяется.", foreground="#555", wraplength=900)
         footer.pack(fill="x", pady=(8, 0))
 
     def _file_row(self, parent, row, label, var, command, directory=False):

@@ -6,6 +6,109 @@
             if mount in self.mounts: self.mounts.remove(mount)
             raise
 
+    def import_donor_iso_packages(self, image_plan: list[tuple[Path, dict]]) -> list[Path]:
+        """Import standalone Russian CABs from an optional localized Windows ISO.
+
+        The donor ISO is only a package source. Its install.wim/install.esd is inspected
+        for build-family and architecture compatibility, but it never replaces the target
+        image and the selected donor ISO is never modified.
+        """
+        self.donor_setup_files = []
+        donor_iso = self.cfg.donor_iso
+        if not donor_iso:
+            return []
+        if not donor_iso.is_file():
+            raise RuntimeError(f"ISO-источник русского языка не найден: {donor_iso}")
+        if donor_iso.resolve() in (self.cfg.source_iso.resolve(), self.cfg.output_iso.resolve()):
+            raise RuntimeError("ISO-источник русского языка должен отличаться от входного и выходного ISO.")
+        if not self.work:
+            raise RuntimeError("Внутренняя ошибка: рабочая папка ещё не создана.")
+
+        iso_q = str(donor_iso).replace("'", "''")
+        imported: list[Path] = []
+        try:
+            script = f"$img=Mount-DiskImage -ImagePath '{iso_q}' -PassThru; $vol=$img | Get-Volume; if(-not $vol.DriveLetter){{throw 'ISO-источник не получил букву диска'}}; $vol.DriveLetter"
+            cp = self.powershell(script)
+            m = re.search(r"([A-Z]):?\s*$", (cp.stdout or "").strip(), re.I)
+            if not m:
+                raise RuntimeError("Не удалось смонтировать ISO-источник русского языка.")
+            root = Path(m.group(1).upper() + ":\\")
+            sources = root / "sources"
+            donor_images = sorted(list(sources.glob("install*.wim")) + list(sources.glob("install*.esd")))
+            if not donor_images:
+                self.log("В русском ISO не найден install.wim/install.esd; автоматическое извлечение языковых пакетов пропущено.")
+                return []
+
+            donor_infos: list[dict] = []
+            for image in donor_images:
+                try:
+                    donor_infos.extend(self.image_info(image))
+                except Exception as exc:
+                    self.log(f"Не удалось прочитать индексы русского ISO {image.name}: {exc}")
+            target_infos = [info for _, info in image_plan]
+            compatible_targets = [
+                target for target in target_infos
+                if any(
+                    self.build_family(target.get("version", "")) is not None
+                    and self.build_family(target.get("version", "")) == self.build_family(donor.get("version", ""))
+                    and self.arch_token(target.get("architecture", "")) == self.arch_token(donor.get("architecture", ""))
+                    for donor in donor_infos
+                )
+            ]
+            if not donor_infos or not compatible_targets:
+                donor_summary = ", ".join(
+                    f'{d.get("version", "?")}/{d.get("architecture", "?")}' for d in donor_infos[:8]
+                ) or "версия/архитектура не определены"
+                self.log(
+                    "Русский ISO не признан совместимым источником пакетов по ветке сборки и архитектуре. "
+                    f"Данные источника: {donor_summary}. Пакеты не будут смешиваться с целевым образом."
+                )
+                return []
+
+            destination_root = self.work / "donor_iso_packages"
+            copied_names: set[str] = set()
+            candidates = self.find_packages(root)
+            for package in candidates:
+                self.check_cancel()
+                kind = self.classify_donor_package(package)
+                if not kind:
+                    continue
+                if kind == "client_lp" and not any(self.locate_ru_lp(info, [package]) for info in compatible_targets):
+                    continue
+                relative = str(package.relative_to(root))
+                if kind == "setup":
+                    dest_dir = destination_root / "setup"
+                    dest = dest_dir / package.name
+                    if package.name.lower() in copied_names:
+                        continue
+                    copied_names.add(package.name.lower())
+                else:
+                    dest_dir = destination_root / kind
+                    prefix = hashlib.sha1(relative.encode("utf-8", "replace")).hexdigest()[:8]
+                    dest = dest_dir / f"{prefix}_{package.name}"
+                dest_dir.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(package, dest)
+                if kind == "setup":
+                    self.donor_setup_files.append(dest)
+                else:
+                    imported.append(dest)
+                self.log(f"Найден пакет в русском ISO ({kind}): {relative}")
+
+            base_packs = [p for p in imported if self.classify_donor_package(p) == "client_lp"]
+            self.log(
+                f"Проверка русского ISO завершена: импортировано самостоятельных языковых CAB/FOD — {len(imported)}, "
+                f"пакетов Setup — {len(self.donor_setup_files)}."
+            )
+            if not base_packs:
+                self.log(
+                    "В русском ISO не обнаружен отдельный совместимый Client Language Pack CAB. "
+                    "Если русский язык уже встроен в install.wim/install.esd, DISM не извлекает из него "
+                    "готовый базовый CAB автоматически; будет предпринят поиск через UUP Dump."
+                )
+            return imported
+        finally:
+            self.powershell(f"Dismount-DiskImage -ImagePath '{iso_q}'", check=False, respect_cancel=False)
+
     def process_setup_wim(self, media: Path, pack_files: list[Path]) -> bool:
         boot = media / "sources" / "boot.wim"
         if not self.cfg.process_setup:
@@ -13,12 +116,16 @@
             return False
         # Find ADK WinPE Russian language files. We only add them if present and never mix OS language CAB blindly.
         kits = Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Windows Kits" / "10" / "Assessment and Deployment Kit" / "Windows Preinstallation Environment" / "amd64" / "WinPE_OCs" / "ru-ru"
-        if not kits.exists():
-            self.log("Не найден каталог ADK WinPE_OCs\\ru-ru. Setup/WinPE останется на исходном языке; это будет отражено в отчёте.")
-            return False
-        expected = [kits / "lp.cab", kits / "WinPE-Setup_ru-ru.cab", kits / "WinPE-Setup-Client_ru-ru.cab"]
+        donor_by_name = {p.name.lower(): p for p in self.donor_setup_files}
+        expected = []
+        for name in ("lp.cab", "WinPE-Setup_ru-ru.cab", "WinPE-Setup-Client_ru-ru.cab"):
+            local = kits / name
+            expected.append(local if local.is_file() else donor_by_name.get(name.lower(), local))
         expected += sorted(kits.glob("WinPE-Rejuv_ru-ru.cab"))
-        missing = [p.name for p in expected[:3] if not p.exists()]
+        expected += [
+            p for p in self.donor_setup_files
+            if p.name.lower().startswith("winpe-rejuv_ru-ru") and p not in expected
+        ]
         if missing:
             self.log("Для локализации Setup не хватает ADK-пакетов: " + ", ".join(missing))
             return False

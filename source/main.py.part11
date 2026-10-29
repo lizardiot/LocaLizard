@@ -28,6 +28,14 @@
             self.iso_var.set(p)
             if not self.out_var.get(): self.out_var.set(str(Path(p).with_name(Path(p).stem + "_ru-RU.iso")))
 
+    def choose_donor_iso(self):
+        p = filedialog.askopenfilename(
+            title="Выберите дополнительный русский ISO Windows",
+            filetypes=[("ISO images", "*.iso"), ("All files", "*.*")]
+        )
+        if p:
+            self.donor_iso_var.set(p)
+
     def choose_output(self):
         p = filedialog.asksaveasfilename(title="Куда сохранить итоговый ISO", defaultextension=".iso", filetypes=[("ISO images", "*.iso")])
         if p: self.out_var.set(p)
@@ -63,11 +71,13 @@
     def start(self):
         if self.worker_thread and self.worker_thread.is_alive(): return
         source = Path(self.iso_var.get().strip()) if self.iso_var.get().strip() else None
+        donor = Path(self.donor_iso_var.get().strip()) if self.donor_iso_var.get().strip() else None
         output = Path(self.out_var.get().strip()) if self.out_var.get().strip() else None
         pack = Path(self.pack_var.get().strip()) if self.pack_var.get().strip() else (app_data_dir() / "Packages")
         fod = Path(self.fod_var.get().strip()) if self.fod_var.get().strip() else None
         work = Path(self.work_var.get().strip()) if self.work_var.get().strip() else None
         if not source or not source.is_file(): messagebox.showerror(APP_NAME, "Выберите существующий входной ISO."); return
+        if donor and not donor.is_file(): messagebox.showerror(APP_NAME, "Указанный русский ISO-источник не найден."); return
         if not output: messagebox.showerror(APP_NAME, "Укажите имя итогового ISO."); return
         if not pack: pack = app_data_dir() / "Packages"
         if not work: messagebox.showerror(APP_NAME, "Выберите рабочую папку."); return
@@ -75,6 +85,8 @@
         if not output.parent.is_dir(): messagebox.showerror(APP_NAME, "Папка для выходного ISO не существует."); return
         if output.exists(): messagebox.showerror(APP_NAME, "Выходной файл уже существует. Выберите другое имя, чтобы избежать случайной перезаписи."); return
         if source.resolve() == output.resolve(): messagebox.showerror(APP_NAME, "Входной и выходной ISO должны быть разными файлами."); return
+        if donor and donor.resolve() in (source.resolve(), output.resolve()):
+            messagebox.showerror(APP_NAME, "Русский ISO-источник должен отличаться от входного и выходного ISO."); return
         if fod and not fod.is_dir(): messagebox.showerror(APP_NAME, "Указанный каталог FOD не существует."); return
         free = shutil.disk_usage(work.parent if not work.exists() else work).free
         required = int(source.stat().st_size * 3.5 + 8 * 1024**3)

@@ -41,6 +41,7 @@
             self.log_path = self.cfg.work_root / f"IoTLTSC_Russianizer_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
             self.log(f"Журнал: {self.log_path}")
             self.log(f"Входной ISO: {self.cfg.source_iso}")
+            self.log(f"Русский ISO-источник: {self.cfg.donor_iso or '(не выбран)'}")
             self.log(f"Выходной ISO: {self.cfg.output_iso}")
             self.log(f"Каталог языковых пакетов: {self.cfg.package_root}")
             self.log(f"Каталог FOD: {self.cfg.fod_root or '(не выбран)'}")
@@ -48,6 +49,10 @@
             if not is_admin(): raise RuntimeError("Для DISM и монтирования ISO необходимы права администратора.")
             if self.cfg.source_iso.resolve() == self.cfg.output_iso.resolve(): raise RuntimeError("Входной и выходной ISO должны иметь разные пути.")
             if not self.cfg.source_iso.is_file(): raise RuntimeError("Входной ISO не найден.")
+            if self.cfg.donor_iso and not self.cfg.donor_iso.is_file():
+                raise RuntimeError("Указанный русский ISO-источник не найден.")
+            if self.cfg.donor_iso and self.cfg.donor_iso.resolve() in (self.cfg.source_iso.resolve(), self.cfg.output_iso.resolve()):
+                raise RuntimeError("Русский ISO-источник должен отличаться от входного и выходного ISO.")
             free = shutil.disk_usage(self.cfg.work_root).free
             required = int(self.cfg.source_iso.stat().st_size * 3.5 + 8 * 1024**3)
             self.log(f"Свободно на рабочем диске: {human_bytes(free)}; ориентировочно потребуется: {human_bytes(required)}")

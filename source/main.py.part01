@@ -36,7 +36,7 @@ except Exception:
     BaseTk = tk.Tk
 
 APP_NAME = "LocaLizard"
-APP_VERSION = "0.0.1.9"
+APP_VERSION = "0.0.2.0"
 UUP_API = "https://api.uupdump.net"
 UUP_SITE = "https://uupdump.net/"
 # Official Microsoft ADK bootstrap (Deployment Tools only; downloaded on demand).
@@ -127,6 +127,7 @@ def quote_cmd(args: list[str]) -> str:
 @dataclass
 class RunConfig:
     source_iso: Path
+    donor_iso: Path | None
     output_iso: Path
     package_root: Path
     fod_root: Path | None
@@ -143,6 +144,7 @@ class Worker:
         self.log_path: Path | None = None
         self.work: Path | None = None
         self.source_drive: str | None = None
+        self.donor_setup_files: list[Path] = []
         self.mounts: list[Path] = []
         self.oscdimg = find_oscdimg()
 

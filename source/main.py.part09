@@ -1,10 +1,23 @@
+            # A matching donor ISO is checked first; UUP Dump remains the fallback.
+            donor_package_files = self.import_donor_iso_packages(image_plan)
             # Auto-fetch the base language pack for each build/architecture before modifying any image.
             packages_by_index: dict[tuple[str, int], list[Path]] = {}
             missing_packages = []
             for image_path, info in image_plan:
-                pkgs = self.packages_for_info(info)
+                pkgs = list({p.resolve(): p for p in self.packages_for_info(info) + donor_package_files}.values())
                 if not self.locate_ru_lp(info, pkgs):
-                    pkgs = self.auto_download_ru_assets(info)
+                    try:
+                        fetched = self.auto_download_ru_assets(info)
+                        pkgs = list({p.resolve(): p for p in fetched + donor_package_files}.values())
+                    except Exception as exc:
+                        if self.cfg.donor_iso:
+                            raise RuntimeError(
+                                "Не найден совместимый отдельный Client Language Pack CAB ни в русском ISO-источнике, "
+                                "ни через UUP Dump. Русский язык, уже встроенный в install.wim/install.esd другого ISO, "
+                                "не означает, что базовый CAB можно автоматически извлечь из него. "
+                                f"Проверьте наличие отдельного языкового пакета ru-RU. Подробности UUP Dump: {exc}"
+                            ) from exc
+                        raise
                 if not self.locate_ru_lp(info, pkgs):
                     missing_packages.append(f"{Path(image_path).name} index {info['index']} ({info['architecture']})")
                 packages_by_index[(str(image_path), int(info["index"]))] = pkgs
@@ -27,7 +40,10 @@
             final_check = self.verify_final_iso(expected_indexes)
             report = {
                 "application": APP_NAME, "version": APP_VERSION, "completed": datetime.now().isoformat(timespec="seconds"),
-                "source_iso": str(self.cfg.source_iso), "output_iso": str(self.cfg.output_iso),
+                "source_iso": str(self.cfg.source_iso), "donor_iso": str(self.cfg.donor_iso) if self.cfg.donor_iso else None,
+                "donor_iso_packages_imported": [p.name for p in donor_package_files],
+                "donor_iso_setup_packages_imported": [p.name for p in self.donor_setup_files],
+                "output_iso": str(self.cfg.output_iso),
                 "indexes_processed": infos, "setup_winpe_localization_attempted": self.cfg.process_setup,
                 "setup_winpe_localization_succeeded": setup_done, "structure_check": struct,
                 "final_iso_static_verification": final_check,

@@ -36,6 +36,24 @@ class HelperTests(unittest.TestCase):
             w = main.Worker(queue.Queue(), threading.Event(), None)
             self.assertEqual(w.locate_ru_lp({"architecture": "amd64", "version": "10.0.26100.1"}, [p]), p)
 
+
+    def test_classify_donor_iso_packages(self):
+        self.assertEqual(
+            main.Worker.classify_donor_package(Path("x64/langpacks/Microsoft-Windows-Client-Language-Pack_x64_ru-ru.cab")),
+            "client_lp",
+        )
+        self.assertEqual(
+            main.Worker.classify_donor_package(Path("LanguageFeatures-OCR-ru-ru-Package.cab")),
+            "fod",
+        )
+        self.assertEqual(
+            main.Worker.classify_donor_package(Path("sources/langpacks/ru-ru/lp.cab")),
+            "setup",
+        )
+        self.assertIsNone(
+            main.Worker.classify_donor_package(Path("Microsoft-Windows-Server-Language-Pack_x64_ru-ru.cab"))
+        )
+
     def test_reject_server_and_winpe_language_packs(self):
         with tempfile.TemporaryDirectory() as td:
             files = []
