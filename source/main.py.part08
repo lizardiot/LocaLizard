@@ -1,0 +1,70 @@
+    def verify_final_iso(self, expected: dict[str, int]) -> dict:
+        """Mount the produced ISO and perform static DISM/image-structure checks; never boot it."""
+        iso_q = str(self.cfg.output_iso).replace("'", "''")
+        script = f"$img=Mount-DiskImage -ImagePath '{iso_q}' -PassThru; $vol=$img | Get-Volume; if(-not $vol.DriveLetter){{throw 'Итоговый ISO не получил букву диска'}}; $vol.DriveLetter"
+        mounted = False
+        try:
+            cp = self.powershell(script)
+            m = re.search(r"([A-Z]):?\s*$", (cp.stdout or "").strip(), re.I)
+            if not m: raise RuntimeError("Не удалось смонтировать итоговый ISO для проверки.")
+            drive = m.group(1).upper() + ":\\"
+            mounted = True
+            root = Path(drive)
+            sources = root / "sources"
+            if not (sources / "boot.wim").is_file(): raise RuntimeError("В итоговом ISO отсутствует sources\\boot.wim.")
+            output_images = sorted(sources.glob("install*.wim"))
+            if not output_images: raise RuntimeError("В итоговом ISO отсутствует install*.wim.")
+            observed = {}
+            for image in output_images:
+                infos = self.image_info(image)
+                observed[image.name] = len(infos)
+                if len(infos) == 0: raise RuntimeError(f"В итоговом ISO не читаются WIM-индексы: {image.name}")
+                for info in infos:
+                    # These are static inventory checks only. No VM/boot test is performed.
+                    self.log(f"Проверка итогового ISO: {image.name}, индекс {info['index']}, {info['name']}, {info['version']}")
+            boot_infos = self.image_info(sources / "boot.wim")
+            if len(boot_infos) < 1: raise RuntimeError("DISM не смог прочитать индексы boot.wim в итоговом ISO.")
+            for name, count in expected.items():
+                if observed.get(name) != count:
+                    raise RuntimeError(f"Количество индексов {name} в итоговом ISO не совпадает с ожидаемым: ожидалось {count}, найдено {observed.get(name)}.")
+            result = {"mounted_iso": True, "boot_wim_indexes": len(boot_infos), "install_wim_indexes": observed, "static_validation": "passed", "vm_test": "not performed"}
+            self.log("Статическая проверка повторно смонтированного итогового ISO пройдена: " + json.dumps(result, ensure_ascii=False))
+            return result
+        finally:
+            if mounted:
+                self.powershell(f"Dismount-DiskImage -ImagePath '{iso_q}'", check=False, respect_cancel=False)
+
+    def run(self) -> None:
+        try:
+            self.log(f"{APP_NAME} v{APP_VERSION}; запуск обработки.")
+            self.cfg.work_root.mkdir(parents=True, exist_ok=True)
+            self.log_path = self.cfg.work_root / f"IoTLTSC_Russianizer_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+            self.log(f"Журнал: {self.log_path}")
+            self.log(f"Входной ISO: {self.cfg.source_iso}")
+            self.log(f"Выходной ISO: {self.cfg.output_iso}")
+            self.log(f"Каталог языковых пакетов: {self.cfg.package_root}")
+            self.log(f"Каталог FOD: {self.cfg.fod_root or '(не выбран)'}")
+            if not is_windows(): raise RuntimeError("Обработка ISO поддерживается только при запуске на Windows 10/11 x64.")
+            if not is_admin(): raise RuntimeError("Для DISM и монтирования ISO необходимы права администратора.")
+            if self.cfg.source_iso.resolve() == self.cfg.output_iso.resolve(): raise RuntimeError("Входной и выходной ISO должны иметь разные пути.")
+            if not self.cfg.source_iso.is_file(): raise RuntimeError("Входной ISO не найден.")
+            free = shutil.disk_usage(self.cfg.work_root).free
+            required = int(self.cfg.source_iso.stat().st_size * 3.5 + 8 * 1024**3)
+            self.log(f"Свободно на рабочем диске: {human_bytes(free)}; ориентировочно потребуется: {human_bytes(required)}")
+            if free < required:
+                raise RuntimeError(f"Недостаточно свободного места: есть {human_bytes(free)}, консервативная оценка — {human_bytes(required)}. Выберите другой рабочий диск.")
+            # Check space before downloading/installing the Microsoft packaging toolchain.
+            self.ensure_oscdimg()
+            self.cfg.package_root.mkdir(parents=True, exist_ok=True)
+            package_files = self.find_packages(self.cfg.package_root)
+            self.log(f"Найдено файлов в кэше языковых пакетов (разные версии могут храниться отдельно): {len(package_files)}")
+            media = self.inspect_iso_mount_and_copy()
+            install_images = self.esd_to_wim_if_needed(media)
+            image_plan = []
+            for install_wim in install_images:
+                infos = self.image_info(install_wim)
+                if not infos: raise RuntimeError(f"DISM не обнаружил индексов Windows в {install_wim.name}.")
+                for info in infos:
+                    info["image_file"] = str(install_wim)
+                    image_plan.append((install_wim, info))
+            self.log("Обнаруженные индексы: " + "; ".join(f"{Path(w).name}, индекс {i['index']}: {i['name']} ({i['architecture']})" for w, i in image_plan))
