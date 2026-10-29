@@ -120,10 +120,15 @@ jobs:
             if ($LASTEXITCODE -eq 0) {
               $oldTagSha = (gh api "repos/$env:GITHUB_REPOSITORY/git/ref/tags/0.0.2.0" --jq ".object.sha").Trim()
               if ($LASTEXITCODE -ne 0 -or -not $oldTagSha) { throw "Could not resolve historical tag 0.0.2.0." }
-              git fetch origin "refs/tags/0.0.2.0:refs/tags/0.0.2.0"
-              if ($LASTEXITCODE -ne 0) { throw "Could not fetch historical source for 0.0.2.0." }
-              git worktree add --detach "legacy-src-0.0.2" $oldTagSha
-              if ($LASTEXITCODE -ne 0) { throw "Could not create the historical 0.0.2 worktree." }
+              # The legacy branch contains the original 0.0.2 source with only APP_VERSION normalized
+              # and its obsolete workflow file removed. Its commit is already on GitHub, so tagging it
+              # does not require GITHUB_TOKEN to push a workflow-containing historical tree.
+              $legacyShortSha = (gh api "repos/$env:GITHUB_REPOSITORY/git/ref/heads/legacy-release/0.0.2" --jq ".object.sha").Trim()
+              if ($LASTEXITCODE -ne 0 -or -not $legacyShortSha) { throw "Could not resolve normalized legacy branch for 0.0.2." }
+              git fetch origin "refs/heads/legacy-release/0.0.2:refs/remotes/origin/legacy-release/0.0.2"
+              if ($LASTEXITCODE -ne 0) { throw "Could not fetch normalized legacy source for 0.0.2." }
+              git worktree add --detach "legacy-src-0.0.2" $legacyShortSha
+              if ($LASTEXITCODE -ne 0) { throw "Could not create the normalized historical 0.0.2 worktree." }
 
               $legacyParts = Get-ChildItem -Path "legacy-src-0.0.2/source" -Filter "main.py.part*" | Sort-Object Name
               if (-not $legacyParts -or $legacyParts.Count -lt 2) { throw "Historical source parts for 0.0.2 are missing." }
@@ -163,7 +168,7 @@ jobs:
               gh api "repos/$env:GITHUB_REPOSITORY/git/ref/tags/0.0.2" *> $null
               if ($LASTEXITCODE -ne 0) {
                 # Create the ref via GitHub's refs API before publishing the release.
-                gh api --method POST "repos/$env:GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/0.0.2" -f sha="$oldTagSha"
+                gh api --method POST "repos/$env:GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/0.0.2" -f sha="$legacyShortSha"
                 if ($LASTEXITCODE -ne 0) { throw "Could not create replacement tag 0.0.2 via the GitHub refs API." }
               }
 
