@@ -229,5 +229,51 @@ class HelperTests(unittest.TestCase):
         self.assertIn("-StorageType ISO", observed["command"])
 
 
+    def test_elevated_command_line_quotes_script_and_pending_config(self):
+        script = r"C:\Program Files\LocaLizard\main.py"
+        pending = r"C:\Users\Test User\AppData\Local\LocaLizard\pending action.json"
+        args = ["--resume-elevated", pending]
+        self.assertEqual(
+            main._ll_elevated_command_line(script, args, frozen=False),
+            main.subprocess.list2cmdline([script, *args]),
+        )
+        self.assertEqual(
+            main._ll_elevated_command_line(script, args, frozen=True),
+            main.subprocess.list2cmdline(args),
+        )
+
+    def test_resume_elevated_path_requires_value(self):
+        pending = r"C:\Users\Test User\pending.json"
+        self.assertEqual(
+            main._ll_resume_elevated_path(["LocaLizard.exe", "--resume-elevated", pending]),
+            Path(pending),
+        )
+        self.assertIsNone(main._ll_resume_elevated_path(["LocaLizard.exe", "--resume-elevated"]))
+
+    def test_elevated_payload_preserves_iso_paths_and_options(self):
+        cfg = main.RunConfig(
+            source_iso=Path(r"C:\ISO Files\source.iso"),
+            donor_iso=None,
+            output_iso=Path(r"C:\Output Files\result.iso"),
+            package_root=Path(r"C:\Cache\Packages"),
+            fod_root=Path(r"C:\FOD Source"),
+            work_root=Path(r"C:\Work Dir"),
+            keep_work=False,
+            process_setup=True,
+            updates_root=Path(r"C:\Update Chain"),
+            split_wim=True,
+            vm_test=False,
+        )
+        payload = main._ll_pending_action_payload(cfg)
+        self.assertEqual(payload["source_iso"], str(cfg.source_iso))
+        self.assertEqual(payload["output_iso"], str(cfg.output_iso))
+        self.assertEqual(payload["donor_iso"], "")
+        self.assertEqual(payload["updates_root"], str(cfg.updates_root))
+        self.assertEqual(payload["keep_work"], False)
+        self.assertEqual(payload["process_setup"], True)
+        self.assertEqual(payload["split_wim"], True)
+        self.assertEqual(payload["vm_test"], False)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

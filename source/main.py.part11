@@ -18,9 +18,15 @@
 
     def _check_elevation(self):
         if is_windows() and not is_admin():
-            messagebox.showinfo(APP_NAME, "Для обработки ISO программа должна быть запущена с правами администратора. Нажмите OK, чтобы запросить их.")
-            if not elevate_or_exit(): self.destroy()
-            else: self.destroy()
+            self.status_var.set(
+                "Выберите ISO или перетащите его в окно. Права администратора будут запрошены "
+                "при запуске обработки, чтобы не блокировать drag-and-drop из Проводника."
+            )
+        elif is_windows() and is_admin():
+            self.status_var.set(
+                "Программа запущена с правами администратора. Windows может блокировать "
+                "перетаскивание из Проводника; для drag-and-drop запускайте программу обычным способом."
+            )
 
     def choose_iso(self):
         p = filedialog.askopenfilename(title="Выберите исходный ISO Windows", filetypes=[("ISO images", "*.iso"), ("All files", "*.*")])

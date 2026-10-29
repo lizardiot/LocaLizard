@@ -3,9 +3,15 @@
                "Языковые пакеты и недостающие инструменты будут загружены автоматически при наличии интернета. Все индексы install.wim будут обработаны. Исходный ISO останется без изменений. Продолжить?")
         if free < required:
             messagebox.showerror(APP_NAME, msg + "\n\nНедостаточно места. Выберите другой рабочий диск."); return
-        if not messagebox.askyesno(APP_NAME, msg): return
+        skip_confirmation = bool(getattr(self, "_ll_skip_start_confirmation", False))
+        self._ll_skip_start_confirmation = False
+        if not skip_confirmation and not messagebox.askyesno(APP_NAME, msg): return
         updates = Path(self.updates_var.get().strip()) if self.updates_var.get().strip() else None
         cfg = RunConfig(source, donor, output, pack, fod, work, self.keep_var.get(), self.setup_var.get(), updates, self.split_var.get(), self.vm_test_var.get())
+        if is_windows() and not is_admin():
+            if _ll_request_elevated_run(self, cfg):
+                self.destroy()
+            return
         self.cancel_event.clear()
         self.start_btn.configure(state="disabled")
         self.cancel_btn.configure(state="normal")

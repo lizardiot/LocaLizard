@@ -664,3 +664,176 @@ App._build_ui = _ll_build_ui_v090
 App._poll_events = _ll_poll_events_v090
 _ll_hyperv_smoke_test = _ll_hyperv_smoke_test_v090
 Worker.hyperv_smoke_test = _ll_hyperv_smoke_test_v090
+
+
+# Keep the GUI at medium integrity so Explorer drag-and-drop is not blocked by UIPI.
+# Elevate only for operations that actually need DISM / ISO mounting.
+def _ll_elevated_command_line(script_path: str, extra_args: list[str], frozen: bool) -> str:
+    prefix = [] if frozen else [script_path]
+    return subprocess.list2cmdline(prefix + list(extra_args))
+
+
+def _ll_resume_elevated_path(argv: list[str]) -> Path | None:
+    try:
+        index = argv.index("--resume-elevated")
+        if index + 1 < len(argv):
+            return Path(argv[index + 1])
+    except ValueError:
+        pass
+    return None
+
+
+def _ll_pending_action_payload(cfg: RunConfig) -> dict:
+    return {
+        "schema_version": 1,
+        "application": APP_NAME,
+        "version": APP_VERSION,
+        "mode": "process_iso",
+        "source_iso": str(cfg.source_iso),
+        "donor_iso": str(cfg.donor_iso) if cfg.donor_iso else "",
+        "output_iso": str(cfg.output_iso),
+        "package_root": str(cfg.package_root),
+        "fod_root": str(cfg.fod_root) if cfg.fod_root else "",
+        "work_root": str(cfg.work_root),
+        "updates_root": str(cfg.updates_root) if cfg.updates_root else "",
+        "keep_work": bool(cfg.keep_work),
+        "process_setup": bool(cfg.process_setup),
+        "split_wim": bool(cfg.split_wim),
+        "vm_test": bool(cfg.vm_test),
+    }
+
+
+def _ll_launch_elevated_app(parent, extra_args: list[str]) -> bool:
+    if not is_windows():
+        return False
+    script_path = str(Path(sys.argv[0]).resolve())
+    params = _ll_elevated_command_line(
+        script_path, extra_args, bool(getattr(sys, "frozen", False))
+    )
+    try:
+        result = int(ctypes.windll.shell32.ShellExecuteW(
+            None, "runas", sys.executable, params, None, 1
+        ))
+    except Exception as exc:
+        messagebox.showerror(
+            APP_NAME, f"Не удалось запросить права администратора: {exc}", parent=parent
+        )
+        return False
+    if result > 32:
+        return True
+    if result != 1223:  # ERROR_CANCELLED: the user declined the UAC prompt.
+        messagebox.showerror(
+            APP_NAME,
+            f"Не удалось запустить повышенный экземпляр LocaLizard (код ShellExecute: {result}).",
+            parent=parent,
+        )
+    return False
+
+
+def _ll_request_elevated_run(parent, cfg: RunConfig) -> bool:
+    pending = app_data_dir() / f"pending-elevated-{uuid.uuid4().hex}.json"
+    temp = pending.with_suffix(".json.tmp")
+    try:
+        pending.parent.mkdir(parents=True, exist_ok=True)
+        temp.write_text(
+            json.dumps(_ll_pending_action_payload(cfg), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        temp.replace(pending)
+    except OSError as exc:
+        try:
+            temp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        messagebox.showerror(
+            APP_NAME, f"Не удалось сохранить параметры для запуска с правами администратора: {exc}",
+            parent=parent,
+        )
+        return False
+    if _ll_launch_elevated_app(parent, ["--resume-elevated", str(pending)]):
+        return True
+    try:
+        pending.unlink(missing_ok=True)
+    except OSError:
+        pass
+    return False
+
+
+def _ll_resume_elevated_action(app, pending_path: Path) -> None:
+    try:
+        if not is_admin():
+            raise RuntimeError("Повышенные права не получены. Повторите запуск и подтвердите запрос UAC.")
+        data = json.loads(pending_path.read_text(encoding="utf-8"))
+        if data.get("application") != APP_NAME or data.get("version") != APP_VERSION:
+            raise RuntimeError("Файл продолжения не соответствует этой версии LocaLizard.")
+        if data.get("mode") != "process_iso":
+            raise RuntimeError("Неизвестный тип сохранённой операции.")
+    except Exception as exc:
+        try:
+            pending_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        messagebox.showerror(APP_NAME, f"Не удалось восстановить операцию после запроса UAC: {exc}", parent=app)
+        return
+
+    try:
+        pending_path.unlink(missing_ok=True)
+    except OSError:
+        pass
+    for key, attr in (
+        ("source_iso", "iso_var"),
+        ("donor_iso", "donor_iso_var"),
+        ("output_iso", "out_var"),
+        ("package_root", "pack_var"),
+        ("fod_root", "fod_var"),
+        ("work_root", "work_var"),
+        ("updates_root", "updates_var"),
+    ):
+        variable = getattr(app, attr, None)
+        if variable is not None:
+            variable.set(str(data.get(key) or ""))
+    for key, attr in (
+        ("keep_work", "keep_var"),
+        ("process_setup", "setup_var"),
+        ("split_wim", "split_var"),
+        ("vm_test", "vm_test_var"),
+    ):
+        variable = getattr(app, attr, None)
+        if variable is not None:
+            variable.set(bool(data.get(key, False)))
+    app._ll_skip_start_confirmation = True
+    app.status_var.set("Запрос прав администратора подтверждён. Возобновляю обработку ISO…")
+    app.after(150, app.start)
+
+
+_LL_PREVIOUS_APP_INIT_FOR_UAC = App.__init__
+def _ll_app_init_resume_elevated(self):
+    _LL_PREVIOUS_APP_INIT_FOR_UAC(self)
+    pending = _ll_resume_elevated_path(sys.argv)
+    if pending is not None:
+        self.after(900, lambda: _ll_resume_elevated_action(self, pending))
+App.__init__ = _ll_app_init_resume_elevated
+
+
+# The WIM-only workflow also needs elevated DISM, but no Explorer drop is needed there.
+_LL_PREVIOUS_PATCH_EXISTING_WIM_FOR_UAC = App.patch_existing_wim
+def _ll_patch_existing_wim_with_uac(self):
+    if is_windows() and not is_admin():
+        _ll_save_settings_v089(self)
+        if _ll_launch_elevated_app(self, []):
+            self.destroy()
+        return
+    return _LL_PREVIOUS_PATCH_EXISTING_WIM_FOR_UAC(self)
+App.patch_existing_wim = _ll_patch_existing_wim_with_uac
+
+
+# Inspecting an ISO for Update Catalog matching mounts it, so keep that feature elevated too.
+_LL_PREVIOUS_CATALOG_START_FOR_UAC = _ll_start_catalog_search
+def _ll_start_catalog_search_with_uac(app):
+    if is_windows() and not is_admin():
+        _ll_save_settings_v089(app)
+        if _ll_launch_elevated_app(app, []):
+            app.destroy()
+        return
+    return _LL_PREVIOUS_CATALOG_START_FOR_UAC(app)
+_ll_start_catalog_search = _ll_start_catalog_search_with_uac

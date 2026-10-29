@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """LocaLizard — Windows IoT Enterprise LTSC Russian localization utility.
 
-The program requires Windows 10/11 x64, elevation, DISM, and oscdimg from Windows ADK
-for rebuilding a bootable BIOS+UEFI ISO. It never modifies the selected source ISO.
+The GUI starts without elevation so Windows Explorer drag-and-drop can work. Windows
+elevation is requested only when an operation that services ISO/WIM images is started.
 """
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ except Exception:
     BaseTk = tk.Tk
 
 APP_NAME = "LocaLizard"
-APP_VERSION = "0.0.9.2"
+APP_VERSION = "0.0.9.3"
 UUP_API = "https://api.uupdump.net"
 UUP_SITE = "https://uupdump.net/"
 # Official Microsoft ADK bootstrap (Deployment Tools only; downloaded on demand).
