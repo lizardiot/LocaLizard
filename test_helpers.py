@@ -98,5 +98,40 @@ class HelperTests(unittest.TestCase):
             self.assertEqual(w.locate_ru_lp({"architecture": "amd64"}, files), files[0])
 
 
+    def test_swm_sequence_is_contiguous(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "install.swm").write_bytes(b"one")
+            (root / "install2.swm").write_bytes(b"two")
+            self.assertEqual([p.name for p in main._ll_sequence_swm(root)], ["install.swm", "install2.swm"])
+            (root / "install2.swm").unlink()
+            (root / "install3.swm").write_bytes(b"three")
+            with self.assertRaises(RuntimeError):
+                main._ll_sequence_swm(root)
+
+    def test_update_manifest_checks_sha256_and_order(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            checkpoint = root / "KBCheckpoint.msu"
+            target = root / "KBTarget.msu"
+            checkpoint.write_bytes(b"checkpoint")
+            target.write_bytes(b"target-lcu")
+            manifest = {
+                "schema_version": 1,
+                "target_build_family": 26100,
+                "architecture": "x64",
+                "ordered_packages": [
+                    {"file": checkpoint.name, "kind": "checkpoint", "sha256": main._ll_hash(checkpoint)},
+                    {"file": target.name, "kind": "target_lcu", "sha256": main._ll_hash(target)},
+                ],
+            }
+            (root / "updates.json").write_text(__import__("json").dumps(manifest), encoding="utf-8")
+            plan = main._ll_parse_update_manifest(root)
+            self.assertEqual([x["kind"] for x in plan[1:]], ["checkpoint", "target_lcu"])
+            manifest["ordered_packages"][0]["sha256"] = "0" * 64
+            (root / "updates.json").write_text(__import__("json").dumps(manifest), encoding="utf-8")
+            with self.assertRaises(RuntimeError):
+                main._ll_parse_update_manifest(root)
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
