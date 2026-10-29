@@ -1,0 +1,81 @@
+        dist.mkdir(parents=True, exist_ok=False)
+        iso_q = str(self.cfg.source_iso).replace("'", "''")
+        script = f"$img=Mount-DiskImage -ImagePath '{iso_q}' -PassThru; $vol=$img | Get-Volume; if(-not $vol.DriveLetter){{throw 'ISO не получил букву диска'}}; $vol.DriveLetter"
+        cp = self.powershell(script)
+        letter_match = re.search(r"([A-Z]):?\s*$", (cp.stdout or "").strip(), re.I)
+        if not letter_match:
+            raise RuntimeError("Windows не смогла смонтировать ISO или определить букву диска.")
+        self.source_drive = letter_match.group(1).upper() + ":\\"
+        self.log(f"ISO смонтирован как {self.source_drive}; исходный ISO не изменяется.")
+        try:
+            # Robocopy exit codes 0-7 are non-fatal; >=8 means failure.
+            robocopy = self.run_cmd(["robocopy", self.source_drive, str(dist), "/E", "/COPY:DAT", "/DCOPY:DAT", "/A-:R", "/R:1", "/W:1", "/XJ", "/NFL", "/NDL", "/NP"], check=False)
+            if robocopy.returncode >= 8:
+                raise RuntimeError(f"Не удалось скопировать содержимое ISO (Robocopy {robocopy.returncode}).")
+        finally:
+            self.powershell(f"Dismount-DiskImage -ImagePath '{iso_q}'", check=False, respect_cancel=False)
+        if not (dist / "sources" / "boot.wim").is_file():
+            raise RuntimeError("Это не похоже на установочный ISO Windows: отсутствует sources\\boot.wim.")
+        images = list((dist / "sources").glob("install*.wim")) + list((dist / "sources").glob("install*.esd"))
+        if not images:
+            raise RuntimeError("Не найден sources\\install.wim или install.esd. Разделённые install*.swm не поддерживаются.")
+        if (dist / "sources" / "install.swm").exists():
+            raise RuntimeError("Обнаружен разделённый install.swm. Этот формат пока не поддерживается — нужен ISO с install.wim/ESD.")
+        return dist
+
+    def image_info(self, image: Path) -> list[dict]:
+        cp = self.run_cmd(["dism.exe", "/English", "/Get-WimInfo", f"/WimFile:{image}"], check=True)
+        text = cp.stdout or ""
+        blocks = re.split(r"(?=Index\s*:\s*\d+)", text)
+        result = []
+        for block in blocks:
+            mi = re.search(r"Index\s*:\s*(\d+)", block)
+            if not mi: continue
+            name = re.search(r"Name\s*:\s*(.+)", block)
+            desc = re.search(r"Description\s*:\s*(.+)", block)
+            arch = re.search(r"Architecture\s*:\s*(.+)", block)
+            ver = re.search(r"Version\s*:\s*(.+)", block)
+            result.append({"index": int(mi.group(1)), "name": name.group(1).strip() if name else "", "description": desc.group(1).strip() if desc else "", "architecture": arch.group(1).strip() if arch else "", "version": ver.group(1).strip() if ver else ""})
+        return result
+
+    def esd_to_wim_if_needed(self, media: Path) -> list[Path]:
+        sources = media / "sources"
+        esds = sorted(sources.glob("install*.esd"))
+        wims = sorted(sources.glob("install*.wim"))
+        if not wims and not esds:
+            raise RuntimeError("Не найден install.wim/install.esd.")
+        # Every install image is processed; ESD containers are exported without dropping indexes.
+        for esd in esds:
+            match = re.match(r"^(install.*)\.esd$", esd.name, re.I)
+            wim = sources / ((match.group(1) if match else "install") + ".wim")
+            infos = self.image_info(esd)
+            if not infos: raise RuntimeError(f"DISM не обнаружил индексы внутри {esd.name}.")
+            self.log(f"Преобразование {esd.name} в WIM: найдено индексов {len(infos)}.")
+            if wim.exists():
+                raise RuntimeError(f"Нельзя безопасно преобразовать {esd.name}: уже существует {wim.name}.")
+            for info in infos:
+                self.check_cancel()
+                args = ["dism.exe", "/Export-Image", f"/SourceImageFile:{esd}", f"/SourceIndex:{info['index']}", f"/DestinationImageFile:{wim}", f"/DestinationName:{info['name'] or 'Windows image ' + str(info['index'])}", "/Compress:max", "/CheckIntegrity"]
+                self.run_cmd(args)
+            self.image_info(wim)
+            esd.unlink()
+            self.log(f"{esd.name} успешно преобразован в {wim.name}; индексы проверены.")
+            wims.append(wim)
+        # Remove duplicates and return each image container.
+        result = sorted({p.resolve(): p for p in wims}.values())
+        return result
+
+    def locate_ru_lp(self, image_info: dict, candidates: list[Path]) -> Path | None:
+        arch = (image_info.get("architecture") or "").lower()
+        if "arm" in arch and "64" in arch: tokens = ("arm64",)
+        elif "x86" in arch and "64" not in arch: tokens = ("x86",)
+        else: tokens = ("x64", "amd64")
+        exact = []
+        for p in candidates:
+            n = p.name.lower()
+            if p.suffix.lower() != ".cab" or "ru-ru" not in n: continue
+            if "client-language-pack" not in n: continue
+            if not any(t in n for t in tokens): continue
+            if any(x in n for x in ("server", "winpe", "setup", "recovery")): continue
+            exact.append(p)
+        return exact[0] if exact else None
