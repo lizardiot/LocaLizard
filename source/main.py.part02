@@ -1,0 +1,95 @@
+            raise RuntimeError("Операция отменена пользователем. Обработка остановлена.")
+
+    def run_cmd(self, args: list[str], *, check=True, timeout=None, cwd=None, respect_cancel=True) -> subprocess.CompletedProcess:
+        if respect_cancel:
+            self.check_cancel()
+        args = list(args)
+        # Prefer the ADK DISM next to oscdimg; it is generally newer than the host OS DISM.
+        if args and Path(str(args[0])).name.lower() == "dism.exe":
+            adk_dism = self.find_adk_dism()
+            if adk_dism:
+                args[0] = adk_dism
+        self.log("Выполнение: " + quote_cmd(args))
+        p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                             text=True, encoding="utf-8", errors="replace", cwd=cwd,
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        try:
+            while True:
+                if respect_cancel:
+                    self.check_cancel()
+                try:
+                    out, _ = p.communicate(timeout=0.5)
+                    break
+                except subprocess.TimeoutExpired:
+                    continue
+        except Exception:
+            p.kill()
+            try: p.communicate(timeout=5)
+            except Exception: pass
+            raise
+        if out:
+            for line in out.splitlines():
+                self.log(line.rstrip())
+        cp = subprocess.CompletedProcess(args, p.returncode, out, None)
+        if check and cp.returncode != 0:
+            raise RuntimeError(f"Команда завершилась с кодом {cp.returncode}: {args[0]}")
+        return cp
+
+    def find_adk_dism(self) -> str | None:
+        roots = [
+            Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Windows Kits" / "10" / "Assessment and Deployment Kit" / "Deployment Tools",
+            Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Windows Kits" / "10" / "Assessment and Deployment Kit" / "Deployment Tools",
+            app_data_dir() / "ADK", app_data_dir() / "ADK" / "Deployment Tools",
+        ]
+        for root in roots:
+            if root.exists():
+                try:
+                    found = list(root.rglob("dism.exe"))
+                except OSError:
+                    found = []
+                # Do not accidentally select an unrelated copy such as dismhost.exe.
+                for candidate in found:
+                    if candidate.name.lower() == "dism.exe" and "deployment tools" in str(candidate).lower() or candidate.name.lower() == "dism.exe" and str(app_data_dir() / "ADK").lower() in str(candidate).lower():
+                        return str(candidate)
+        return shutil.which("dism.exe") or shutil.which("dism")
+
+    def ensure_oscdimg(self) -> str:
+        existing = find_oscdimg()
+        if existing:
+            self.log(f"Найден oscdimg: {existing}")
+            self.oscdimg = existing
+            return existing
+        if not is_windows():
+            raise RuntimeError("Автоматическая установка средств сборки доступна только в Windows.")
+        setup_dir = app_data_dir() / "download"
+        setup_dir.mkdir(parents=True, exist_ok=True)
+        setup = setup_dir / "adksetup.exe"
+        if not setup.exists() or setup.stat().st_size < 100_000:
+            self.log("oscdimg не найден. Загружаю официальный установщик Windows ADK с сайта Microsoft.")
+            self.download_file(ADK_SETUP_URL, setup, expected_sha1=None, expected_size=None)
+        install_root = app_data_dir() / "ADK"
+        install_root.mkdir(parents=True, exist_ok=True)
+        self.log("Автоматически устанавливаю только ADK Deployment Tools в профиль приложения. Пользователю не требуется запускать отдельный установщик.")
+        self.run_cmd([str(setup), "/quiet", "/norestart", "/installpath", str(install_root), "/features", "OptionId.DeploymentTools"], check=True, respect_cancel=False)
+        found = find_oscdimg()
+        if not found:
+            # Some ADK builds place the tools inside an additional Deployment Tools directory.
+            candidates = list(install_root.rglob("oscdimg.exe"))
+            found = str(candidates[0]) if candidates else None
+        if not found:
+            raise RuntimeError("Установка ADK завершилась, но oscdimg.exe не найден. Исходный ISO не изменён.")
+        self.oscdimg = found
+        self.log(f"Средства сборки готовы: {found}")
+        return found
+
+    def download_file(self, url: str, dest: Path, expected_sha1: str | None, expected_size: int | None) -> None:
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").lower()
+        if parsed.scheme != "https" or not (host.endswith(".windowsupdate.com") or host.endswith(".microsoft.com") or host == "microsoft.com"):
+            raise RuntimeError(f"Отклонена ссылка на языковой пакет с непроверенного домена: {host or '(нет домена)'}")
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        temp = dest.with_suffix(dest.suffix + ".download")
+        sha = hashlib.sha1()
+        size = 0
+        request = urllib.request.Request(url, headers={"User-Agent": f"{APP_NAME}/{APP_VERSION}"})
+        try:
