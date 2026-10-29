@@ -126,6 +126,7 @@
             p for p in self.donor_setup_files
             if p.name.lower().startswith("winpe-rejuv_ru-ru") and p not in expected
         ]
+        missing = [p.name for p in expected[:3] if not p.is_file()]
         if missing:
             self.log("Для локализации Setup не хватает ADK-пакетов: " + ", ".join(missing))
             return False
