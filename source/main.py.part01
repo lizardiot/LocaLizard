@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""IoT LTSC Russianizer — conservative offline Windows image localization GUI.
+"""LocaLizard — Windows IoT Enterprise LTSC Russian localization utility.
 
 The program requires Windows 10/11 x64, elevation, DISM, and oscdimg from Windows ADK
 for rebuilding a bootable BIOS+UEFI ISO. It never modifies the selected source ISO.
@@ -35,8 +35,8 @@ except Exception:
     DND_FILES = None
     BaseTk = tk.Tk
 
-APP_NAME = "IoT LTSC Russianizer"
-APP_VERSION = "0.2.0"
+APP_NAME = "LocaLizard"
+APP_VERSION = "0.0.1.8"
 UUP_API = "https://api.uupdump.net"
 UUP_SITE = "https://uupdump.net/"
 # Official Microsoft ADK bootstrap (Deployment Tools only; downloaded on demand).
@@ -44,7 +44,7 @@ ADK_SETUP_URL = "https://download.microsoft.com/download/8e0c0f5a-abb5-4358-a51b
 
 def app_data_dir() -> Path:
     root = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
-    return root / "IoTLTSC_Russianizer"
+    return root / "LocaLizard"
 DOCS_LANG = "https://learn.microsoft.com/windows-hardware/manufacture/desktop/add-language-packs-to-windows?view=windows-11"
 DOCS_FOD = "https://learn.microsoft.com/windows-hardware/manufacture/desktop/languages-overview?view=windows-11"
 DOCS_ADK = "https://learn.microsoft.com/windows-hardware/get-started/adk-install"
