@@ -79,6 +79,13 @@ jobs:
             if (-not $event.head_commit.message.StartsWith("release:") -or $event.head_commit.message -notlike "*$version*") { throw "Release commit must start with release: and include $version." }
           }
           gh release view $tag *> $null
-          if ($LASTEXITCODE -eq 0) { Write-Host "Release $tag already exists; preserving it."; exit 0 }
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Release $tag already exists; refreshing documentation assets and preserving executable assets."
+            gh release upload "$tag" "README.md" "README_RU.md" "CHANGELOG.md" --clobber
+            if ($LASTEXITCODE -ne 0) { throw "Failed to refresh documentation assets for release $tag" }
+            gh release edit "$tag" --title "LocaLizard $version" --notes-file "CHANGELOG.md"
+            if ($LASTEXITCODE -ne 0) { throw "Failed to refresh notes for release $tag" }
+            exit 0
+          }
           gh release create "$tag" "dist/LocaLizard.exe" "dist/SHA256.txt" "README.md" "README_RU.md" "CHANGELOG.md" --target "$env:GITHUB_SHA" --title "LocaLizard $version" --notes-file "CHANGELOG.md" --latest
           if ($LASTEXITCODE -ne 0) { throw "Failed to publish release $tag" }
