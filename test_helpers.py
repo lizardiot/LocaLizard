@@ -133,5 +133,62 @@ class HelperTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 main._ll_parse_update_manifest(root)
 
+    def test_catalog_parser_extracts_title_build_and_guid(self):
+        markup = """
+        <table id="ctl00_catalogBody_updateMatches">
+          <tr><td>check</td><td>Title</td></tr>
+          <tr>
+            <td><input type="checkbox" id="11111111-2222-3333-4444-555555555555" /></td>
+            <td>2026-09 Cumulative Update for Windows 11, version 24H2 for x64-based Systems (KB5129195) (26100.9457)</td>
+            <td>Windows 11</td><td>Security Updates</td><td>9/14/2026</td><td>n/a</td><td>4933.5 MB</td><td></td>
+          </tr>
+        </table>
+        """
+        rows = main._ll_catalog_parse_search_results(markup)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["id"], "11111111-2222-3333-4444-555555555555")
+        self.assertEqual(rows[0]["build_family"], 26100)
+        self.assertEqual(rows[0]["build_revision"], 9457)
+
+    def test_catalog_filters_stable_architecture_and_build(self):
+        rows = [
+            {"id": "a", "title": "2026-09 Cumulative Update for Windows 11, version 24H2 for x64-based Systems (KB5129195) (26100.9457)", "build_family": 26100, "build_revision": 9457},
+            {"id": "b", "title": "2026-09 Preview Cumulative Update for Windows 11, version 24H2 for x64-based Systems (KB5129999) (26100.9999)", "build_family": 26100, "build_revision": 9999},
+            {"id": "c", "title": "2026-09 Cumulative Update for Windows 11, version 24H2 for arm64-based Systems (KB5129195) (26100.9457)", "build_family": 26100, "build_revision": 9457},
+            {"id": "d", "title": "2026-09 Cumulative Update for Windows 11, version 25H2 for x64-based Systems (KB5129195) (26200.9457)", "build_family": 26200, "build_revision": 9457},
+        ]
+        got = main._ll_catalog_filter_results(rows, "x64", kb="5129195", target_build=26100)
+        self.assertEqual([row["id"] for row in got], ["a"])
+
+    def test_catalog_download_dialog_extracts_trusted_url_and_sha1(self):
+        digest = "a" * 40
+        markup = (
+            "downloadInformation[0].files[0].url = "
+            "'https://download.windowsupdate.com/c/msdownload/update/software/secu/2026/09/windows11.0-kb5129195-x64_test.msu';"
+            "downloadInformation[0].files[0].fileName = 'windows11.0-kb5129195-x64_test.msu';"
+            f"downloadInformation[0].files[0].digest = '{digest}';"
+        )
+        items = main._ll_catalog_extract_downloads(markup)
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["filename"], "windows11.0-kb5129195-x64_test.msu")
+        self.assertEqual(items[0]["sha1"], digest)
+        self.assertTrue(main._ll_catalog_safe_url(items[0]["url"]))
+
+    def test_catalog_rejects_untrusted_download_hosts(self):
+        self.assertFalse(main._ll_catalog_safe_url("https://updates.example.invalid/file.msu"))
+        self.assertFalse(main._ll_catalog_safe_url("http://download.windowsupdate.com/file.msu"))
+        self.assertTrue(main._ll_catalog_safe_url("https://catalog.s.download.windowsupdate.com/file.msu"))
+
+    def test_catalog_file_arch_recognizes_underscore_separators(self):
+        self.assertEqual(main._ll_catalog_file_arch("windows11.0-kb5129195-x64_abcd.msu"), "x64")
+        self.assertEqual(main._ll_catalog_file_arch("windows11.0-kb5129195-arm64_abcd.msu"), "arm64")
+        self.assertIsNone(main._ll_catalog_file_arch("SomeUpdate.msu"))
+
+    def test_catalog_latest_query_profiles(self):
+        self.assertIn("version 24H2", main._ll_catalog_query_for_build(26100, "x64"))
+        self.assertIn("arm64-based Systems", main._ll_catalog_query_for_build(26100, "arm64"))
+        with self.assertRaises(RuntimeError):
+            main._ll_catalog_query_for_build(99999, "x64")
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

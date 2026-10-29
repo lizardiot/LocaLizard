@@ -1,0 +1,666 @@
+# LocaLizard 0.0.9.0 — Microsoft Update Catalog automation and interactive boot validation.
+import html as _ll_html
+import http.cookiejar as _ll_cookiejar
+from tkinter import simpledialog as _ll_simpledialog
+
+_LL_CATALOG_BASE = "https://www.catalog.update.microsoft.com"
+_LL_CATALOG_HOST = "www.catalog.update.microsoft.com"
+_LL_CATALOG_ALLOWED_DOWNLOAD_HOSTS = {
+    "download.windowsupdate.com", "www.download.windowsupdate.com",
+    "catalog.s.download.windowsupdate.com", "dl.delivery.mp.microsoft.com", "download.microsoft.com",
+}
+_LL_VM_TEST_REPLY_REGISTRY = {}
+
+
+def _ll_catalog_safe_url(url: str) -> bool:
+    try:
+        parsed = urlparse(str(url))
+        host = (parsed.hostname or "").lower().rstrip(".")
+        return parsed.scheme.lower() == "https" and host in _LL_CATALOG_ALLOWED_DOWNLOAD_HOSTS and not parsed.username and not parsed.password
+    except Exception:
+        return False
+
+
+def _ll_catalog_fetch(opener, url: str, data: bytes | None = None, referer: str | None = None) -> str:
+    parsed = urlparse(url)
+    if parsed.scheme != "https" or (parsed.hostname or "").lower() not in {_LL_CATALOG_HOST, "catalog.update.microsoft.com"}:
+        raise RuntimeError("Отклонён адрес вне официального Microsoft Update Catalog.")
+    headers = {
+        "User-Agent": f"{APP_NAME}/{APP_VERSION} (Windows desktop utility)",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.8",
+        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8" if data is not None else "text/html; charset=UTF-8",
+    }
+    if referer:
+        headers["Referer"] = referer
+    try:
+        with opener.open(urllib.request.Request(url, data=data, headers=headers), timeout=45) as response:
+            final = urlparse(response.geturl())
+            if final.scheme != "https" or (final.hostname or "").lower() not in {_LL_CATALOG_HOST, "catalog.update.microsoft.com"}:
+                raise RuntimeError("Microsoft Update Catalog перенаправил запрос на неожиданный адрес.")
+            payload = response.read(12 * 1024 * 1024 + 1)
+    except Exception as exc:
+        raise RuntimeError(f"Запрос Microsoft Update Catalog не удался: {exc}") from exc
+    if len(payload) > 12 * 1024 * 1024:
+        raise RuntimeError("Ответ Microsoft Update Catalog превышает допустимый размер.")
+    return payload.decode("utf-8-sig", errors="replace")
+
+
+def _ll_html_text(value: str) -> str:
+    value = re.sub(r"(?is)<script\b.*?</script>|<style\b.*?</style>", " ", value or "")
+    value = re.sub(r"(?s)<[^>]+>", " ", value)
+    return re.sub(r"\s+", " ", _ll_html.unescape(value)).strip()
+
+
+def _ll_catalog_parse_search_results(markup: str) -> list[dict]:
+    results, seen = [], set()
+    for row_html in re.findall(r"(?is)<tr\b[^>]*>.*?</tr>", markup or ""):
+        if not re.search(r"(?is)goToDetails|updateID|type\s*=\s*['\"]checkbox|checkbox", row_html):
+            continue
+        cells = re.findall(r"(?is)<td\b[^>]*>(.*?)</td>", row_html)
+        if len(cells) < 2:
+            continue
+        title = _ll_html_text(cells[1])
+        if not title or title.lower() == "title":
+            continue
+        id_match = re.search(r"(?is)goToDetails\s*\(\s*['\"]?([0-9a-f-]{36})", row_html)
+        if not id_match:
+            id_match = re.search(r"(?is)(?:id|value)\s*=\s*['\"]([0-9a-f-]{36})['\"]", row_html)
+        if not id_match:
+            continue
+        uid = id_match.group(1).lower()
+        if uid in seen:
+            continue
+        seen.add(uid)
+        version = re.search(r"\((\d{5})\.(\d+)\)", title)
+        if not version:
+            version = re.search(r"OS\s+Build(?:s)?\s*[:( ]+(\d{5})\.(\d+)", title, re.I)
+        results.append({
+            "id": uid, "title": title,
+            "date": _ll_html_text(cells[4]) if len(cells) > 4 else "",
+            "size": _ll_html_text(cells[6]) if len(cells) > 6 else "",
+            "build_family": int(version.group(1)) if version else None,
+            "build_revision": int(version.group(2)) if version else 0,
+        })
+    return results
+
+
+def _ll_catalog_arch_matches(title: str, architecture: str) -> bool:
+    low, arch = (title or "").lower(), (architecture or "").lower()
+    if arch == "x64":
+        return bool(re.search(r"\bx64[- ]based systems\b|\bx64\b|\bamd64\b", low))
+    if arch == "arm64":
+        return bool(re.search(r"\barm64[- ]based systems\b|\barm64\b|\baarch64\b", low))
+    if arch == "x86":
+        return bool(re.search(r"\bx86[- ]based systems\b|\bx86\b", low))
+    return False
+
+
+def _ll_catalog_file_arch(filename: str) -> str | None:
+    match = re.search(r"(?:^|[-_.])(x64|amd64|arm64|x86)(?:[-_.]|$)", Path(filename).name, re.I)
+    if not match:
+        return None
+    value = match.group(1).lower()
+    return "x64" if value == "amd64" else value
+
+
+def _ll_catalog_filter_results(rows: list[dict], architecture: str, kb: str | None = None, target_build: int | None = None) -> list[dict]:
+    stable = []
+    for row in rows:
+        title, low = row.get("title", ""), row.get("title", "").lower()
+        if not _ll_catalog_arch_matches(title, architecture):
+            continue
+        if kb and not re.search(r"\bKB\s*" + re.escape(str(kb)) + r"\b", title, re.I):
+            continue
+        if target_build is not None and row.get("build_family") != target_build:
+            continue
+        if not any(term in low for term in ("cumulative update", "out-of-band update")):
+            continue
+        if any(term in low for term in ("preview", "insider", "canary", "beta channel", "dev channel", "dynamic update", "server", ".net framework", "defender")):
+            continue
+        if "windows 10" not in low and "windows 11" not in low:
+            continue
+        stable.append(dict(row))
+    stable.sort(key=lambda r: (int(r.get("build_revision") or 0), int(r.get("build_family") or 0), str(r.get("date") or "")), reverse=True)
+    unique, seen = [], set()
+    for row in stable:
+        if row["id"] not in seen:
+            seen.add(row["id"])
+            unique.append(row)
+    return unique[:40]
+
+
+def _ll_catalog_extract_downloads(markup: str) -> list[dict]:
+    found = []
+    pattern = re.compile(r"\[(?P<idx>\d+)\]\.url\s*=\s*['\"](?P<url>https?://[^'\"]+)['\"]", re.I)
+    for match in pattern.finditer(markup or ""):
+        idx = match.group("idx")
+        url = _ll_html.unescape(match.group("url")).replace(r"\/", "/").replace("&amp;", "&")
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").lower()
+        if parsed.scheme == "http" and host in _LL_CATALOG_ALLOWED_DOWNLOAD_HOSTS:
+            url = "https://" + url.split("://", 1)[1]
+        if not _ll_catalog_safe_url(url):
+            continue
+        file_match = re.search(r"\[" + re.escape(idx) + r"\]\.fileName\s*=\s*['\"]([^'\"]+)['\"]", markup, re.I)
+        digest_match = re.search(r"\[" + re.escape(idx) + r"\]\.digest\s*=\s*['\"]([^'\"]+)['\"]", markup, re.I)
+        size_match = re.search(r"\[" + re.escape(idx) + r"\]\.(?:size|fileSize)\s*=\s*['\"]?(\d+)", markup, re.I)
+        filename = _ll_html.unescape(file_match.group(1)).strip() if file_match else Path(urlparse(url).path).name
+        filename = Path(filename.replace("\\", "/")).name
+        if not filename or Path(filename).suffix.lower() not in (".msu", ".cab"):
+            continue
+        digest = digest_match.group(1).strip() if digest_match else ""
+        sha1_match = re.fullmatch(r"(?:sha1[:=])?([0-9a-f]{40})", digest, re.I)
+        item = {
+            "filename": filename, "url": url,
+            "sha1": sha1_match.group(1).lower() if sha1_match else None,
+            "size": int(size_match.group(1)) if size_match else None,
+            "catalog_index": idx,
+        }
+        if not any(existing["url"] == url for existing in found):
+            found.append(item)
+    return found
+
+
+def _ll_catalog_update_dialog(update_id: str) -> list[dict]:
+    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(_ll_cookiejar.CookieJar()))
+    update_ids = json.dumps([{"size": 0, "languages": "", "uidInfo": update_id, "updateID": update_id}], separators=(",", ":"))
+    data = urllib.parse.urlencode({"updateIDs": update_ids}).encode("utf-8")
+    result = _ll_catalog_fetch(opener, _LL_CATALOG_BASE + "/DownloadDialog.aspx", data, referer=_LL_CATALOG_BASE + "/Search.aspx")
+    links = _ll_catalog_extract_downloads(result)
+    if not links:
+        raise RuntimeError("Каталог не вернул прямые ссылки MSU/CAB. Возможно, Microsoft изменил формат DownloadDialog; откройте страницу KB в браузере.")
+    return links
+
+
+def _ll_catalog_query_for_build(build: int, architecture: str) -> str:
+    versions = {
+        19041: "Windows 10 Version 2004", 19042: "Windows 10 Version 20H2",
+        19043: "Windows 10 Version 21H1", 19044: "Windows 10 Version 21H2",
+        19045: "Windows 10 Version 22H2", 22000: "Windows 11, version 21H2",
+        22621: "Windows 11, version 22H2", 22631: "Windows 11, version 23H2",
+        26100: "Windows 11, version 24H2", 26200: "Windows 11, version 25H2",
+        26300: "Windows 11, version 26H2",
+    }
+    if build not in versions:
+        raise RuntimeError(f"Для сборки {build} пока нет профиля автоматического поиска LCU. Введите номер KB вручную.")
+    if architecture not in ("x64", "x86", "arm64"):
+        raise RuntimeError(f"Неподдерживаемая архитектура для Microsoft Update Catalog: {architecture}")
+    return f"Cumulative Update for {versions[build]} for {architecture}-based Systems"
+
+
+def _ll_catalog_search(query: str, architecture: str, kb: str | None = None, target_build: int | None = None) -> list[dict]:
+    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(_ll_cookiejar.CookieJar()))
+    url = _LL_CATALOG_BASE + "/Search.aspx?" + urllib.parse.urlencode({"q": query})
+    markup = _ll_catalog_fetch(opener, url)
+    rows = _ll_catalog_parse_search_results(markup)
+    filtered = _ll_catalog_filter_results(rows, architecture, kb, target_build)
+    if not filtered:
+        raise RuntimeError(
+            "В первом ответе Microsoft Update Catalog не найдено стабильное LCU для выбранной сборки/архитектуры. "
+            "Возможно, Catalog изменил HTML или требует интерактивную сессию. Официальный поиск: " + url
+        )
+    return filtered
+
+
+def _ll_worker_for_app(app) -> Worker:
+    source_text = app.iso_var.get().strip()
+    output_text = app.out_var.get().strip()
+    donor_text = app.donor_iso_var.get().strip() if hasattr(app, "donor_iso_var") else ""
+    fod_text = app.fod_var.get().strip() if hasattr(app, "fod_var") else ""
+    updates_text = app.updates_var.get().strip() if hasattr(app, "updates_var") else ""
+    work_text, package_text = app.work_var.get().strip(), app.pack_var.get().strip()
+    source = Path(source_text) if source_text else Path.home() / "catalog-placeholder.iso"
+    output = Path(output_text) if output_text else source.with_name("catalog-placeholder-output.iso")
+    cfg = RunConfig(
+        source, Path(donor_text) if donor_text else None, output,
+        Path(package_text) if package_text else app_data_dir() / "Packages",
+        Path(fod_text) if fod_text else None,
+        Path(work_text) if work_text else Path.home() / "LocaLizard_Work",
+        True, False, Path(updates_text) if updates_text else None, False, False,
+    )
+    return Worker(app.events, app.cancel_event, cfg)
+
+
+def _ll_detect_iso_target(worker: Worker, iso_path: Path) -> dict:
+    if not is_windows():
+        raise RuntimeError("Определение сборки ISO требует Windows, PowerShell и DISM.")
+    if not iso_path.is_file():
+        raise RuntimeError(f"Входной ISO не найден: {iso_path}")
+    quoted = str(iso_path.resolve()).replace("'", "''")
+    drive = None
+    try:
+        cp = worker.powershell(
+            f"$img=Mount-DiskImage -ImagePath '{quoted}' -PassThru; "
+            "$vol=$img | Get-Volume | Where-Object {$_.DriveLetter} | Select-Object -First 1; "
+            "if(-not $vol){throw 'ISO has no drive letter'}; Write-Output ($vol.DriveLetter + ':')",
+            check=True,
+        )
+        match = re.search(r"(?im)^\s*([A-Z]):?\s*$", (cp.stdout or "").strip())
+        if not match:
+            raise RuntimeError("Не удалось определить букву диска ISO.")
+        drive = match.group(1).upper() + ":\\"
+        sources = Path(drive) / "sources"
+        candidates = sorted(list(sources.glob("install*.wim")) + list(sources.glob("install*.esd")))
+        if not candidates:
+            raise RuntimeError("В ISO не найден install.wim/install.esd.")
+        infos = worker.image_info(candidates[0])
+        if not infos:
+            raise RuntimeError("DISM не прочитал индексы install.wim/install.esd.")
+        info = next((x for x in infos if worker.build_family(x.get("version", "")) and x.get("architecture")), infos[0])
+        build, arch = worker.build_family(info.get("version", "")), worker.arch_token(info.get("architecture", ""))
+        if not build:
+            raise RuntimeError(f"Не удалось определить семейство сборки из версии {info.get('version')!r}.")
+        return {"build_family": build, "architecture": arch, "version": info.get("version", ""),
+                "image_name": info.get("name", ""), "image_file": candidates[0].name}
+    finally:
+        if drive:
+            worker.powershell(f"Dismount-DiskImage -ImagePath '{quoted}'", check=False, respect_cancel=False)
+
+
+def _ll_start_catalog_search(app) -> None:
+    if getattr(app, "worker_thread", None) and app.worker_thread.is_alive():
+        messagebox.showwarning(APP_NAME, "Сначала дождитесь завершения текущей операции.")
+        return
+    entered = _ll_simpledialog.askstring(
+        "Microsoft Update Catalog",
+        "Введите KB для конкретного обновления.\nОставьте поле пустым, чтобы найти последнее стабильное LCU для выбранного входного ISO.",
+        initialvalue="", parent=app,
+    )
+    if entered is None:
+        return
+    entered = entered.strip()
+    kb = re.sub(r"(?i)^KB", "", entered).strip() if entered else None
+    if kb and not re.fullmatch(r"\d{6,8}", kb):
+        messagebox.showerror(APP_NAME, "Введите номер KB из 6–8 цифр (например, KB5129195) или оставьте поле пустым.")
+        return
+    source_text = app.iso_var.get().strip()
+    source = Path(source_text) if source_text else None
+    if not kb and (not source or not source.is_file()):
+        messagebox.showerror(APP_NAME, "Для автопоиска последнего LCU выберите входной ISO. Без ISO укажите номер KB.")
+        return
+    manual_arch = None
+    if not source or not source.is_file():
+        if not kb:
+            messagebox.showerror(APP_NAME, "Выберите входной ISO либо укажите KB.")
+            return
+        manual_arch = _ll_simpledialog.askstring("Архитектура", "Введите x64, x86 или arm64.", initialvalue="x64", parent=app)
+        if manual_arch is None:
+            return
+        manual_arch = manual_arch.strip().lower()
+        if manual_arch not in ("x64", "x86", "arm64"):
+            messagebox.showerror(APP_NAME, "Архитектура должна быть x64, x86 или arm64.")
+            return
+    worker = _ll_worker_for_app(app)  # Capture Tk variables on the GUI thread.
+    _ll_save_settings_v089(app)
+    app.cancel_event.clear()
+    app.start_btn.configure(state="disabled")
+    app.cancel_btn.configure(state="normal")
+    if hasattr(app, "ll_catalog_btn"):
+        app.ll_catalog_btn.configure(state="disabled")
+    app.progress.start(10)
+    app.status_var.set("Поиск обновления в Microsoft Update Catalog…")
+    def background():
+        try:
+            worker.check_cancel()
+            target = _ll_detect_iso_target(worker, source) if source and source.is_file() else None
+            arch = target["architecture"] if target else manual_arch
+            build = target["build_family"] if target else None
+            if target:
+                worker.log(f"ISO: {target['image_file']}, {target['image_name']}; build={build}, arch={arch}.")
+            query = "KB" + kb if kb else _ll_catalog_query_for_build(build, arch)
+            worker.log("Запрос Microsoft Update Catalog: " + query)
+            rows = _ll_catalog_search(query, arch, kb=kb, target_build=build)
+            app.events.put(("catalog_results", json.dumps({
+                "kb": kb, "architecture": arch, "target_build": build, "query": query,
+                "source_iso": str(source) if source else None, "target_info": target, "results": rows,
+            }, ensure_ascii=False)))
+        except Exception as exc:
+            app.events.put(("catalog_error", str(exc)))
+    app.worker_thread = threading.Thread(target=background, daemon=True, name="LocaLizardCatalogSearch")
+    app.worker_thread.start()
+
+
+def _ll_show_catalog_results(app, payload: str) -> None:
+    try:
+        data = json.loads(payload)
+        rows = data["results"]
+    except (ValueError, KeyError, TypeError) as exc:
+        messagebox.showerror(APP_NAME, f"Не удалось разобрать результаты Catalog: {exc}")
+        return
+    window = tk.Toplevel(app)
+    window.title("Выберите целевое обновление")
+    window.geometry("980x370")
+    window.transient(app)
+    window.grab_set()
+    ttk.Label(window, text=f"Выберите стабильное LCU для {data['architecture']}. Проверьте продукт, сборку и номер KB.",
+              wraplength=930).pack(anchor="w", padx=12, pady=(12, 6))
+    listing = tk.Listbox(window, height=12, width=132, exportselection=False)
+    listing.pack(fill="both", expand=True, padx=12, pady=4)
+    for row in rows:
+        listing.insert("end", f"{row.get('title','')} | Дата: {row.get('date') or '—'} | Размер: {row.get('size') or '—'}")
+    listing.selection_set(0)
+    listing.activate(0)
+    controls = ttk.Frame(window)
+    controls.pack(fill="x", padx=12, pady=10)
+    ttk.Button(controls, text="Отмена", command=window.destroy).pack(side="right")
+    def choose():
+        selection = listing.curselection()
+        if not selection:
+            messagebox.showwarning(APP_NAME, "Выберите одно обновление.", parent=window)
+            return
+        row = rows[int(selection[0])]
+        kb_match = re.search(r"\bKB\s*(\d{6,8})\b", row.get("title", ""), re.I)
+        target_kb = kb_match.group(1) if kb_match else data.get("kb")
+        if not target_kb:
+            messagebox.showerror(APP_NAME, "В заголовке результата не найден номер KB.", parent=window)
+            return
+        if row.get("build_family") is None:
+            messagebox.showerror(APP_NAME, "Нет номера сборки в заголовке Catalog. Не буду создавать manifest с неизвестной целью.", parent=window)
+            return
+        if not messagebox.askyesno(
+            "Подтвердить загрузку",
+            "Пакеты будут загружены с официального Microsoft Update Catalog. После загрузки SHA-1 будет сверяться, если он опубликован; SHA-256 будет вычислен локально.\n\n"
+            + row["title"] + "\n\nПродолжить?",
+            parent=window,
+        ):
+            return
+        window.destroy()
+        _ll_begin_catalog_download(app, str(target_kb), data["architecture"], row)
+    ttk.Button(controls, text="Загрузить выбранное обновление", command=choose).pack(side="right", padx=(0, 8))
+    window.focus_force()
+
+
+def _ll_begin_catalog_download(app, kb: str, architecture: str, target_row: dict) -> None:
+    if target_row.get("build_family") is None:
+        messagebox.showerror(APP_NAME, "Не удалось определить сборку выбранного обновления.")
+        return
+    worker = _ll_worker_for_app(app)  # Capture UI values before entering the worker thread.
+    app.cancel_event.clear()
+    app.start_btn.configure(state="disabled")
+    app.cancel_btn.configure(state="normal")
+    if hasattr(app, "ll_catalog_btn"):
+        app.ll_catalog_btn.configure(state="disabled")
+    app.progress.start(10)
+    app.status_var.set(f"Загрузка KB{kb} и checkpoint-пакетов из Microsoft Update Catalog…")
+    def background():
+        try:
+            target_build = int(target_row["build_family"])
+            links = _ll_catalog_update_dialog(str(target_row["id"]))
+            parsed = []
+            for item in links:
+                filename = Path(item["filename"]).name
+                if Path(filename).suffix.lower() not in (".msu", ".cab"):
+                    continue
+                number_match = re.search(r"kb(\d{6,8})", filename, re.I)
+                if not number_match:
+                    continue
+                file_arch = _ll_catalog_file_arch(filename)
+                if file_arch and file_arch != architecture:
+                    continue
+                update_kb = number_match.group(1)
+                kind = "target_lcu" if update_kb == kb else "checkpoint"
+                if kind == "checkpoint" and Path(filename).suffix.lower() != ".msu":
+                    continue
+                parsed.append({**item, "filename": filename, "kb": update_kb, "kind": kind})
+            target_files = [x for x in parsed if x["kind"] == "target_lcu"]
+            if len(target_files) != 1:
+                raise RuntimeError(
+                    f"Для KB{kb} ожидался один целевой пакет LCU, найдено {len(target_files)}. "
+                    "Не буду выбирать пакет наугад; проверьте Catalog или используйте ручной updates.json."
+                )
+            checkpoints = [x for x in parsed if x["kind"] == "checkpoint"]
+            checkpoints.sort(key=lambda x: (int(x["kb"]), x["filename"].lower()))
+            ordered = checkpoints + target_files
+            package_root = Path(app.pack_var.get().strip()) if app.pack_var.get().strip() else app_data_dir() / "Packages"
+            dest = package_root / "catalog" / f"KB{kb}_{architecture}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
+            dest.mkdir(parents=True, exist_ok=False)
+            files, manifest_rows = [], []
+            for item in ordered:
+                worker.check_cancel()
+                filename = Path(item["filename"]).name
+                if Path(filename).name != filename:
+                    raise RuntimeError("Catalog вернул небезопасное имя файла.")
+                output = dest / filename
+                worker.log(f"Загрузка Catalog: KB{item['kb']} ({item['kind']}), {filename}.")
+                worker.download_file(item["url"], output, item.get("sha1"), item.get("size"))
+                actual_sha256 = _ll_hash(output)
+                files.append({
+                    "file": filename, "kb": item["kb"], "kind": item["kind"], "size": output.stat().st_size,
+                    "sha1_verified": bool(item.get("sha1")), "sha256": actual_sha256, "url": item["url"],
+                })
+                manifest_rows.append({"file": filename, "kind": item["kind"], "sha256": actual_sha256})
+            if not manifest_rows or manifest_rows[-1]["kind"] != "target_lcu":
+                raise RuntimeError("Порядок цепочки обновлений нарушен: target LCU должен быть последним.")
+            manifest = {
+                "schema_version": 1, "target_build_family": target_build, "architecture": architecture,
+                "catalog_query": "KB" + kb, "catalog_title": target_row["title"], "catalog_update_id": target_row["id"],
+                "ordered_packages": manifest_rows,
+                "hash_note": "SHA-256 вычислен локально после HTTPS-загрузки; SHA-1 Catalog сверялся только если сервер предоставил его.",
+            }
+            (dest / "updates.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+            (dest / "catalog-source.json").write_text(json.dumps({
+                "source": "Microsoft Update Catalog",
+                "catalog_search_url": _LL_CATALOG_BASE + "/Search.aspx?" + urllib.parse.urlencode({"q": "KB" + kb}),
+                "selected_title": target_row["title"], "update_id": target_row["id"],
+                "downloaded_at": datetime.now().isoformat(timespec="seconds"), "packages": files,
+            }, ensure_ascii=False, indent=2), encoding="utf-8")
+            (dest / "SHA256.txt").write_text("\n".join(f"{x['sha256']} *{x['file']}" for x in files) + "\n", encoding="ascii")
+            app.events.put(("catalog_ready", json.dumps({
+                "folder": str(dest), "kb": kb, "architecture": architecture, "target_build": target_build,
+                "title": target_row["title"], "packages": files, "manifest": str(dest / "updates.json"),
+                "sha256_file": str(dest / "SHA256.txt"),
+            }, ensure_ascii=False)))
+        except Exception as exc:
+            app.events.put(("catalog_error", str(exc)))
+    app.worker_thread = threading.Thread(target=background, daemon=True, name="LocaLizardCatalogDownload")
+    app.worker_thread.start()
+
+
+def _ll_hyperv_smoke_test_v090(self) -> dict:
+    """Launch an isolated Hyper-V VM and ask the operator to confirm the visible Setup screen."""
+    if not is_windows() or not is_admin():
+        self.log("Hyper-V boot-test пропущен: требуются Windows, Hyper-V и права администратора.")
+        return {"status": "unavailable", "reason": "requires_windows_hyperv_and_elevation", "visual_setup_confirmed": False}
+    if not self.cfg.output_iso.is_file():
+        return {"status": "unavailable", "reason": "iso_missing", "visual_setup_confirmed": False}
+    token = uuid.uuid4().hex
+    vm_name = "LocaLizard-Smoke-" + token[:8]
+    root = self.work / ("hyperv_smoke_" + token[:8])
+    script_path = self.work / ("hyperv_smoke_" + token[:8] + ".ps1")
+    self.work.mkdir(parents=True, exist_ok=True)
+    root_q = str(root).replace("'", "''")
+    iso_q = str(self.cfg.output_iso.resolve()).replace("'", "''")
+    registry = _LL_VM_TEST_REPLY_REGISTRY.setdefault(id(self.events), {})
+    reply = {"event": threading.Event(), "value": None}
+    registry[token] = reply
+    script = r'''
+$ErrorActionPreference = "Stop"
+$Name = '__VMNAME__'
+$Root = '__VMROOT__'
+$Iso = '__ISOPATH__'
+$Created = $false
+try {
+  if (-not (Get-Command New-VM -ErrorAction SilentlyContinue)) { throw "Hyper-V PowerShell module is unavailable." }
+  New-Item -ItemType Directory -Force -Path $Root | Out-Null
+  New-VM -Name $Name -Generation 2 -MemoryStartupBytes 2GB -NoVHD -Path $Root | Out-Null
+  $Created = $true
+  Set-VMProcessor -VMName $Name -Count 2
+  Get-VMNetworkAdapter -VMName $Name | Remove-VMNetworkAdapter
+  Add-VMDvdDrive -VMName $Name -Path $Iso | Out-Null
+  Set-VMFirmware -VMName $Name -EnableSecureBoot Off -FirstBootDevice (Get-VMDvdDrive -VMName $Name)
+  Start-VM -Name $Name | Out-Null
+  Start-Process -FilePath (Join-Path $env:WINDIR "System32\vmconnect.exe") -ArgumentList @("localhost", $Name) -ErrorAction SilentlyContinue
+  Start-Sleep -Seconds 25
+  $State = (Get-VM -Name $Name).State.ToString()
+  if ($State -ne "Running") { throw "VM left Running state: $State" }
+  Write-Output "HYPERV_VM_STARTED"
+} catch {
+  if ($Created -and (Get-VM -Name $Name -ErrorAction SilentlyContinue)) {
+    Stop-VM -Name $Name -TurnOff -Force -ErrorAction SilentlyContinue
+    Remove-VM -Name $Name -Force -ErrorAction SilentlyContinue
+  }
+  throw
+}
+'''
+    script_path.write_text(script.replace("__VMNAME__", vm_name).replace("__VMROOT__", root_q).replace("__ISOPATH__", iso_q), encoding="utf-8")
+    try:
+        cp = self.run_cmd(["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", str(script_path)],
+                          check=False, respect_cancel=False, timeout=90)
+        output = cp.stdout or ""
+        if cp.returncode != 0 or "HYPERV_VM_STARTED" not in output:
+            self.log(f"Hyper-V boot-test не смог запустить VM: {output[-1500:]}")
+            return {"status": "failed_or_unavailable", "returncode": cp.returncode, "details": output[-2000:],
+                    "visual_setup_confirmed": False}
+        self.log("Hyper-V VM запущена. В окне VMConnect проверьте изображение; затем ответьте на запрос подтверждения.")
+        self.emit("vmtest_prompt", json.dumps({"token": token, "vm_name": vm_name}, ensure_ascii=False))
+        replied = reply["event"].wait(300)
+        visual = bool(reply["value"]) if replied else False
+        if replied and visual:
+            result = {"status": "visual_setup_confirmed", "vm_started": True, "vm_name": vm_name,
+                      "visual_setup_confirmed": True, "confirmation_source": "user_observation",
+                      "observation_timeout_seconds": 300, "networking": "disabled"}
+            self.log("Пользователь подтвердил, что в VMConnect виден экран Windows Setup.")
+        elif replied:
+            result = {"status": "visual_setup_not_confirmed", "vm_started": True, "vm_name": vm_name,
+                      "visual_setup_confirmed": False, "confirmation_source": "user_observation",
+                      "observation_timeout_seconds": 300, "networking": "disabled"}
+            self.log("Пользователь не подтвердил отображение Windows Setup в VMConnect.")
+        else:
+            result = {"status": "visual_confirmation_timeout", "vm_started": True, "vm_name": vm_name,
+                      "visual_setup_confirmed": False, "observation_timeout_seconds": 300, "networking": "disabled"}
+            self.log("Истекло время ожидания подтверждения экрана Setup; результат считается неподтверждённым.")
+        return result
+    except Exception as exc:
+        self.log(f"Hyper-V boot-test недоступен/ошибся; ISO остаётся созданным: {exc}")
+        return {"status": "unavailable", "reason": str(exc), "visual_setup_confirmed": False}
+    finally:
+        reply["event"].set()
+        registry.pop(token, None)
+        cleanup = (
+            "$n='" + vm_name + "'; $r='" + root_q + "'; "
+            "if (Get-VM -Name $n -ErrorAction SilentlyContinue) { "
+            "Stop-VM -Name $n -TurnOff -Force -ErrorAction SilentlyContinue; "
+            "Remove-VM -Name $n -Force -ErrorAction SilentlyContinue }; "
+            "if (Test-Path -LiteralPath $r) { Remove-Item -LiteralPath $r -Recurse -Force -ErrorAction SilentlyContinue }"
+        )
+        try:
+            self.run_cmd(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", cleanup],
+                         check=False, respect_cancel=False, timeout=90)
+        except Exception as exc:
+            self.log(f"Очистка временной Hyper-V VM требует ручной проверки: {exc}")
+        try:
+            script_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def _ll_build_ui_v090(self):
+    _LL_PREV_BUILD_UI_V090(self)
+    _ll_read_settings_v089(self)
+    try:
+        root = self.winfo_children()[0]
+        row = ttk.Frame(root)
+        row.pack(side="bottom", fill="x", pady=(5, 0))
+        self.ll_catalog_btn = ttk.Button(row, text="Найти/скачать LCU из Microsoft Update Catalog…",
+                                         command=lambda: _ll_start_catalog_search(self))
+        self.ll_catalog_btn.pack(side="left", padx=(0, 8))
+        ttk.Label(row, text="Автопоиск учитывает сборку/архитектуру выбранного ISO; загрузка требует подтверждения.",
+                  wraplength=590).pack(side="left", padx=6)
+    except Exception as exc:
+        try:
+            self._append_log(f"Не удалось добавить Catalog UI: {exc}")
+        except Exception:
+            pass
+
+
+def _ll_poll_events_v090(self):
+    try:
+        while True:
+            kind, payload = self.events.get_nowait()
+            if kind == "log":
+                self._append_log(payload)
+            elif kind == "progress":
+                self.status_var.set(payload)
+            elif kind == "done":
+                self.progress.stop()
+                self.start_btn.configure(state="normal")
+                self.cancel_btn.configure(state="disabled")
+                if hasattr(self, "ll_catalog_btn"):
+                    self.ll_catalog_btn.configure(state="normal")
+                self.status_var.set("Готово: " + payload)
+                suffix = ".localization-audit.json" if Path(payload).suffix.lower() == ".wim" else ".report.json"
+                messagebox.showinfo(APP_NAME, f"Создание образа завершено.\n\n{payload}\nОтчёт: {Path(payload).with_suffix(suffix)}")
+            elif kind == "error":
+                self.progress.stop()
+                self.start_btn.configure(state="normal")
+                self.cancel_btn.configure(state="disabled")
+                if hasattr(self, "ll_catalog_btn"):
+                    self.ll_catalog_btn.configure(state="normal")
+                self.status_var.set("Обработка остановлена. Смотрите журнал и рабочую папку.")
+                messagebox.showerror(APP_NAME, "Обработка остановлена из-за ошибки. Рабочие файлы и журнал сохранены, если они успели создаться.\n\n" + payload)
+            elif kind == "uup":
+                self.status_var.set("Проверка источников завершена.")
+                messagebox.showinfo("Проверка источников", payload)
+            elif kind == "catalog_results":
+                self.progress.stop()
+                self.start_btn.configure(state="normal")
+                self.cancel_btn.configure(state="disabled")
+                if hasattr(self, "ll_catalog_btn"):
+                    self.ll_catalog_btn.configure(state="normal")
+                self.status_var.set("Выберите подходящее стабильное LCU из результатов Catalog.")
+                _ll_show_catalog_results(self, payload)
+            elif kind == "catalog_ready":
+                data = json.loads(payload)
+                self.progress.stop()
+                self.start_btn.configure(state="normal")
+                self.cancel_btn.configure(state="disabled")
+                if hasattr(self, "ll_catalog_btn"):
+                    self.ll_catalog_btn.configure(state="normal")
+                self.updates_var.set(data["folder"])
+                _ll_save_settings_v089(self)
+                self.status_var.set(f"Цепочка KB{data['kb']} загружена; она будет применена при следующей обработке ISO.")
+                summary = "\n".join(f"• {x['kind']}: {x['file']} ({human_bytes(x['size'])})" for x in data["packages"])
+                messagebox.showinfo(
+                    "Microsoft Update Catalog",
+                    f"Создана цепочка обновлений для {data['target_build']}/{data['architecture']}.\n\n"
+                    + data["title"] + "\n\n" + summary + "\n\n"
+                    + "updates.json:\n" + data["manifest"] + "\n\nSHA-256:\n" + data["sha256_file"]
+                    + "\n\nПуть к цепочке установлен в поле «Обновления»."
+                )
+            elif kind == "catalog_error":
+                self.progress.stop()
+                self.start_btn.configure(state="normal")
+                self.cancel_btn.configure(state="disabled")
+                if hasattr(self, "ll_catalog_btn"):
+                    self.ll_catalog_btn.configure(state="normal")
+                self.status_var.set("Поиск/загрузка Microsoft Update Catalog завершились ошибкой.")
+                messagebox.showerror("Microsoft Update Catalog", payload)
+            elif kind == "vmtest_prompt":
+                try:
+                    data = json.loads(payload)
+                    pending = _LL_VM_TEST_REPLY_REGISTRY.get(id(self.events), {}).get(data.get("token"))
+                    if pending:
+                        answer = messagebox.askyesno(
+                            "Проверка запуска Windows Setup",
+                            f"Окно VMConnect для временной VM {data.get('vm_name','')} открыто.\n\n"
+                            "Переключитесь в VMConnect и проверьте изображение. Нажмите «Да» только если виден экран/интерфейс установки Windows. "
+                            "Нажмите «Нет», если чёрный экран, ошибка загрузки, UEFI shell или вы не можете подтвердить запуск.",
+                            parent=self,
+                        )
+                        pending["value"] = bool(answer)
+                        pending["event"].set()
+                except Exception as exc:
+                    self._append_log(f"Не удалось запросить подтверждение VMConnect: {exc}")
+            else:
+                self._append_log(f"Неизвестное событие приложения: {kind}")
+    except queue.Empty:
+        pass
+    self.after(150, self._poll_events)
+
+
+_LL_PREV_BUILD_UI_V090 = App._build_ui
+App._build_ui = _ll_build_ui_v090
+App._poll_events = _ll_poll_events_v090
+_ll_hyperv_smoke_test = _ll_hyperv_smoke_test_v090
+Worker.hyperv_smoke_test = _ll_hyperv_smoke_test_v090
