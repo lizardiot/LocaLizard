@@ -374,7 +374,7 @@ Worker.run=_ll_worker_run
 _LL_ORIGINAL_CLASSIFIER=Worker.classify_donor_package
 def _ll_classify_donor_package(path: Path):
     low=str(path).replace("\\","/").lower()
-    if Path(low).name=="lp.cab" and "/sources/langpacks/ru-ru/" in low: return None
+    if Path(low).name=="lp.cab" and ("/sources/langpacks/ru-ru/" in low or low.startswith("sources/langpacks/ru-ru/")): return None
     return _LL_ORIGINAL_CLASSIFIER(path)
 Worker.classify_donor_package=staticmethod(_ll_classify_donor_package)
 
