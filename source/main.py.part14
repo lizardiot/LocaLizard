@@ -1,0 +1,929 @@
+# LocaLizard 0.0.8.9: complete the remaining servicing workflows.
+# Assembled after the v0.8.1 reliability layer.
+
+import uuid
+
+
+def _ll_sequence_swm(folder: Path, stem: str = "install") -> list[Path]:
+    """Return a contiguous DISM split-WIM set in canonical order."""
+    folder = Path(folder)
+    first = folder / f"{stem}.swm"
+    if not first.is_file():
+        return []
+    numbered = {}
+    for candidate in folder.glob(f"{stem}*.swm"):
+        if candidate.name.lower() == f"{stem}.swm".lower():
+            continue
+        match = re.fullmatch(re.escape(stem) + r"([0-9]+)\.swm", candidate.name, re.I)
+        if match:
+            number = int(match.group(1))
+            if number < 2:
+                raise RuntimeError(f"Неверная нумерация split-WIM: {candidate.name}")
+            numbered[number] = candidate
+    expected = list(range(2, max(numbered.keys(), default=1) + 1))
+    missing = [n for n in expected if n not in numbered]
+    if missing:
+        raise RuntimeError(f"Набор {stem}.swm неполный: отсутствуют части {', '.join(str(n) for n in missing)}.")
+    return [first] + [numbered[n] for n in expected]
+
+
+def _ll_parse_update_manifest(root: Path) -> list[dict]:
+    """Validate an explicit offline update sequence with SHA-256 for every file."""
+    root = Path(root)
+    manifest_path = root / "updates.json"
+    if not root.is_dir() or not manifest_path.is_file():
+        raise RuntimeError("Для интеграции обновлений выберите каталог с файлом updates.json.")
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(f"Не удалось прочитать updates.json: {exc}") from exc
+    if manifest.get("schema_version") != 1:
+        raise RuntimeError("В updates.json требуется schema_version: 1.")
+    build = manifest.get("target_build_family")
+    if not isinstance(build, int) or build < 7600:
+        raise RuntimeError("В updates.json укажите целое target_build_family (например, 26100).")
+    try:
+        arch = _ll_arch_token(str(manifest.get("architecture", "")))
+    except Exception as exc:
+        raise RuntimeError("В updates.json укажите architecture: x64, x86 или arm64.") from exc
+    rows = manifest.get("ordered_packages")
+    if not isinstance(rows, list) or not rows:
+        raise RuntimeError("В updates.json требуется непустой массив ordered_packages.")
+    allowed_kinds = {"checkpoint", "target_lcu", "winre_ssu", "safeos_dynamic_update"}
+    result, seen_files = [], set()
+    for i, row in enumerate(rows):
+        if not isinstance(row, dict):
+            raise RuntimeError(f"Элемент ordered_packages[{i}] должен быть объектом.")
+        name, kind = row.get("file"), row.get("kind")
+        checksum = str(row.get("sha256", "")).lower()
+        if not isinstance(name, str) or not name.strip():
+            raise RuntimeError(f"У пакета ordered_packages[{i}] отсутствует file.")
+        if kind not in allowed_kinds:
+            raise RuntimeError(f"Неизвестный тип обновления {kind!r}; допустимы {', '.join(sorted(allowed_kinds))}.")
+        if Path(name).is_absolute() or ".." in Path(name).parts or Path(name).name != name:
+            raise RuntimeError(f"Путь обновления должен быть простым именем файла без каталогов: {name}")
+        if Path(name).suffix.lower() not in (".msu", ".cab"):
+            raise RuntimeError(f"Поддерживаются только MSU/CAB обновления: {name}")
+        if name.lower() in seen_files:
+            raise RuntimeError(f"Пакет повторяется в updates.json: {name}")
+        seen_files.add(name.lower())
+        if not re.fullmatch(r"[0-9a-f]{64}", checksum):
+            raise RuntimeError(f"Для {name} требуется SHA-256 из доверенного источника.")
+        package = (root / name).resolve()
+        if package.parent != root.resolve() or not package.is_file():
+            raise RuntimeError(f"Файл обновления отсутствует или выходит за каталог updates.json: {name}")
+        if _ll_hash(package) != checksum:
+            raise RuntimeError(f"SHA-256 обновления {name} не совпадает; интеграция остановлена.")
+        result.append({"file": name, "path": package, "kind": kind, "sha256": checksum})
+    os_updates = [x for x in result if x["kind"] in ("checkpoint", "target_lcu")]
+    lcu_indexes = [i for i, x in enumerate(os_updates) if x["kind"] == "target_lcu"]
+    if len(lcu_indexes) != 1:
+        raise RuntimeError("Для обслуживания Windows требуется ровно один target_lcu после всех checkpoint-пакетов.")
+    if lcu_indexes[0] != len(os_updates) - 1:
+        raise RuntimeError("target_lcu должен быть последним среди checkpoint/target_lcu в ordered_packages.")
+    return [{"target_build_family": build, "architecture": arch}] + result
+
+
+def _ll_load_update_plan(self, image_info: dict | None = None) -> list[dict]:
+    root = getattr(self.cfg, "updates_root", None)
+    if not root:
+        return []
+    parsed = _ll_parse_update_manifest(Path(root))
+    header, packages = parsed[0], parsed[1:]
+    if image_info is not None:
+        target_build = self.build_family(image_info.get("version", ""))
+        target_arch = self.arch_token(image_info.get("architecture", ""))
+        if target_build != header["target_build_family"] or target_arch != header["architecture"]:
+            raise RuntimeError(
+                f"Набор обновлений предназначен для {header['target_build_family']}/{header['architecture']}, "
+                f"а индекс {image_info.get('index')} имеет {target_build}/{target_arch}. "
+                "Обновления не будут применены к несовместимому образу."
+            )
+    return packages
+
+
+def _ll_apply_update_plan(self, mount: Path, info: dict, phase: str, plan: list[dict] | None = None, scope: str = "Windows") -> list[dict]:
+    plan = self.load_update_plan(info) if plan is None else plan
+    if not plan:
+        return []
+    if phase == "before_language":
+        chosen = [x for x in plan if x["kind"] in ("checkpoint", "target_lcu")]
+    elif phase == "after_language":
+        chosen = [x for x in plan if x["kind"] == "target_lcu"]
+    elif phase == "winre":
+        chosen = [x for x in plan if x["kind"] in ("winre_ssu", "safeos_dynamic_update")]
+    else:
+        raise ValueError(f"Unknown update phase: {phase}")
+    applied = []
+    for item in chosen:
+        self.check_cancel()
+        self.log(f"{scope}: применяю {item['kind']} {item['file']} ({phase}).")
+        self.run_cmd(["dism.exe", f"/Image:{mount}", "/Add-Package", f"/PackagePath:{item['path']}", "/NoRestart"])
+        applied.append({"file": item["file"], "kind": item["kind"], "sha256": item["sha256"], "phase": phase, "scope": scope})
+    self._ll_update_report = getattr(self, "_ll_update_report", []) + applied
+    return applied
+
+
+def _ll_find_winpe_lang_dir(architecture: str) -> Path | None:
+    arch = _ll_arch_token(architecture)
+    folder_arch = {"x64": "amd64", "x86": "x86", "arm64": "arm64"}[arch]
+    roots = [
+        Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Windows Kits" / "10" / "Assessment and Deployment Kit" / "Windows Preinstallation Environment",
+        Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Windows Kits" / "10" / "Assessment and Deployment Kit" / "Windows Preinstallation Environment",
+        app_data_dir() / "ADK" / "Windows Preinstallation Environment",
+    ]
+    for base in roots:
+        direct = base / folder_arch / "WinPE_OCs" / "ru-ru"
+        if (direct / "lp.cab").is_file():
+            return direct
+    return None
+
+
+def _ll_ensure_winpe_addon(self, architecture: str) -> Path | None:
+    found = _ll_find_winpe_lang_dir(architecture)
+    if found:
+        return found
+    if not is_windows() or not is_admin():
+        self.log("WinPE Add-on не найден; автоматическая установка требует Windows и прав администратора.")
+        return None
+    install_root = app_data_dir() / "ADK"
+    probe = install_root
+    while not probe.exists() and probe != probe.parent:
+        probe = probe.parent
+    try:
+        available = shutil.disk_usage(probe).free
+    except OSError:
+        available = 0
+    if available < 5 * 1024**3:
+        self.log(f"Не устанавливаю WinPE Add-on: доступно {human_bytes(available)}, нужно ориентировочно не менее 5 GiB.")
+        return None
+    installer_dir = app_data_dir() / "download"
+    installer_dir.mkdir(parents=True, exist_ok=True)
+    installer = installer_dir / "adkwinpesetup.exe"
+    if not installer.is_file() or installer.stat().st_size < 100_000:
+        self.log("WinPE Add-on не обнаружен. Загружаю официальный установщик Microsoft.")
+        self.download_file(ADK_WINPE_SETUP_URL, installer, expected_sha1=None, expected_size=None)
+    quoted = str(installer).replace("'", "''")
+    signature_cmd = (
+        "$s=Get-AuthenticodeSignature -LiteralPath '" + quoted + "'; "
+        "if ($s.Status -ne 'Valid' -or $s.SignerCertificate.Subject -notmatch 'Microsoft') { exit 81 }; "
+        "Write-Output 'AUTHENTICODE_VALID'"
+    )
+    signature = self.run_cmd(
+        ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", signature_cmd],
+        check=False, respect_cancel=False, timeout=45,
+    )
+    if signature.returncode or "AUTHENTICODE_VALID" not in (signature.stdout or ""):
+        raise RuntimeError("Установщик WinPE Add-on не прошёл проверку Authenticode Microsoft; запуск запрещён.")
+    self.log("Устанавливаю официальный WinPE Add-on в каталог LocaLizard ADK.")
+    self.run_cmd([
+        str(installer), "/quiet", "/norestart", "/ceip", "off",
+        "/installpath", str(install_root), "/features", "OptionId.WindowsPreinstallationEnvironment",
+    ], check=True, respect_cancel=False, timeout=2400)
+    found = _ll_find_winpe_lang_dir(architecture)
+    if not found:
+        self.log("Установка WinPE Add-on завершилась, но ru-RU WinPE CAB нужной архитектуры не найден.")
+    return found
+
+
+def _ll_service_winre(self, windows_mount: Path, info: dict, update_plan: list[dict]) -> dict:
+    """Localize nested WinRE from L&O ISO resources, never from ADK WinPE payload."""
+    winre = windows_mount / "Windows" / "System32" / "Recovery" / "winre.wim"
+    if not winre.is_file():
+        return {"status": "not_present"}
+    fod_root = Path(self.cfg.fod_root) if self.cfg.fod_root else None
+    if not fod_root or not fod_root.is_dir():
+        self.log(f"WinRE индекса {info.get('index')}: нет каталога L&O ISO; оставляю WinRE без изменений.")
+        return {"status": "source_missing"}
+    arch = self.arch_token(info.get("architecture", ""))
+    kit_arch = {"x64": "amd64", "x86": "x86", "arm64": "arm64"}[arch]
+    candidates = [
+        fod_root / "Windows Preinstallation Environment" / kit_arch / "WinPE_OCs" / "ru-ru",
+        fod_root / "LanguagesAndOptionalFeatures" / "Windows Preinstallation Environment" / kit_arch / "WinPE_OCs" / "ru-ru",
+    ]
+    pe_lang = next((p for p in candidates if (p / "lp.cab").is_file()), None)
+    if pe_lang is None:
+        try:
+            pe_lang = next((p.parent for p in fod_root.rglob("lp.cab") if p.parent.name.lower() == "ru-ru" and "winpe_ocs" in str(p.parent).lower() and p.is_file()), None)
+        except OSError:
+            pe_lang = None
+    if pe_lang is None:
+        self.log(f"WinRE индекса {info.get('index')}: L&O ISO не содержит подходящий WinPE_OCs ru-RU набор; пропускаю WinRE.")
+        return {"status": "language_resources_missing"}
+    mount = self.work / f"mount_winre_{Path(windows_mount).name}_{info.get('index', 1)}"
+    mount.mkdir(parents=True, exist_ok=True)
+    mounted = False
+    result = {"status": "failed", "source": str(pe_lang), "packages": []}
+    try:
+        self.run_cmd(["dism.exe", "/Mount-Image", f"/ImageFile:{winre}", "/Index:1", f"/MountDir:{mount}", "/CheckIntegrity"])
+        mounted = True
+        self.mounts.append(mount)
+        self.apply_update_plan(mount, info, "winre", update_plan, scope="WinRE")
+        inventory = (self.run_cmd(["dism.exe", f"/Image:{mount}", "/Get-Packages", "/Format:Table"], check=False).stdout or "").lower()
+        base = pe_lang / "lp.cab"
+        self.run_cmd(["dism.exe", f"/Image:{mount}", "/Add-Package", f"/PackagePath:{base}", "/NoRestart"])
+        result["packages"].append(base.name)
+        for package in sorted(pe_lang.glob("*_ru-ru.cab"), key=lambda p: p.name.lower()):
+            low = package.name.lower()
+            if low == "lp.cab" or "winpe-wifi" in low:
+                continue
+            component = low.split("_ru-ru.cab")[0]
+            if component and component in inventory:
+                cp = self.run_cmd(["dism.exe", f"/Image:{mount}", "/Add-Package", f"/PackagePath:{package}", "/NoRestart"], check=False)
+                if cp.returncode == 0:
+                    result["packages"].append(package.name)
+                else:
+                    self.log(f"Не удалось добавить необязательный WinRE-компонент {package.name}; код {cp.returncode}.")
+        self.run_cmd(["dism.exe", f"/Image:{mount}", "/Get-Packages", "/Format:Table"], check=True)
+        self.run_cmd(["dism.exe", "/Unmount-Image", f"/MountDir:{mount}", "/Commit", "/CheckIntegrity"])
+        mounted = False
+        if mount in self.mounts:
+            self.mounts.remove(mount)
+        result["status"] = "localized"
+        self.log(f"WinRE обработан из L&O ISO: {len(result['packages'])} CAB-пакетов.")
+        return result
+    except Exception as exc:
+        result["error"] = str(exc)
+        self.log(f"Не удалось локализовать WinRE; вложенный образ откатывается: {exc}")
+        if mounted:
+            try:
+                self.run_cmd(["dism.exe", "/Unmount-Image", f"/MountDir:{mount}", "/Discard"], check=False, respect_cancel=False)
+            except Exception:
+                pass
+        if mount in self.mounts:
+            self.mounts.remove(mount)
+        return result
+
+
+def _ll_dism_image_v089(self, media: Path, image_wim: Path, info: dict, package_files: list[Path], fod_root: Path | None) -> None:
+    idx = info["index"]
+    arch = self.arch_token(info.get("architecture", ""))
+    candidates = sorted(
+        {str(p.resolve()).lower(): p for p in package_files if _ll_is_lp(p, arch)}.values(),
+        key=lambda p: (0 if _ll_auto_root(p) is None else 1, p.parent.name.lower(), 0 if "client-language-pack" in p.name.lower() else 1, p.name.lower()),
+    )
+    if not candidates:
+        raise RuntimeError(f"Для индекса {idx} не найден Client Language Pack ru-RU для архитектуры {arch}.")
+    update_plan = self.load_update_plan(info)
+    mount = self.work / f"mount_install_{idx}"
+    selected, last_error = None, None
+    for lp in candidates:
+        self.check_cancel()
+        mount.mkdir(parents=True, exist_ok=True)
+        if mount not in self.mounts:
+            self.mounts.append(mount)
+        try:
+            self.run_cmd(["dism.exe", "/Mount-Image", f"/ImageFile:{image_wim}", f"/Index:{idx}", f"/MountDir:{mount}", "/CheckIntegrity"])
+            self.apply_update_plan(mount, info, "before_language", update_plan, scope=f"{image_wim.name} index {idx}")
+            self.log(f"Индекс {idx}: попытка добавить базовый языковой пакет {lp.name}")
+            self.run_cmd(["dism.exe", f"/Image:{mount}", "/Add-Package", f"/PackagePath:{lp}", "/NoRestart"])
+            component_result = {
+                "index": idx, "image": image_wim.name, "architecture": arch,
+                "language_pack": lp.name, "language_pack_sha256": _ll_hash(lp), "capabilities": [],
+                "updates": [],
+            }
+            caps = (
+                "Language.Basic~~~ru-RU~0.0.1.0", "Language.Fonts~~~ru-RU~0.0.1.0",
+                "Language.OCR~~~ru-RU~0.0.1.0", "Language.Speech~~~ru-RU~0.0.1.0",
+                "Language.TextToSpeech~~~ru-RU~0.0.1.0", "Language.Handwriting~~~ru-RU~0.0.1.0",
+            )
+            for cap in caps:
+                self.check_cancel()
+                cmd = ["dism.exe", f"/Image:{mount}", "/Add-Capability", f"/CapabilityName:{cap}"]
+                if fod_root:
+                    source = Path(fod_root)
+                    if source.is_file():
+                        raise RuntimeError(f"FOD-источник должен быть каталогом или смонтированным L&O ISO, получен файл {source}.")
+                    if not source.is_dir():
+                        self.log(f"FOD-репозиторий недоступен; пропускаю {cap}.")
+                        component_result["capabilities"].append({"name": cap, "status": "source_missing"})
+                        continue
+                    cmd.extend([f"/Source:{source}", "/LimitAccess"])
+                cp = self.run_cmd(cmd, check=False)
+                component_result["capabilities"].append({
+                    "name": cap, "status": "installed" if cp.returncode == 0 else "unavailable",
+                    "dism_returncode": cp.returncode,
+                })
+            for locale_arg in ("/Set-AllIntl:ru-RU", "/Set-UILang:ru-RU", "/Set-UserLocale:ru-RU", "/Set-SystemLocale:ru-RU", "/Set-InputLocale:0419:00000419"):
+                self.run_cmd(["dism.exe", f"/Image:{mount}", locale_arg])
+            intl = self.run_cmd(["dism.exe", f"/Image:{mount}", "/Get-Intl"])
+            if "ru-ru" not in (intl.stdout or "").lower():
+                raise RuntimeError(f"DISM не подтвердил локаль ru-RU для индекса {idx}.")
+            component_result["intl_ru_ru_confirmed"] = True
+            cap_text = self.run_cmd(["dism.exe", f"/Image:{mount}", "/Get-Capabilities"], check=False).stdout or ""
+            for item in component_result["capabilities"]:
+                found = re.search(re.escape(item["name"]) + r"\s*:\s*([^\r\n]+)", cap_text, re.I)
+                if found:
+                    item["reported_state"] = found.group(1).strip()
+                    if "installed" in found.group(1).lower():
+                        item["status"] = "installed"
+            component_result["winre"] = _ll_service_winre(self, mount, info, update_plan)
+            self.apply_update_plan(mount, info, "after_language", update_plan, scope=f"{image_wim.name} index {idx}")
+            component_result["updates"] = list(getattr(self, "_ll_update_report", []))
+            pkg_check = self.run_cmd(["dism.exe", f"/Image:{mount}", "/Get-Packages", "/Format:Table"], check=False)
+            component_result["ru_ru_package_inventory"] = "ru-ru" in (pkg_check.stdout or "").lower()
+            self.run_cmd(["dism.exe", "/Unmount-Image", f"/MountDir:{mount}", "/Commit", "/CheckIntegrity"])
+            if mount in self.mounts:
+                self.mounts.remove(mount)
+            self.language_component_report = getattr(self, "language_component_report", []) + [component_result]
+            self._ll_used_packages = getattr(self, "_ll_used_packages", []) + [str(lp)]
+            self.log(f"Индекс {idx}: LP, capability-инвентарь и WinRE завершены.")
+            return
+        except Exception as exc:
+            last_error = exc
+            self.log(f"DISM не завершил кандидата {lp.name}; откатываю mount и проверяю следующий CAB: {exc}")
+            try:
+                self.run_cmd(["dism.exe", "/Unmount-Image", f"/MountDir:{mount}", "/Discard"], check=False, respect_cancel=False)
+            except Exception:
+                pass
+            if mount in self.mounts:
+                self.mounts.remove(mount)
+            shutil.rmtree(mount, ignore_errors=True)
+            if self.cancel_event.is_set():
+                raise RuntimeError("Отмена после безопасного завершения операции DISM.") from exc
+    raise RuntimeError(f"Не удалось применить ни один базовый Client Language Pack к индексу {idx}: {last_error}")
+
+
+def _ll_copy_donor_setup_resources(self, image_plan) -> None:
+    """Copy localized Setup UI files only from a donor ISO with matching build and architecture."""
+    if not self.cfg.donor_iso or not self.work:
+        return
+    media = self.work / "media"
+    dest = media / "sources" / "ru-ru"
+    if dest.is_dir() and any(dest.iterdir()):
+        self.log("В целевом ISO уже есть sources\\ru-ru; Setup resources не перезаписываю.")
+        return
+    quoted = str(self.cfg.donor_iso).replace("'", "''")
+    mounted = False
+    try:
+        cp = self.powershell(f"$img=Mount-DiskImage -ImagePath '{quoted}' -PassThru; $vol=$img | Get-Volume; if(-not $vol.DriveLetter){{throw 'donor ISO has no drive letter'}}; $vol.DriveLetter", check=True)
+        m = re.search(r"([A-Z]):?\s*$", (cp.stdout or "").strip(), re.I)
+        if not m:
+            self.log("Не удалось определить том русского ISO для Setup resources.")
+            return
+        mounted = True
+        root = Path(m.group(1).upper() + ":\\")
+        src = root / "sources" / "ru-ru"
+        if not src.is_dir():
+            self.log("В русском ISO отсутствует sources\\ru-ru; локализованные файлы Setup не копируются.")
+            return
+        target = next((info for _, info in image_plan), None)
+        match = False
+        for image in sorted(list((root / "sources").glob("install*.wim")) + list((root / "sources").glob("install*.esd"))):
+            try:
+                for donor in self.image_info(image):
+                    if target and self.build_family(donor.get("version", "")) == self.build_family(target.get("version", "")) and self.arch_token(donor.get("architecture", "")) == self.arch_token(target.get("architecture", "")):
+                        match = True
+                        break
+            except Exception:
+                continue
+            if match:
+                break
+        if not match:
+            self.log("Сборка/архитектура русского ISO не совпадает с целевой; Setup resources не копируются.")
+            return
+        shutil.copytree(src, dest, dirs_exist_ok=True)
+        self.log(f"Setup localized resources импортированы из проверенного ISO: {src}")
+    except Exception as exc:
+        self.log(f"Не удалось импортировать Setup resources: {exc}")
+    finally:
+        if mounted:
+            try:
+                self.powershell(f"Dismount-DiskImage -ImagePath '{quoted}'", check=False, respect_cancel=False)
+            except Exception:
+                pass
+
+
+def _ll_process_setup_wim_v089(self, media: Path, pack_files: list[Path]) -> bool:
+    if not self.cfg.process_setup:
+        self.log("Локализация Setup/WinPE отключена пользователем.")
+        return False
+    boot = media / "sources" / "boot.wim"
+    target_image = media / "sources" / "install.wim"
+    if not boot.is_file() or not target_image.is_file():
+        self.log("boot.wim/install.wim отсутствует; Setup/WinPE не локализуются.")
+        return False
+    target_infos = self.image_info(target_image)
+    if not target_infos:
+        self.log("Не удалось определить архитектуру Windows для WinPE.")
+        return False
+    target = target_infos[0]
+    arch = self.arch_token(target.get("architecture", ""))
+    pe_dir = _ll_ensure_winpe_addon(self, arch)
+    donor_map = {p.name.lower(): p for p in getattr(self, "donor_setup_files", [])}
+    if pe_dir is None:
+        self.log("WinPE ru-RU CAB не найдены; продолжаю без локализации Setup/WinPE.")
+        return False
+
+    def find_package(name: str) -> Path | None:
+        local = pe_dir / name
+        if local.is_file():
+            return local
+        candidate = donor_map.get(name.lower())
+        return candidate if candidate and candidate.is_file() else None
+
+    base = find_package("lp.cab")
+    setup_pack = find_package("WinPE-Setup_ru-ru.cab")
+    client_pack = find_package("WinPE-Setup-Client_ru-ru.cab")
+    if not base or not setup_pack or not client_pack:
+        self.log("Для Windows Setup необходимы lp.cab, WinPE-Setup_ru-ru.cab и WinPE-Setup-Client_ru-ru.cab.")
+        return False
+    boot_infos = self.image_info(boot)
+    index_map = {int(x["index"]): x for x in boot_infos}
+    localized = {}
+    for idx in (2, 1):
+        if idx not in index_map:
+            self.log(f"В boot.wim отсутствует индекс {idx}; пропускаю его.")
+            continue
+        info = dict(index_map[idx])
+        info["index"] = idx
+        plan = self.load_update_plan(info)
+        mount = self.work / f"mount_boot_{idx}"
+        mount.mkdir(parents=True, exist_ok=True)
+        if mount not in self.mounts:
+            self.mounts.append(mount)
+        mounted = False
+        try:
+            self.run_cmd(["dism.exe", "/Mount-Image", f"/ImageFile:{boot}", f"/Index:{idx}", f"/MountDir:{mount}", "/CheckIntegrity"])
+            mounted = True
+            self.apply_update_plan(mount, info, "before_language", plan, scope=f"boot.wim index {idx}")
+            inventory = (self.run_cmd(["dism.exe", f"/Image:{mount}", "/Get-Packages", "/Format:Table"], check=False).stdout or "").lower()
+            required = [base]
+            if idx == 2:
+                required.extend([setup_pack, client_pack])
+            else:
+                for candidate in sorted(pe_dir.glob("*_ru-ru.cab"), key=lambda p: p.name.lower()):
+                    low = candidate.name.lower()
+                    if low == "lp.cab" or low.startswith("winpe-setup"):
+                        continue
+                    component = low.split("_ru-ru.cab")[0]
+                    if component and component in inventory:
+                        required.append(candidate)
+            seen = set()
+            for package in required:
+                key = str(package.resolve()).lower()
+                if key in seen:
+                    continue
+                seen.add(key)
+                self.run_cmd(["dism.exe", f"/Image:{mount}", "/Add-Package", f"/PackagePath:{package}", "/NoRestart"])
+            self.run_cmd(["dism.exe", f"/Image:{mount}", "/Set-AllIntl:ru-RU"], check=False)
+            self.run_cmd(["dism.exe", f"/Image:{mount}", "/Set-UILang:ru-RU"], check=False)
+            if idx == 2:
+                setup_ui = self.run_cmd(["dism.exe", f"/Image:{mount}", "/Set-SetupUILang:ru-RU", f"/Distribution:{media}"], check=False)
+                if setup_ui.returncode:
+                    self.log("DISM /Set-SetupUILang вернул ошибку; выполню генерацию lang.ini отдельно.")
+            intl = self.run_cmd(["dism.exe", f"/Image:{mount}", "/Get-Intl"], check=False)
+            if idx == 2 and "ru-ru" not in (intl.stdout or "").lower():
+                raise RuntimeError("DISM не подтвердил ru-RU в Windows Setup index 2.")
+            self.apply_update_plan(mount, info, "after_language", plan, scope=f"boot.wim index {idx}")
+            self.run_cmd(["dism.exe", "/Unmount-Image", f"/MountDir:{mount}", "/Commit", "/CheckIntegrity"])
+            mounted = False
+            localized[idx] = [p.name for p in required]
+            self.log(f"boot.wim index {idx}: обработано RU CAB — {len(required)}.")
+        except Exception as exc:
+            self.log(f"Не удалось локализовать boot.wim index {idx}: {exc}")
+            if mounted:
+                try:
+                    self.run_cmd(["dism.exe", "/Unmount-Image", f"/MountDir:{mount}", "/Discard"], check=False, respect_cancel=False)
+                except Exception:
+                    pass
+            if idx == 2:
+                return False
+        finally:
+            if mount in self.mounts:
+                self.mounts.remove(mount)
+
+    gen_mount = self.work / "mount_gen_langini"
+    gen_mount.mkdir(parents=True, exist_ok=True)
+    try:
+        self.run_cmd(["dism.exe", "/Mount-Image", f"/ImageFile:{target_image}", "/Index:1", f"/MountDir:{gen_mount}", "/CheckIntegrity"])
+        gen = self.run_cmd(["dism.exe", f"/Image:{gen_mount}", "/Gen-LangINI", f"/Distribution:{media}"], check=False)
+        if gen.returncode:
+            self.log("DISM не смог создать lang.ini автоматически.")
+        self.run_cmd(["dism.exe", "/Unmount-Image", f"/MountDir:{gen_mount}", "/Discard"], check=False, respect_cancel=False)
+    except Exception as exc:
+        self.log(f"Генерация lang.ini не удалась: {exc}")
+        try:
+            self.run_cmd(["dism.exe", "/Unmount-Image", f"/MountDir:{gen_mount}", "/Discard"], check=False, respect_cancel=False)
+        except Exception:
+            pass
+    lang_ini = media / "sources" / "lang.ini"
+    self._ll_setup_report = {
+        "boot_indices": localized, "lang_ini_created": lang_ini.is_file(),
+        "localized_sources_ru_ru": (media / "sources" / "ru-ru").is_dir(),
+    }
+    if lang_ini.is_file():
+        self.log(f"lang.ini создан/обновлён: {lang_ini}")
+    else:
+        self.log("lang.ini не создан; список языков Setup может быть неполным.")
+    return 2 in localized
+
+
+def _ll_import_donor_iso_packages_v089(self, image_plan):
+    imported = _LL_V081_IMPORT_DONOR(self, image_plan)
+    _ll_copy_donor_setup_resources(self, image_plan)
+    return imported
+
+
+def _ll_esd_to_wim_with_swm(self, media: Path) -> list[Path]:
+    sources = media / "sources"
+    stems = set()
+    for item in sources.glob("install*.swm"):
+        match = re.fullmatch(r"(install.*?)\.swm", item.name, re.I)
+        if match:
+            stems.add(match.group(1))
+    for stem in sorted(stems):
+        first = sources / f"{stem}.swm"
+        if not first.is_file():
+            continue
+        parts = _ll_sequence_swm(sources, stem)
+        wim = sources / f"{stem}.wim"
+        if wim.exists():
+            raise RuntimeError(f"Найден одновременно {wim.name} и split-SWM; неоднозначный источник.")
+        self.log(f"Объединяю split-WIM {first.name}: частей {len(parts)}.")
+        infos = self.image_info(first)
+        if not infos:
+            alt = self.run_cmd(["dism.exe", "/Get-WimInfo", f"/WimFile:{first}", f"/SWMFile:{sources / (stem + '*.swm')}"], check=False)
+            if alt.returncode:
+                raise RuntimeError(f"DISM не смог прочитать набор split-WIM {first.name}.")
+            infos = self.image_info(first)
+        if not infos:
+            raise RuntimeError(f"Split-WIM {first.name} не содержит читаемых индексов.")
+        for image in infos:
+            self.check_cancel()
+            self.run_cmd([
+                "dism.exe", "/Export-Image", f"/SourceImageFile:{first}", f"/SWMFile:{sources / (stem + '*.swm')}",
+                f"/SourceIndex:{image['index']}", f"/DestinationImageFile:{wim}",
+                f"/DestinationName:{image.get('name') or 'Windows image ' + str(image['index']}",
+                "/Compress:max", "/CheckIntegrity",
+            ])
+        output_infos = self.image_info(wim)
+        if len(output_infos) != len(infos):
+            raise RuntimeError(f"Объединение split-WIM неполное: было {len(infos)} индексов, стало {len(output_infos)}.")
+        for part in parts:
+            part.unlink()
+        self.log(f"Split-WIM объединён в {wim.name}; индексы проверены: {len(output_infos)}.")
+    return _LL_V081_ESD(self, media)
+
+
+def _ll_split_output_wims(self, media: Path) -> list[dict]:
+    if not getattr(self.cfg, "split_wim", False):
+        return []
+    sources = media / "sources"
+    results = []
+    for wim in sorted(sources.glob("install*.wim")):
+        first = wim.with_suffix(".swm")
+        self.log(f"Разделяю {wim.name} на SWM по 3800 MiB.")
+        self.run_cmd(["dism.exe", "/Split-Image", f"/ImageFile:{wim}", f"/SWMFile:{first}", "/FileSize:3800", "/CheckIntegrity"])
+        parts = _ll_sequence_swm(sources, wim.stem)
+        if not parts or any(p.stat().st_size == 0 for p in parts):
+            raise RuntimeError(f"DISM не создал полный split-WIM набор для {wim.name}.")
+        if any(p.stat().st_size > 4 * 1024**3 for p in parts):
+            raise RuntimeError(f"Одна из SWM-частей {wim.name} больше 4 GiB.")
+        count = len(self.image_info(wim))
+        results.append({"source_wim": wim.name, "first_swm": first.name, "parts": [p.name for p in parts], "indexes": count, "file_size_mb": 3800})
+        wim.unlink()
+    self._ll_split_report = results
+    return results
+
+
+def _ll_build_iso_v089(self, media: Path) -> None:
+    self._ll_split_report = _ll_split_output_wims(self, media)
+    return _LL_V081_BUILD_ISO(self, media)
+
+
+def _ll_verify_iso_v089(self, expected: dict[str, int]) -> dict:
+    if not getattr(self.cfg, "split_wim", False):
+        result = _LL_V081_VERIFY_ISO(self, expected)
+    else:
+        quoted = str(self.cfg.output_iso).replace("'", "''")
+        script = f"$img=Mount-DiskImage -ImagePath '{quoted}' -PassThru; $vol=$img | Get-Volume; if(-not $vol.DriveLetter){{throw 'ISO has no drive letter'}}; $vol.DriveLetter"
+        mounted = False
+        try:
+            cp = self.powershell(script)
+            match = re.search(r"([A-Z]):?\s*$", (cp.stdout or "").strip(), re.I)
+            if not match:
+                raise RuntimeError("Не удалось смонтировать итоговый ISO для проверки split-WIM.")
+            mounted = True
+            sources = Path(match.group(1).upper() + ":\\") / "sources"
+            if not (sources / "boot.wim").is_file():
+                raise RuntimeError("В split-WIM ISO отсутствует sources\\boot.wim.")
+            boot_info = self.image_info(sources / "boot.wim")
+            if not boot_info:
+                raise RuntimeError("boot.wim итогового ISO не читается через DISM.")
+            split_observed = {}
+            for swm in sorted(sources.glob("install*.swm")):
+                if swm.name.lower().endswith(".swm") and re.fullmatch(r"install(?:[0-9]+)?\.swm", swm.name, re.I):
+                    stem = "install"
+                    parts = _ll_sequence_swm(sources, stem)
+                    if not parts:
+                        continue
+                    for name, count in expected.items():
+                        if name.lower() == "install.wim":
+                            if any(p.stat().st_size == 0 or p.stat().st_size > 4 * 1024**3 for p in parts):
+                                raise RuntimeError("Обнаружена пустая или слишком крупная SWM-часть.")
+                            split_observed[name] = {"parts": [p.name for p in parts], "indexes_before_split": count}
+                            break
+                    break
+            if not split_observed:
+                raise RuntimeError("В итоговом ISO не найден complete install.swm set.")
+            result = {"mounted_iso": True, "boot_wim_indexes": len(boot_info), "split_install_images": split_observed,
+                      "static_validation": "passed", "split_wim_reconstructed_for_verification": False, "vm_test": "not performed"}
+            self.log("Статическая проверка split-WIM ISO пройдена: " + json.dumps(result, ensure_ascii=False))
+        finally:
+            if mounted:
+                self.powershell(f"Dismount-DiskImage -ImagePath '{quoted}'", check=False, respect_cancel=False)
+    if getattr(self.cfg, "vm_test", False):
+        result["hyperv_smoke_test"] = _ll_hyperv_smoke_test(self)
+    return result
+
+
+def _ll_hyperv_smoke_test(self) -> dict:
+    """Opt-in isolated Hyper-V smoke test; the screen still requires human inspection."""
+    if not is_windows() or not is_admin():
+        self.log("Hyper-V smoke-test пропущен: требуется Windows и запуск от администратора.")
+        return {"status": "unavailable", "reason": "requires_elevation"}
+    if not self.cfg.output_iso.is_file():
+        return {"status": "unavailable", "reason": "iso_missing"}
+    self.work.mkdir(parents=True, exist_ok=True)
+    script_path = self.work / "hyperv_iso_smoke_test.ps1"
+    iso_path = str(self.cfg.output_iso).replace("'", "''")
+    vm_root = str(self.work / "hyperv_smoke_vm").replace("'", "''")
+    script = r'''
+$ErrorActionPreference = "Stop"
+$Name = "LocaLizard-Smoke-" + [Guid]::NewGuid().ToString("N").Substring(0, 8)
+$Root = '__VMROOT__'
+$Iso = '__ISOPATH__'
+$Created = $false
+try {
+  if (-not (Get-Command New-VM -ErrorAction SilentlyContinue)) { throw "Hyper-V PowerShell module is not available." }
+  New-Item -ItemType Directory -Force -Path $Root | Out-Null
+  New-VM -Name $Name -Generation 2 -MemoryStartupBytes 2GB -NoVHD -Path $Root | Out-Null
+  $Created = $true
+  Set-VMProcessor -VMName $Name -Count 2
+  Get-VMNetworkAdapter -VMName $Name | Remove-VMNetworkAdapter
+  Add-VMDvdDrive -VMName $Name -Path $Iso
+  Set-VMFirmware -VMName $Name -EnableSecureBoot Off -FirstBootDevice (Get-VMDvdDrive -VMName $Name)
+  Start-VM -Name $Name | Out-Null
+  try { Start-Process -FilePath (Join-Path $env:WINDIR "System32\vmconnect.exe") -ArgumentList @("localhost", $Name) -ErrorAction SilentlyContinue } catch {}
+  Start-Sleep -Seconds 120
+  $State = (Get-VM -Name $Name).State.ToString()
+  if ($State -ne "Running") { throw "VM left Running state during smoke test: $State" }
+  Write-Output "HYPERV_VM_STARTED"
+  Write-Output "MANUAL_UI_CONFIRMATION_REQUIRED"
+}
+finally {
+  if ($Created -and (Get-VM -Name $Name -ErrorAction SilentlyContinue)) {
+    Stop-VM -Name $Name -TurnOff -Force -ErrorAction SilentlyContinue
+    Remove-VM -Name $Name -Force -ErrorAction SilentlyContinue
+  }
+  if (Test-Path $Root) { Remove-Item -LiteralPath $Root -Recurse -Force -ErrorAction SilentlyContinue }
+}
+'''
+    script_path.write_text(script.replace("__VMROOT__", vm_root).replace("__ISOPATH__", iso_path), encoding="utf-8")
+    try:
+        cp = self.run_cmd(
+            ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", str(script_path)],
+            check=False, respect_cancel=False, timeout=220,
+        )
+        output = cp.stdout or ""
+        if cp.returncode == 0 and "HYPERV_VM_STARTED" in output:
+            self.log("Hyper-V smoke-test: VM оставалась в Running 120 секунд. Экран Setup нужно подтвердить визуально в VMConnect.")
+            return {"status": "vm_started", "duration_seconds": 120, "manual_ui_confirmation_required": True, "networking": "disabled", "vm_cleanup": "attempted"}
+        self.log(f"Hyper-V smoke-test не подтверждён: {output[-1200:]}")
+        return {"status": "failed_or_unavailable", "returncode": cp.returncode, "details": output[-2000:], "manual_ui_confirmation_required": True}
+    except Exception as exc:
+        self.log(f"Hyper-V smoke-test недоступен/ошибся; ISO остаётся созданным: {exc}")
+        return {"status": "unavailable", "reason": str(exc)}
+    finally:
+        try:
+            script_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def _ll_patch_existing_wim(self, source_wim: Path, output_wim: Path) -> None:
+    """Patch a copy of an existing WIM and publish output only after read-back verification."""
+    source_wim, output_wim = Path(source_wim).resolve(), Path(output_wim).resolve()
+    if source_wim.suffix.lower() != ".wim" or output_wim.suffix.lower() != ".wim":
+        raise RuntimeError("Режим patch-existing-image принимает WIM; ESD/SWM требуют отдельной подготовки.")
+    if not source_wim.is_file():
+        raise RuntimeError(f"Исходный WIM не найден: {source_wim}")
+    if source_wim == output_wim or output_wim.exists():
+        raise RuntimeError("Выходной WIM должен быть новым файлом, отличным от исходника.")
+    if not output_wim.parent.is_dir():
+        raise RuntimeError("Каталог выходного WIM не существует.")
+    self.cfg.work_root.mkdir(parents=True, exist_ok=True)
+    self.work = self.cfg.work_root / f"LocaLizard_PatchWIM_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    self.work.mkdir(parents=True, exist_ok=False)
+    self.log_path = self.work / "patch-wim.log"
+    self.log(f"Режим существующего WIM: источник={source_wim}; результат={output_wim}")
+    self.load_update_plan(None)
+    staged = self.work / source_wim.name
+    shutil.copy2(source_wim, staged)
+    infos = self.image_info(staged)
+    if not infos:
+        raise RuntimeError("DISM не обнаружил индексов в исходном WIM.")
+    image_plan = [(staged, info) for info in infos]
+    donor_packages = self.import_donor_iso_packages(image_plan)
+    package_plan = {}
+    for _, info in image_plan:
+        package_files = list({p.resolve(): p for p in self.packages_for_info(info) + donor_packages}.values())
+        if not self.locate_ru_lp(info, package_files):
+            package_files = self.auto_download_ru_assets(info)
+        if not self.locate_ru_lp(info, package_files):
+            raise RuntimeError(f"Нет проверенного Client LP ru-RU для индекса {info['index']}.")
+        package_plan[int(info["index"])] = package_files
+    for position, (wim, info) in enumerate(image_plan, 1):
+        self.check_cancel()
+        self.emit("progress", f"Обработка WIM-индекса {position}/{len(image_plan)}: {info['name']}")
+        self.dism_image(wim, info, package_plan[int(info["index"])], self.cfg.fod_root)
+    verified = self.image_info(staged)
+    if len(verified) != len(infos):
+        raise RuntimeError(f"После обслуживания осталось {len(verified)} индексов вместо {len(infos)}.")
+    output_temp = output_wim.with_name(output_wim.stem + ".pending" + output_wim.suffix)
+    if output_temp.exists():
+        output_temp.unlink()
+    shutil.copy2(staged, output_temp)
+    if len(self.image_info(output_temp)) != len(infos):
+        output_temp.unlink(missing_ok=True)
+        raise RuntimeError("Проверка выходного WIM не прошла; итоговый файл не опубликован.")
+    output_temp.replace(output_wim)
+    self.cfg.output_iso = output_wim
+    self.cfg.source_iso = source_wim
+    report = {
+        "application": APP_NAME, "version": APP_VERSION, "mode": "patch-existing-wim",
+        "source_wim": str(source_wim), "output_wim": str(output_wim), "indexes_processed": infos,
+        "updates_applied": getattr(self, "_ll_update_report", []),
+        "image_language_checks": getattr(self, "language_component_report", []),
+        "limitations": ["boot.wim/Windows Setup resources are outside this WIM-only mode.", "A WIM static check is not a VM boot test."],
+    }
+    report_path = output_wim.with_suffix(".localization-audit.json")
+    report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    self.log(f"Готово: обработанный WIM сохранён в {output_wim}; отчёт: {report_path}")
+    self.emit("done", str(output_wim))
+
+
+def _ll_app_patch_existing_wim(self):
+    if self.worker_thread and self.worker_thread.is_alive():
+        messagebox.showwarning(APP_NAME, "Сначала дождитесь завершения текущей обработки.")
+        return
+    chosen = filedialog.askopenfilename(title="Выберите существующий WIM", filetypes=[("Windows Imaging file", "*.wim"), ("All files", "*.*")])
+    if not chosen:
+        return
+    source_path = Path(chosen)
+    out_text = filedialog.asksaveasfilename(title="Сохранить обработанный WIM как новый файл", defaultextension=".wim", initialfile=source_path.stem + "_ru-RU.wim", filetypes=[("WIM", "*.wim")])
+    if not out_text:
+        return
+    output_path = Path(out_text)
+    if output_path.exists() or output_path.resolve() == source_path.resolve():
+        messagebox.showerror(APP_NAME, "Выходной WIM должен быть новым файлом и отличаться от исходника.")
+        return
+    donor = Path(self.donor_iso_var.get().strip()) if self.donor_iso_var.get().strip() else None
+    fod = Path(self.fod_var.get().strip()) if self.fod_var.get().strip() else None
+    updates = Path(self.updates_var.get().strip()) if self.updates_var.get().strip() else None
+    pack = Path(self.pack_var.get().strip()) if self.pack_var.get().strip() else app_data_dir() / "Packages"
+    work = Path(self.work_var.get().strip()) if self.work_var.get().strip() else Path.home() / "LocaLizard_Work"
+    cfg = RunConfig(source_path, donor, output_path, pack, fod, work, self.keep_var.get(), False, updates, False, False)
+    self.cancel_event.clear()
+    self.start_btn.configure(state="disabled")
+    self.cancel_btn.configure(state="normal")
+    self.progress.start(10)
+    self.status_var.set("Обработка существующего WIM начата.")
+    worker = Worker(self.events, self.cancel_event, cfg)
+
+    def run_patch():
+        requested, mounted = worker.cfg.fod_root, False
+        try:
+            if requested and requested.is_file() and requested.suffix.lower() == ".iso":
+                q = str(requested).replace("'", "''")
+                cmd = "$v=Mount-DiskImage -ImagePath '" + q + "' -PassThru | Get-Volume | Where-Object { $_.DriveLetter } | Select-Object -First 1 -ExpandProperty DriveLetter; Write-Output $v"
+                cp = worker.run_cmd(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", cmd], check=True, respect_cancel=False, timeout=120)
+                letters = [x.strip().rstrip(":") for x in (cp.stdout or "").splitlines() if re.fullmatch(r"[A-Za-z]:?", x.strip())]
+                if not letters:
+                    raise RuntimeError("FOD ISO смонтирован без буквы тома.")
+                root = Path(letters[-1] + ":\\")
+                nested = root / "LanguagesAndOptionalFeatures"
+                worker.cfg.fod_root = nested if nested.is_dir() else root
+                worker._ll_requested_fod_iso = str(requested)
+                mounted = True
+            worker.patch_existing_wim(source_path, output_path)
+        except Exception as exc:
+            worker.log("ОШИБКА обработки WIM: " + str(exc))
+            worker.log(traceback.format_exc())
+            worker.emit("error", str(exc))
+        finally:
+            if mounted:
+                q = str(requested).replace("'", "''")
+                try:
+                    worker.run_cmd(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", f"Dismount-DiskImage -ImagePath '{q}'"], check=False, respect_cancel=False, timeout=120)
+                except Exception:
+                    pass
+            if not worker.cfg.keep_work and worker.work:
+                shutil.rmtree(worker.work, ignore_errors=True)
+
+    self.worker_thread = threading.Thread(target=run_patch, daemon=True)
+    self.worker_thread.start()
+
+
+def _ll_read_settings_v089(self):
+    try:
+        settings = json.loads((app_data_dir() / "settings.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    for key, attr in (
+        ("source_iso", "iso_var"), ("donor_iso", "donor_iso_var"), ("output_iso", "out_var"),
+        ("work_root", "work_var"), ("package_root", "pack_var"), ("fod_source", "fod_var"),
+        ("updates_root", "updates_var"),
+    ):
+        var = getattr(self, attr, None)
+        if var is not None and isinstance(settings.get(key), str) and settings[key]:
+            var.set(settings[key])
+
+
+def _ll_save_settings_v089(self):
+    values = {}
+    for key, attr in (
+        ("source_iso", "iso_var"), ("donor_iso", "donor_iso_var"), ("output_iso", "out_var"),
+        ("work_root", "work_var"), ("package_root", "pack_var"), ("fod_source", "fod_var"),
+        ("updates_root", "updates_var"),
+    ):
+        var = getattr(self, attr, None)
+        if var is not None:
+            values[key] = str(var.get()).strip()
+    try:
+        target = app_data_dir() / "settings.json"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temp = target.with_suffix(".json.tmp")
+        temp.write_text(json.dumps(values, ensure_ascii=False, indent=2), encoding="utf-8")
+        temp.replace(target)
+    except OSError:
+        pass
+
+
+# Wire the 0.0.8.9 capabilities into the source assembled by CI.
+_LL_V081_IMPORT_DONOR = Worker.import_donor_iso_packages
+_LL_V081_ESD = Worker.esd_to_wim_if_needed
+_LL_V081_BUILD_ISO = Worker.build_iso
+_LL_V081_VERIFY_ISO = Worker.verify_final_iso
+_LL_V081_ENSURE_OSCDIMG = Worker.ensure_oscdimg
+Worker.load_update_plan = _ll_load_update_plan
+Worker.apply_update_plan = _ll_apply_update_plan
+Worker.dism_image = _ll_dism_image_v089
+Worker.process_setup_wim = _ll_process_setup_wim_v089
+Worker.import_donor_iso_packages = _ll_import_donor_iso_packages_v089
+Worker.esd_to_wim_if_needed = _ll_esd_to_wim_with_swm
+Worker.build_iso = _ll_build_iso_v089
+Worker.verify_final_iso = _ll_verify_iso_v089
+Worker.patch_existing_wim = _ll_patch_existing_wim
+Worker.hyperv_smoke_test = _ll_hyperv_smoke_test
+App.patch_existing_wim = _ll_app_patch_existing_wim
+App.choose_updates = lambda self: (
+    (lambda path: self.updates_var.set(path) if path else None)(
+        filedialog.askdirectory(title="Выберите каталог обновлений с updates.json")
+    )
+)
+
+
+def _ll_ensure_oscdimg_with_updates(self):
+    root = getattr(self.cfg, "updates_root", None)
+    if root:
+        header = _ll_parse_update_manifest(Path(root))[0]
+        plan = self.load_update_plan(None)
+        total = sum(item["path"].stat().st_size for item in plan)
+        source = self.cfg.source_iso
+        base_size = source.stat().st_size if source.is_file() else 0
+        work = self.cfg.work_root
+        while not work.exists() and work != work.parent:
+            work = work.parent
+        if work.exists():
+            free = shutil.disk_usage(work).free
+            estimate = int(base_size * 3.5 + 8 * 1024**3 + total * 1.15)
+            if free < estimate:
+                raise RuntimeError(f"Недостаточно места для update chain: доступно {human_bytes(free)}, оценка {human_bytes(estimate)}.")
+        self._ll_update_report = []
+        self.log(f"План обновлений проверен: {len(plan)} пакетов; build={header['target_build_family']}/{header['architecture']}.")
+    return _LL_V081_ENSURE_OSCDIMG(self)
+
+Worker.ensure_oscdimg = _ll_ensure_oscdimg_with_updates
+
+# Replace the earlier sidecar writer with an extended audit.
+_LL_V081_WRITE_AUDIT = _ll_write_audit
+def _ll_write_audit(self):
+    _LL_V081_WRITE_AUDIT(self)
+    try:
+        if not getattr(self, "cfg", None) or not self.cfg.output_iso.is_file():
+            return
+        target = self.cfg.output_iso.with_suffix(".localization-audit.json")
+        payload = json.loads(target.read_text(encoding="utf-8")) if target.is_file() else {}
+        payload.update({
+            "updates_applied": getattr(self, "_ll_update_report", []),
+            "update_manifest": str(self.cfg.updates_root) if getattr(self.cfg, "updates_root", None) else None,
+            "setup_winpe_report": getattr(self, "_ll_setup_report", {}),
+            "split_wim": getattr(self, "_ll_split_report", []),
+            "hyperv_smoke_test_requested": bool(getattr(self.cfg, "vm_test", False)),
+        })
+        target.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception as exc:
+        try: self.log(f"Не удалось расширить JSON-аудит: {exc}")
+        except Exception: pass
