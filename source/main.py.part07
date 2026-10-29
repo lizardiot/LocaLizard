@@ -1,0 +1,72 @@
+        except Exception:
+            # Never silently discard changes, but release mount lock; leave work dir for recovery.
+            try:
+                self.run_cmd(["dism.exe", f"/Unmount-Image", f"/MountDir:{mount}", "/Discard"], check=False, respect_cancel=False)
+            except Exception: pass
+            if mount in self.mounts: self.mounts.remove(mount)
+            raise
+
+    def process_setup_wim(self, media: Path, pack_files: list[Path]) -> bool:
+        boot = media / "sources" / "boot.wim"
+        if not self.cfg.process_setup:
+            self.log("Локализация Setup/WinPE отключена пользователем.")
+            return False
+        # Find ADK WinPE Russian language files. We only add them if present and never mix OS language CAB blindly.
+        kits = Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Windows Kits" / "10" / "Assessment and Deployment Kit" / "Windows Preinstallation Environment" / "amd64" / "WinPE_OCs" / "ru-ru"
+        if not kits.exists():
+            self.log("Не найден каталог ADK WinPE_OCs\\ru-ru. Setup/WinPE останется на исходном языке; это будет отражено в отчёте.")
+            return False
+        expected = [kits / "lp.cab", kits / "WinPE-Setup_ru-ru.cab", kits / "WinPE-Setup-Client_ru-ru.cab"]
+        expected += sorted(kits.glob("WinPE-Rejuv_ru-ru.cab"))
+        missing = [p.name for p in expected[:3] if not p.exists()]
+        if missing:
+            self.log("Для локализации Setup не хватает ADK-пакетов: " + ", ".join(missing))
+            return False
+        # For setup media index 2 is Windows Setup; index 1 is Windows PE. Add packages to index 2 only.
+        mount = self.work / "mount_boot_2"
+        mount.mkdir(exist_ok=True)
+        self.mounts.append(mount)
+        self.run_cmd(["dism.exe", "/Mount-Image", f"/ImageFile:{boot}", "/Index:2", f"/MountDir:{mount}", "/CheckIntegrity"])
+        try:
+            for p in expected:
+                if p.exists(): self.run_cmd(["dism.exe", f"/Image:{mount}", "/Add-Package", f"/PackagePath:{p}", "/NoRestart"])
+            # Setup localization is optional: reject the partial attempt and keep the original boot.wim if packages conflict.
+            self.run_cmd(["dism.exe", f"/Image:{mount}", "/Set-AllIntl:ru-RU"], check=False)
+            self.run_cmd(["dism.exe", f"/Image:{mount}", "/Get-Intl"], check=False)
+            self.run_cmd(["dism.exe", "/Unmount-Image", f"/MountDir:{mount}", "/Commit", "/CheckIntegrity"])
+            self.mounts.remove(mount)
+            return True
+        except Exception as exc:
+            try: self.run_cmd(["dism.exe", "/Unmount-Image", f"/MountDir:{mount}", "/Discard"], check=False, respect_cancel=False)
+            except Exception: pass
+            if mount in self.mounts: self.mounts.remove(mount)
+            self.log(f"Не удалось локализовать Setup/WinPE; считаю это необязательным шагом и продолжаю с исходным boot.wim. Причина: {exc}")
+            return False
+
+    def validate_media_structure(self, media: Path) -> dict:
+        sources = media / "sources"
+        boot = sources / "boot.wim"
+        install = list(sources.glob("install*.wim"))
+        result = {"boot_wim": boot.is_file(), "install_wim": bool(install), "bios_boot_sector": (media / "boot" / "etfsboot.com").is_file(), "uefi_boot_sector": (media / "efi" / "microsoft" / "boot" / "efisys.bin").is_file(), "setup_exe": (media / "setup.exe").is_file()}
+        self.log("Статическая проверка структуры ISO: " + json.dumps(result, ensure_ascii=False))
+        if not result["boot_wim"] or not result["install_wim"] or not result["setup_exe"]:
+            raise RuntimeError("После обработки не пройдена проверка структуры установочного носителя.")
+        if not result["bios_boot_sector"] or not result["uefi_boot_sector"]:
+            self.log("ПРЕДУПРЕЖДЕНИЕ: в исходном носителе не найдены оба стандартных загрузочных сектора BIOS/UEFI; проверьте итоговый ISO вручную.")
+        return result
+
+    def build_iso(self, media: Path) -> None:
+        if not self.oscdimg:
+            raise RuntimeError("Не найден oscdimg.exe. Установите Windows ADK (компонент Deployment Tools) и перезапустите программу. Исходный ISO сохранён.")
+        bios = media / "boot" / "etfsboot.com"
+        uefi = media / "efi" / "microsoft" / "boot" / "efisys.bin"
+        if not bios.is_file() or not uefi.is_file():
+            raise RuntimeError("В ISO не найдены оба файла загрузки BIOS и UEFI. Чтобы не потерять загрузочную совместимость, пересборка остановлена.")
+        if self.cfg.output_iso.exists():
+            raise RuntimeError("Файл выходного ISO уже существует. Выберите новое имя, чтобы программа не перезаписывала существующий файл.")
+        bootdata = f"-bootdata:2#p0,e,b{bios}#pEF,e,b{uefi}"
+        args = [self.oscdimg, "-m", "-o", "-u2", "-udfver102", bootdata, str(media), str(self.cfg.output_iso)]
+        self.run_cmd(args)
+        if not self.cfg.output_iso.is_file() or self.cfg.output_iso.stat().st_size < 1024 * 1024:
+            raise RuntimeError("oscdimg не создал ожидаемый выходной ISO.")
+        self.log(f"Создан итоговый ISO: {self.cfg.output_iso} ({human_bytes(self.cfg.output_iso.stat().st_size)})")
