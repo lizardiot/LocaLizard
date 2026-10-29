@@ -2,6 +2,22 @@
 
 Все заметные изменения проекта LocaLizard фиксируются здесь.
 
+
+## [0.0.8.9] — 2026-10-29
+
+### Добавлено
+- Локализация Windows Setup boot.wim index 2 и WinPE boot.wim index 1 при наличии подходящих ru-RU CAB и WinPE Add-on для целевой архитектуры.
+- Проверка подписи установщика WinPE Add-on, копирование Setup resources из донорского ISO при совпадении build family/архитектуры, создание lang.ini и установка Setup UI ru-RU.
+- Обработка вложенного WinRE из Windows-образа с ресурсами Language and Optional Features ISO.
+- Update-chain manifest updates.json с SHA-256, build/architecture, checkpoint MSU и последним target LCU; target LCU повторно применяется после языкового пакета. Для WinRE поддерживаются отдельные типы winre_ssu и safeos_dynamic_update.
+- Импорт split-WIM SWM в рабочий WIM; опциональное разделение итогового install.wim на SWM-части по 3800 MiB.
+- Режим обработки существующего WIM в новый файл и опциональный Hyper-V smoke-test без сети с автоматической очисткой временной VM.
+
+### Ограничения
+- Автоматическое обнаружение/скачивание update chain из Microsoft Update Catalog не включено. Используется явно выбранный update-каталог с обновлениями и SHA-256-манифестом.
+- Hyper-V smoke-test подтверждает запуск VM в течение 120 секунд, но не распознаёт экран Setup; требуется визуальная проверка.
+- WinRE локализуется только при наличии подходящих ресурсов L&O ISO.
+
 ## [0.0.8.1] — 2026-10-29
 
 ### Улучшено
