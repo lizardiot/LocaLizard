@@ -400,7 +400,7 @@ def _ll_worker_run(self):
         if requested and requested.is_file() and requested.suffix.lower()==".iso":
             if not is_windows() or not is_admin(): return _LL_ORIGINAL_WORKER_RUN(self)
             q=str(requested).replace("'","''")
-            cmd="$v=Mount-DiskImage -ImagePath '"+q+"' -PassThru | Get-Volume | Where-Object { $_.DriveLetter } | Select-Object -First 1 -ExpandProperty DriveLetter; Write-Output $v"
+            cmd="$v=Mount-DiskImage -StorageType ISO -ImagePath '"+q+"' -PassThru | Get-Volume | Where-Object { $_.DriveLetter } | Select-Object -First 1 -ExpandProperty DriveLetter; Write-Output $v"
             cp=self.run_cmd(["powershell.exe","-NoProfile","-NonInteractive","-Command",cmd],check=True,respect_cancel=False,timeout=120)
             letters=[x.strip().rstrip(":") for x in (cp.stdout or "").splitlines() if re.fullmatch(r"[A-Za-z]:?",x.strip())]
             if not letters: raise RuntimeError("FOD ISO смонтирован без буквы тома.")

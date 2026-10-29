@@ -356,7 +356,7 @@ def _ll_copy_donor_setup_resources(self, image_plan) -> None:
     quoted = str(self.cfg.donor_iso).replace("'", "''")
     mounted = False
     try:
-        cp = self.powershell(f"$img=Mount-DiskImage -ImagePath '{quoted}' -PassThru; $vol=$img | Get-Volume; if(-not $vol.DriveLetter){{throw 'donor ISO has no drive letter'}}; $vol.DriveLetter", check=True)
+        cp = self.powershell(f"$img=Mount-DiskImage -StorageType ISO -ImagePath '{quoted}' -PassThru; $vol=$img | Get-Volume; if(-not $vol.DriveLetter){{throw 'donor ISO has no drive letter'}}; $vol.DriveLetter", check=True)
         m = re.search(r"([A-Z]):?\s*$", (cp.stdout or "").strip(), re.I)
         if not m:
             self.log("Не удалось определить том русского ISO для Setup resources.")
@@ -597,7 +597,7 @@ def _ll_verify_iso_v089(self, expected: dict[str, int]) -> dict:
         result = _LL_V081_VERIFY_ISO(self, expected)
     else:
         quoted = str(self.cfg.output_iso).replace("'", "''")
-        script = f"$img=Mount-DiskImage -ImagePath '{quoted}' -PassThru; $vol=$img | Get-Volume; if(-not $vol.DriveLetter){{throw 'ISO has no drive letter'}}; $vol.DriveLetter"
+        script = f"$img=Mount-DiskImage -StorageType ISO -ImagePath '{quoted}' -PassThru; $vol=$img | Get-Volume; if(-not $vol.DriveLetter){{throw 'ISO has no drive letter'}}; $vol.DriveLetter"
         mounted = False
         try:
             cp = self.powershell(script)
@@ -792,7 +792,7 @@ def _ll_app_patch_existing_wim(self):
         try:
             if requested and requested.is_file() and requested.suffix.lower() == ".iso":
                 q = str(requested).replace("'", "''")
-                cmd = "$v=Mount-DiskImage -ImagePath '" + q + "' -PassThru | Get-Volume | Where-Object { $_.DriveLetter } | Select-Object -First 1 -ExpandProperty DriveLetter; Write-Output $v"
+                cmd = "$v=Mount-DiskImage -StorageType ISO -ImagePath '" + q + "' -PassThru | Get-Volume | Where-Object { $_.DriveLetter } | Select-Object -First 1 -ExpandProperty DriveLetter; Write-Output $v"
                 cp = worker.run_cmd(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", cmd], check=True, respect_cancel=False, timeout=120)
                 letters = [x.strip().rstrip(":") for x in (cp.stdout or "").splitlines() if re.fullmatch(r"[A-Za-z]:?", x.strip())]
                 if not letters:

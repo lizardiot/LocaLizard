@@ -1,0 +1,51 @@
+# LocaLizard 0.0.9.2 — explicit ISO mount type and actionable provider diagnostics.
+
+def _ll_explicit_iso_storage_type(command: str) -> str:
+    """Make ISO mount type explicit so PowerShell does not infer it from file associations."""
+    return re.sub(
+        r"(?i)\bMount-DiskImage\b(?!\s+-StorageType\b)",
+        "Mount-DiskImage -StorageType ISO",
+        command,
+    )
+
+
+def _ll_iso_mount_failure_message(output: str, iso_path: str | Path) -> str | None:
+    low = str(output or "").lower()
+    if "0xc03a0014" not in low and "virtual disk support provider" not in low and "error_virtdisk_provider_not_found" not in low:
+        return None
+    return (
+        f"Windows не смогла подключить ISO: {iso_path}. Ошибка 0xC03A0014 "
+        "(ERROR_VIRTDISK_PROVIDER_NOT_FOUND) означает, что Windows не нашла поставщик "
+        "поддержки виртуальных дисков. LocaLizard явно запрашивает StorageType ISO; если ошибка "
+        "повторяется, проверьте, удаётся ли подключить этот же ISO через Проводник Windows → "
+        "«Подключить». Если не удаётся и там, причина находится в системной подсистеме "
+        "монтирования Windows или самом файле ISO, а не в кэше языковых пакетов. Проверьте "
+        "целостность ISO и перезагрузите Windows; обработка неподключённого образа остановлена."
+    )
+
+
+_LL_POWERSHELL_BEFORE_ISO_FIX = Worker.powershell
+def _ll_powershell_with_explicit_iso_type(self, command: str, check=True, respect_cancel=True):
+    iso_mount = bool(re.search(r"(?i)\bMount-DiskImage\b", command))
+    command = _ll_explicit_iso_storage_type(command) if iso_mount else command
+    cp = _LL_POWERSHELL_BEFORE_ISO_FIX(
+        self, command, check=False, respect_cancel=respect_cancel
+    )
+    if check and cp.returncode != 0:
+        if iso_mount:
+            path_match = re.search(r"""(?is)-ImagePath\s+['"]([^'"]+)['"]""", command)
+            iso_path = path_match.group(1) if path_match else "(путь не определён)"
+            diagnostic = _ll_iso_mount_failure_message(cp.stdout or "", iso_path)
+            if diagnostic:
+                raise RuntimeError(diagnostic)
+            output = (cp.stdout or "").strip()
+            if output:
+                raise RuntimeError(
+                    f"Не удалось подключить ISO через PowerShell (код {cp.returncode}): "
+                    + output[-1200:]
+                )
+        raise RuntimeError(f"Команда завершилась с кодом {cp.returncode}: powershell.exe")
+    return cp
+
+
+Worker.powershell = _ll_powershell_with_explicit_iso_type

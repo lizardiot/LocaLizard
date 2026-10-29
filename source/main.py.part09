@@ -68,11 +68,10 @@
                     self.run_cmd(["dism.exe", "/Unmount-Image", f"/MountDir:{mount}", "/Discard"], check=False, respect_cancel=False)
                 except Exception: pass
             try:
-                if is_windows() and self.cfg.source_iso.exists():
-                    source_q = str(self.cfg.source_iso).replace("'", "''")
+                if is_windows() and self.cfg.source_iso.exists() and self.source_drive:
+                    source_q = str(self.cfg.source_iso.resolve()).replace("'", "''")
                     self.powershell(
-                        "$img=Get-DiskImage -ImagePath '" + source_q + "' -ErrorAction SilentlyContinue; "
-                        "if ($img -and $img.Attached) { Dismount-DiskImage -InputObject $img -ErrorAction SilentlyContinue }",
+                        f"Dismount-DiskImage -ImagePath '{source_q}' -ErrorAction SilentlyContinue",
                         check=False, respect_cancel=False,
                     )
             except Exception: pass

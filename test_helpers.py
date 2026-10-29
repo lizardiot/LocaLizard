@@ -196,5 +196,38 @@ class HelperTests(unittest.TestCase):
         self.assertFalse(main._ll_adk_hash_mismatch(RuntimeError("exit code 2")))
 
 
+    def test_iso_mount_explicit_storage_type_is_added_once(self):
+        command = "Mount-DiskImage -ImagePath 'sample.iso' -PassThru"
+        fixed = main._ll_explicit_iso_storage_type(command)
+        self.assertIn("Mount-DiskImage -StorageType ISO -ImagePath", fixed)
+        self.assertEqual(fixed.lower().count("-storagetype iso"), 1)
+        already_typed = main._ll_explicit_iso_storage_type(
+            "Mount-DiskImage -StorageType ISO -ImagePath 'sample.iso'"
+        )
+        self.assertEqual(already_typed.lower().count("-storagetype iso"), 1)
+
+    def test_iso_mount_provider_failure_has_actionable_diagnostic(self):
+        message = main._ll_iso_mount_failure_message(
+            "Mount-DiskImage failed: HRESULT 0xC03A0014",
+            r"D:\Downloads\Windows.iso",
+        )
+        self.assertIsNotNone(message)
+        self.assertIn("ERROR_VIRTDISK_PROVIDER_NOT_FOUND", message)
+        self.assertIn("Проводник Windows", message)
+        self.assertIsNone(main._ll_iso_mount_failure_message("some unrelated PowerShell error", "a.iso"))
+
+    def test_powershell_wrapper_uses_explicit_iso_type_and_surfaces_provider_error(self):
+        worker = main.Worker(queue.Queue(), threading.Event(), None)
+        observed = {}
+        def fake_run_cmd(args, *, check=True, respect_cancel=True):
+            observed["command"] = args[-1]
+            output = "Mount-DiskImage : A virtual disk support provider for the specified file was not found. HRESULT 0xC03A0014"
+            return __import__("subprocess").CompletedProcess(args, 1, output, None)
+        worker.run_cmd = fake_run_cmd
+        with self.assertRaisesRegex(RuntimeError, "ERROR_VIRTDISK_PROVIDER_NOT_FOUND"):
+            worker.powershell("Mount-DiskImage -ImagePath 'Windows.iso'")
+        self.assertIn("-StorageType ISO", observed["command"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

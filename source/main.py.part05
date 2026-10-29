@@ -1,19 +1,35 @@
         dist.mkdir(parents=True, exist_ok=False)
-        iso_q = str(self.cfg.source_iso).replace("'", "''")
-        script = f"$img=Mount-DiskImage -ImagePath '{iso_q}' -PassThru; $vol=$img | Get-Volume; if(-not $vol.DriveLetter){{throw 'ISO не получил букву диска'}}; $vol.DriveLetter"
-        cp = self.powershell(script)
-        letter_match = re.search(r"([A-Z]):?\s*$", (cp.stdout or "").strip(), re.I)
-        if not letter_match:
-            raise RuntimeError("Windows не смогла смонтировать ISO или определить букву диска.")
-        self.source_drive = letter_match.group(1).upper() + ":\\"
-        self.log(f"ISO смонтирован как {self.source_drive}; исходный ISO не изменяется.")
+        iso_q = str(self.cfg.source_iso.resolve()).replace("'", "''")
+        mounted = False
         try:
+            # Explicit ISO type avoids relying on the Windows file association.
+            self.powershell(f"Mount-DiskImage -StorageType ISO -ImagePath '{iso_q}' -ErrorAction Stop")
+            mounted = True
+            script = (
+                "$img=Get-DiskImage -ImagePath '" + iso_q + "' -ErrorAction Stop; "
+                "$vol=$img | Get-Volume -ErrorAction Stop | "
+                "Where-Object { $_.DriveLetter } | Select-Object -First 1; "
+                "if(-not $vol){throw 'ISO не получил букву диска'}; "
+                "Write-Output ($vol.DriveLetter + ':')"
+            )
+            cp = self.powershell(script)
+            letter_match = re.search(r"(?im)^\s*([A-Z]):?\s*$", (cp.stdout or "").strip())
+            if not letter_match:
+                raise RuntimeError("Windows подключила ISO, но не удалось определить букву его диска.")
+            self.source_drive = letter_match.group(1).upper() + ":" + chr(92)
+            self.log(f"ISO смонтирован как {self.source_drive}; исходный ISO не изменяется.")
             # Robocopy exit codes 0-7 are non-fatal; >=8 means failure.
             robocopy = self.run_cmd(["robocopy", self.source_drive, str(dist), "/E", "/COPY:DAT", "/DCOPY:DAT", "/A-:R", "/R:1", "/W:1", "/XJ", "/NFL", "/NDL", "/NP"], check=False)
             if robocopy.returncode >= 8:
                 raise RuntimeError(f"Не удалось скопировать содержимое ISO (Robocopy {robocopy.returncode}).")
         finally:
-            self.powershell(f"Dismount-DiskImage -ImagePath '{iso_q}'", check=False, respect_cancel=False)
+            # Do not query or detach the image when the attach command failed.
+            if mounted:
+                try:
+                    self.powershell(f"Dismount-DiskImage -ImagePath '{iso_q}' -ErrorAction SilentlyContinue", check=False, respect_cancel=False)
+                except Exception as exc:
+                    self.log(f"Не удалось отмонтировать ISO после обработки: {exc}")
+            self.source_drive = None
         if not (dist / "sources" / "boot.wim").is_file():
             raise RuntimeError("Это не похоже на установочный ISO Windows: отсутствует sources\\boot.wim.")
         images = list((dist / "sources").glob("install*.wim")) + list((dist / "sources").glob("install*.esd"))
