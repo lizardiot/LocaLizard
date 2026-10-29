@@ -1,6 +1,11 @@
 # -*- coding: utf-8 -*-
-"""IoT LTSC Russianizer — automated Windows ISO localization GUI."""
+"""IoT LTSC Russianizer — conservative offline Windows image localization GUI.
+
+The program requires Windows 10/11 x64, elevation, DISM, and oscdimg from Windows ADK
+for rebuilding a bootable BIOS+UEFI ISO. It never modifies the selected source ISO.
+"""
 from __future__ import annotations
+
 import ctypes
 import hashlib
 import json
@@ -13,10 +18,144 @@ import sys
 import threading
 import time
 import traceback
+import urllib.error
+import urllib.parse
 import urllib.request
 import webbrowser
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlparse
 from tkinter import filedialog, messagebox, ttk
 import tkinter as tk
+try:
+    from tkinterdnd2 import TkinterDnD, DND_FILES
+    BaseTk = TkinterDnD.Tk
+except Exception:
+    DND_FILES = None
+    BaseTk = tk.Tk
+
+APP_NAME = "IoT LTSC Russianizer"
+APP_VERSION = "0.2.0"
+UUP_API = "https://api.uupdump.net"
+UUP_SITE = "https://uupdump.net/"
+# Official Microsoft ADK bootstrap (Deployment Tools only; downloaded on demand).
+ADK_SETUP_URL = "https://download.microsoft.com/download/8e0c0f5a-abb5-4358-a51b-168eb40b1590/adk/adksetup.exe"
+
+def app_data_dir() -> Path:
+    root = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+    return root / "IoTLTSC_Russianizer"
+DOCS_LANG = "https://learn.microsoft.com/windows-hardware/manufacture/desktop/add-language-packs-to-windows?view=windows-11"
+DOCS_FOD = "https://learn.microsoft.com/windows-hardware/manufacture/desktop/languages-overview?view=windows-11"
+DOCS_ADK = "https://learn.microsoft.com/windows-hardware/get-started/adk-install"
+
+
+def is_windows() -> bool:
+    return os.name == "nt"
+
+
+def is_admin() -> bool:
+    try:
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except Exception:
+        return False
+
+
+def elevate_or_exit() -> bool:
+    """Relaunch elevated. Returns True if the current process is elevated."""
+    if not is_windows() or is_admin():
+        return True
+    try:
+        params = subprocess.list2cmdline(sys.argv)
+        rc = ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, params, None, 1)
+        if rc <= 32:
+            messagebox.showerror(APP_NAME, "Не удалось запросить права администратора. Запустите программу от имени администратора.")
+        return False
+    except Exception as exc:
+        try:
+            messagebox.showerror(APP_NAME, f"Не удалось запросить права администратора:\n{exc}")
+        except Exception:
+            pass
+        return False
+
+
+def safe_size(path: Path) -> int:
+    try:
+        return path.stat().st_size
+    except OSError:
+        return 0
+
+
+def find_oscdimg() -> str | None:
+    candidates = []
+    pf86 = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
+    pf = os.environ.get("ProgramFiles", r"C:\Program Files")
+    roots = [
+        Path(pf86) / "Windows Kits" / "10" / "Assessment and Deployment Kit" / "Deployment Tools",
+        Path(pf) / "Windows Kits" / "10" / "Assessment and Deployment Kit" / "Deployment Tools",
+        app_data_dir() / "ADK",
+        app_data_dir() / "ADK" / "Deployment Tools",
+    ]
+    for root in roots:
+        if root.exists():
+            candidates += list(root.glob("*/Oscdimg/oscdimg.exe"))
+            candidates += list(root.glob("Oscdimg/oscdimg.exe"))
+            # The ADK install path may vary slightly between kit releases.
+            try:
+                candidates += list(root.rglob("oscdimg.exe"))
+            except OSError:
+                pass
+    for p in candidates:
+        if p.is_file():
+            return str(p)
+    return shutil.which("oscdimg")
+
+
+def human_bytes(n: int) -> str:
+    v = float(n)
+    for unit in ("Б", "КиБ", "МиБ", "ГиБ", "ТиБ"):
+        if v < 1024 or unit == "ТиБ":
+            return f"{v:.1f} {unit}" if unit != "Б" else f"{int(v)} Б"
+        v /= 1024
+    return str(n)
+
+
+def quote_cmd(args: list[str]) -> str:
+    return subprocess.list2cmdline(args)
+
+
+@dataclass
+class RunConfig:
+    source_iso: Path
+    output_iso: Path
+    package_root: Path
+    fod_root: Path | None
+    work_root: Path
+    keep_work: bool
+    process_setup: bool
+
+
+class Worker:
+    def __init__(self, events: queue.Queue, cancel_event: threading.Event, cfg: RunConfig):
+        self.events = events
+        self.cancel_event = cancel_event
+        self.cfg = cfg
+        self.log_path: Path | None = None
+        self.work: Path | None = None
+        self.source_drive: str | None = None
+        self.mounts: list[Path] = []
+        self.oscdimg = find_oscdimg()
+
+    def emit(self, kind: str, payload: str = "") -> None:
+        self.events.put((kind, payload))
+
+    def log(self, message: str) -> None:
+        line = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {message}"
+        self.emit("log", line)
+        if self.log_path:
+            self.log_path.parent.mkdir(parents=True, exist_ok=True)
+            with self.log_path.open("a", encoding="utf-8") as f:
+                f.write(line + "\n")
+
+    def check_cancel(self) -> None:
+        if self.cancel_event.is_set():
