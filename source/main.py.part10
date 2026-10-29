@@ -57,16 +57,14 @@
         ttk.Label(root, textvariable=self.status_var, wraplength=900).pack(fill="x", pady=(4, 3))
         self.progress = ttk.Progressbar(root, mode="indeterminate")
         self.progress.pack(fill="x", pady=(0, 6))
-        logs_frame = ttk.LabelFrame(root, text="Журнал работы", padding=5)
-        logs_frame.pack(fill="both", expand=True)
-        self.log_text = tk.Text(logs_frame, height=14, wrap="word", state="disabled", font=("Consolas", 9))
+        self.log_text = tk.Text(logs_frame, height=10, wrap="word", state="disabled", font=("Consolas", 9))
         scroll = ttk.Scrollbar(logs_frame, orient="vertical", command=self.log_text.yview)
         self.log_text.configure(yscrollcommand=scroll.set)
         self.log_text.pack(side="left", fill="both", expand=True)
         scroll.pack(side="right", fill="y")
 
-        footer = ttk.Label(root, text="Windows 10/11 x64 и интернет нужны для автоматической загрузки компонентов, если пакеты не найдены в русском ISO или локальном кэше. При отсутствии oscdimg программа сама загрузит официальный ADK и установит Deployment Tools в свой каталог. Оригинальный ISO не изменяется.", foreground="#555", wraplength=900)
-        footer.pack(fill="x", pady=(8, 0))
+        footer = ttk.Label(footer_frame, text="Windows 10/11 x64 и интернет нужны для автоматической загрузки компонентов, если пакеты не найдены в русском ISO или локальном кэше. При отсутствии oscdimg программа сама загрузит официальный ADK и установит Deployment Tools в свой каталог. Оригинальный ISO не изменяется.", foreground="#555", wraplength=900)
+        footer.pack(fill="x", pady=(4, 0))
 
     def _file_row(self, parent, row, label, var, command, directory=False):
         ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", padx=(0, 10), pady=3)

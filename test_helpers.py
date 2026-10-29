@@ -8,6 +8,18 @@ import main
 
 
 class HelperTests(unittest.TestCase):
+    def test_log_panel_sashes_resize_only_vertically(self):
+        options = main._ll_log_panedwindow_options()
+        self.assertEqual(options["orient"], main.tk.VERTICAL)
+        self.assertEqual(options["sashcursor"], "sb_v_double_arrow")
+        self.assertEqual(options["sashwidth"], 8)
+        self.assertTrue(options["opaqueresize"])
+        self.assertFalse(options["showhandle"])
+        pane_min_sizes = main._ll_log_pane_min_sizes()
+        self.assertEqual(pane_min_sizes["log"], 80)
+        self.assertGreater(pane_min_sizes["content"], pane_min_sizes["log"])
+        self.assertGreater(pane_min_sizes["footer"], 0)
+
     def test_human_bytes(self):
         self.assertEqual(main.human_bytes(0), "0 Б")
         self.assertIn("КиБ", main.human_bytes(2048))

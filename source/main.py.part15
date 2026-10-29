@@ -579,7 +579,7 @@ def _ll_build_ui_v090(self):
     _LL_PREV_BUILD_UI_V090(self)
     _ll_read_settings_v089(self)
     try:
-        root = self.winfo_children()[0]
+        root = getattr(self, "_main_content_frame", None) or self.winfo_children()[0]
         row = ttk.Frame(root)
         row.pack(side="bottom", fill="x", pady=(5, 0))
         self.ll_catalog_btn = ttk.Button(row, text="Найти/скачать LCU из Microsoft Update Catalog…",

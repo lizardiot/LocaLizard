@@ -36,7 +36,7 @@ except Exception:
     BaseTk = tk.Tk
 
 APP_NAME = "LocaLizard"
-APP_VERSION = "0.0.9.9"
+APP_VERSION = "0.1"
 UUP_API = "https://api.uupdump.net"
 UUP_SITE = "https://uupdump.net/"
 # Official Microsoft ADK bootstrap (Deployment Tools only; downloaded on demand).

@@ -80,7 +80,28 @@
             self.emit("error", str(exc))
 
 
+def _ll_log_panedwindow_options() -> dict:
+    """Configure a horizontal sash whose movement changes panel height only."""
+    return {
+        "orient": tk.VERTICAL,
+        "sashwidth": 8,
+        "sashrelief": tk.RAISED,
+        "sashcursor": "sb_v_double_arrow",
+        "sashpad": 1,
+        "showhandle": False,
+        "opaqueresize": True,
+        "borderwidth": 0,
+        "relief": tk.FLAT,
+    }
+
+
+def _ll_log_pane_min_sizes() -> dict:
+    """Keep the controls, log, and footer usable when either sash is dragged."""
+    return {"content": 450, "log": 80, "footer": 38}
+
+
 class App(BaseTk):
+
     def __init__(self):
         super().__init__()
         self.title(f"{APP_NAME} — v{APP_VERSION}")
@@ -95,7 +116,21 @@ class App(BaseTk):
         self.after(300, self._check_elevation)
 
     def _build_ui(self):
-        root = ttk.Frame(self, padding=14)
-        root.pack(fill="both", expand=True)
+        shell = ttk.Frame(self, padding=4)
+        shell.pack(fill="both", expand=True)
+        panes = tk.PanedWindow(shell, **_ll_log_panedwindow_options())
+        panes.pack(fill="both", expand=True)
+
+        root = ttk.Frame(panes, padding=10)
+        logs_frame = ttk.LabelFrame(panes, text="Журнал работы", padding=5)
+        footer_frame = ttk.Frame(panes, padding=(0, 4, 0, 0))
+        pane_min_sizes = _ll_log_pane_min_sizes()
+        panes.add(root, minsize=pane_min_sizes["content"], stretch="never")
+        panes.add(logs_frame, minsize=pane_min_sizes["log"], stretch="always")
+        panes.add(footer_frame, minsize=pane_min_sizes["footer"], stretch="never")
+        self._main_content_frame = root
+        self._log_panedwindow = panes
+        self._log_panel = logs_frame
+
         header = ttk.Frame(root)
         header.pack(fill="x")
