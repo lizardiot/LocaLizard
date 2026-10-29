@@ -182,25 +182,45 @@ def _ll_catalog_query_for_build(build: int, architecture: str) -> str:
         26100: "Windows 11, version 24H2", 26200: "Windows 11, version 25H2",
         26300: "Windows 11, version 26H2",
     }
-    if build not in versions:
-        raise RuntimeError(f"Для сборки {build} пока нет профиля автоматического поиска LCU. Введите номер KB вручную.")
     if architecture not in ("x64", "x86", "arm64"):
         raise RuntimeError(f"Неподдерживаемая архитектура для Microsoft Update Catalog: {architecture}")
-    return f"Cumulative Update for {versions[build]} for {architecture}-based Systems"
+    # Future and less common Windows builds are searched by their numeric OS build.
+    # Exact build-family and architecture filtering is still mandatory before results are shown.
+    version = versions.get(build, f"Windows OS Build {build}")
+    return f"Cumulative Update for {version} for {architecture}-based Systems"
+
+
+def _ll_catalog_query_candidates(query: str, target_build: int | None = None) -> list[str]:
+    queries = [str(query)]
+    if target_build is not None:
+        queries.extend([
+            f"Cumulative Update {int(target_build)}",
+            f"OS Build {int(target_build)}",
+            "Cumulative Update",
+        ])
+    unique = []
+    for candidate in queries:
+        if candidate and candidate not in unique:
+            unique.append(candidate)
+    return unique
 
 
 def _ll_catalog_search(query: str, architecture: str, kb: str | None = None, target_build: int | None = None) -> list[dict]:
     opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(_ll_cookiejar.CookieJar()))
-    url = _LL_CATALOG_BASE + "/Search.aspx?" + urllib.parse.urlencode({"q": query})
-    markup = _ll_catalog_fetch(opener, url)
-    rows = _ll_catalog_parse_search_results(markup)
-    filtered = _ll_catalog_filter_results(rows, architecture, kb, target_build)
-    if not filtered:
-        raise RuntimeError(
-            "В первом ответе Microsoft Update Catalog не найдено стабильное LCU для выбранной сборки/архитектуры. "
-            "Возможно, Catalog изменил HTML или требует интерактивную сессию. Официальный поиск: " + url
-        )
-    return filtered
+    attempted_urls = []
+    for candidate_query in _ll_catalog_query_candidates(query, target_build):
+        url = _LL_CATALOG_BASE + "/Search.aspx?" + urllib.parse.urlencode({"q": candidate_query})
+        attempted_urls.append(url)
+        markup = _ll_catalog_fetch(opener, url)
+        rows = _ll_catalog_parse_search_results(markup)
+        filtered = _ll_catalog_filter_results(rows, architecture, kb, target_build)
+        if filtered:
+            return filtered
+    raise RuntimeError(
+        "В Microsoft Update Catalog не найдено стабильное LCU, совпадающее по номеру KB (если указан), "
+        "семейству сборки и архитектуре. Возможно, каталог не содержит подходящей записи или изменил HTML. "
+        "Проверенные запросы: " + " | ".join(attempted_urls)
+    )
 
 
 def _ll_worker_for_app(app) -> Worker:

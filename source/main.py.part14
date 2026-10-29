@@ -192,23 +192,28 @@ def _ll_service_winre(self, windows_mount: Path, info: dict, update_plan: list[d
     if not winre.is_file():
         return {"status": "not_present"}
     fod_root = Path(self.cfg.fod_root) if self.cfg.fod_root else None
-    if not fod_root or not fod_root.is_dir():
-        self.log(f"WinRE индекса {info.get('index')}: нет каталога L&O ISO; оставляю WinRE без изменений.")
-        return {"status": "source_missing"}
     arch = self.arch_token(info.get("architecture", ""))
     kit_arch = {"x64": "amd64", "x86": "x86", "arm64": "arm64"}[arch]
-    candidates = [
-        fod_root / "Windows Preinstallation Environment" / kit_arch / "WinPE_OCs" / "ru-ru",
-        fod_root / "LanguagesAndOptionalFeatures" / "Windows Preinstallation Environment" / kit_arch / "WinPE_OCs" / "ru-ru",
-    ]
-    pe_lang = next((p for p in candidates if (p / "lp.cab").is_file()), None)
+    pe_lang = None
+    if fod_root and fod_root.is_dir():
+        candidates = [
+            fod_root / "Windows Preinstallation Environment" / kit_arch / "WinPE_OCs" / "ru-ru",
+            fod_root / "LanguagesAndOptionalFeatures" / "Windows Preinstallation Environment" / kit_arch / "WinPE_OCs" / "ru-ru",
+        ]
+        pe_lang = next((p for p in candidates if (p / "lp.cab").is_file()), None)
+        if pe_lang is None:
+            try:
+                pe_lang = next((p.parent for p in fod_root.rglob("lp.cab") if p.parent.name.lower() == "ru-ru" and "winpe_ocs" in str(p.parent).lower() and p.is_file()), None)
+            except OSError:
+                pe_lang = None
     if pe_lang is None:
+        self.log(f"WinRE индекса {info.get('index')}: в выбранном L&O-источнике нет подходящего ru-RU набора; проверяю официальный ADK WinPE Add-on.")
         try:
-            pe_lang = next((p.parent for p in fod_root.rglob("lp.cab") if p.parent.name.lower() == "ru-ru" and "winpe_ocs" in str(p.parent).lower() and p.is_file()), None)
-        except OSError:
-            pe_lang = None
+            pe_lang = _ll_ensure_winpe_addon(self, arch)
+        except Exception as exc:
+            self.log(f"WinRE: не удалось подготовить официальный ADK WinPE Add-on: {exc}")
     if pe_lang is None:
-        self.log(f"WinRE индекса {info.get('index')}: L&O ISO не содержит подходящий WinPE_OCs ru-RU набор; пропускаю WinRE.")
+        self.log(f"WinRE индекса {info.get('index')}: совместимые WinPE_OCs ru-RU ресурсы недоступны; пропускаю WinRE.")
         return {"status": "language_resources_missing"}
     mount = self.work / f"mount_winre_{Path(windows_mount).name}_{info.get('index', 1)}"
     mount.mkdir(parents=True, exist_ok=True)
@@ -630,6 +635,7 @@ def _ll_verify_iso_v089(self, expected: dict[str, int]) -> dict:
                 self.powershell(f"Dismount-DiskImage -ImagePath '{quoted}'", check=False, respect_cancel=False)
     if getattr(self.cfg, "vm_test", False):
         result["hyperv_smoke_test"] = _ll_hyperv_smoke_test(self)
+        self._ll_hyperv_smoke_result = result["hyperv_smoke_test"]
     return result
 
 

@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 import tempfile
 import queue
@@ -184,11 +185,44 @@ class HelperTests(unittest.TestCase):
         self.assertEqual(main._ll_catalog_file_arch("windows11.0-kb5129195-arm64_abcd.msu"), "arm64")
         self.assertIsNone(main._ll_catalog_file_arch("SomeUpdate.msu"))
 
-    def test_catalog_latest_query_profiles(self):
+    def test_catalog_latest_query_profiles_and_unknown_build_fallback(self):
         self.assertIn("version 24H2", main._ll_catalog_query_for_build(26100, "x64"))
         self.assertIn("arm64-based Systems", main._ll_catalog_query_for_build(26100, "arm64"))
+        unknown = main._ll_catalog_query_for_build(99999, "x64")
+        self.assertIn("99999", unknown)
+        self.assertIn("x64-based Systems", unknown)
         with self.assertRaises(RuntimeError):
-            main._ll_catalog_query_for_build(99999, "x64")
+            main._ll_catalog_query_for_build(99999, "mips")
+
+    def test_catalog_query_candidates_add_build_fallbacks_without_duplicates(self):
+        candidates = main._ll_catalog_query_candidates("Primary query", 99999)
+        self.assertEqual(candidates[0], "Primary query")
+        self.assertIn("Cumulative Update 99999", candidates)
+        self.assertIn("OS Build 99999", candidates)
+        self.assertIn("Cumulative Update", candidates)
+        self.assertEqual(len(candidates), len(set(candidates)))
+
+    def test_catalog_search_falls_back_to_exact_build_query(self):
+        markup = """
+        <table id="ctl00_catalogBody_updateMatches">
+          <tr><td>check</td><td>Title</td></tr>
+          <tr>
+            <td><input type="checkbox" id="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" /></td>
+            <td>2026-10 Cumulative Update for Windows 11, version 26H2 for x64-based Systems (KB5129999) (99999.1234)</td>
+            <td>Windows 11</td><td>Security Updates</td><td>10/13/2026</td><td>n/a</td><td>1200 MB</td><td></td>
+          </tr>
+        </table>
+        """
+        seen_queries = []
+        def fake_fetch(opener, url, data=None, referer=None):
+            query = main.urllib.parse.parse_qs(main.urllib.parse.urlparse(url).query).get("q", [""])[0]
+            seen_queries.append(query)
+            return markup if query == "Cumulative Update 99999" else "<table></table>"
+        with patch.object(main, "_ll_catalog_fetch", side_effect=fake_fetch):
+            rows = main._ll_catalog_search("Primary query", "x64", target_build=99999)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["build_family"], 99999)
+        self.assertIn("Cumulative Update 99999", seen_queries)
 
     def test_adk_hash_mismatch_recognizes_hex_and_decimal_exit_codes(self):
         self.assertTrue(main._ll_adk_hash_mismatch(RuntimeError("exit code 2148077575")))

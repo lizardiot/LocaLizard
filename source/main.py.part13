@@ -162,7 +162,8 @@ def _ll_auto_download(self, info: dict) -> list[Path]:
     candidates.sort(key=lambda x:(x["_ll_family"]==build,x["_ll_key"]),reverse=True)
     if not candidates: raise RuntimeError(f"UUP Dump не нашёл стабильную сборку {build}/{arch}.")
     last = None
-    for rank, candidate in enumerate(candidates[:2],1):
+    optional_source_found = False
+    for rank, candidate in enumerate(candidates[:5],1):
         self.check_cancel(); uid = str(candidate["uuid"]); title = str(candidate.get("title",uid))
         folder = target / f"{rank:02d}-{uid}"; folder.mkdir(parents=True,exist_ok=True)
         try:
@@ -187,7 +188,7 @@ def _ll_auto_download(self, info: dict) -> list[Path]:
             if valid and size is not None and path.stat().st_size != size: valid = False
             if valid and sha and _ll_hash(path,"sha1") != sha.lower(): valid = False
             if not valid: path.unlink(missing_ok=True); self.download_file(url,path,sha or None,size)
-            if rank == 1:
+            if not optional_source_found and optional:
                 for oname, ometa in optional:
                     ourl = str(ometa.get("url",""))
                     if not _ll_trusted_url(ourl): continue
@@ -197,7 +198,10 @@ def _ll_auto_download(self, info: dict) -> list[Path]:
                     if ok and osize is not None and opath.stat().st_size != osize: ok = False
                     if ok and osha and _ll_hash(opath,"sha1") != osha.lower(): ok = False
                     try:
-                        if not ok: opath.unlink(missing_ok=True); self.download_file(ourl,opath,osha or None,osize)
+                        if not ok:
+                            opath.unlink(missing_ok=True)
+                            self.download_file(ourl,opath,osha or None,osize)
+                        optional_source_found = True
                     except Exception as exc: self.log(f"Не удалось скачать optional CAB {opath.name}: {exc}")
         except Exception as exc: last = exc; self.log(f"Кандидат UUP {title} не подошёл: {exc}")
     result = self.packages_for_info(info)
@@ -387,12 +391,55 @@ def _ll_dism_image(self, media, image_wim, info, package_files, fod_root):
 _LL_ORIGINAL_WORKER_RUN=Worker.run
 def _ll_write_audit(self):
     try:
-        if not self.cfg.output_iso.is_file(): return
-        data={"application":APP_NAME,"version":APP_VERSION,"created_at":datetime.now().isoformat(timespec="seconds"),"source_iso":str(self.cfg.source_iso),"requested_fod_source":getattr(self,"_ll_requested_fod_iso",str(self.cfg.fod_root) if self.cfg.fod_root else None),"used_packages":getattr(self,"_ll_used_packages",[]),"image_language_checks":getattr(self,"language_component_report",[]),"checks":{"cache_sha256_manifest":True,"redirect_host_revalidated":True,"partial_resume":True,"capability_audit":True,"vm_boot_test":False,"winre_modified":False,"winpe_index_1_modified":False},"limitations":["Статическая проверка не заменяет запуск в VM.","WinPE index 1 и WinRE не меняются.","OOBE может влиять на preferred UI первого пользователя.","Checkpoint CU/актуальный LCU автоматически не интегрируются."]}
-        target=self.cfg.output_iso.with_suffix(".localization-audit.json"); target.write_text(json.dumps(data,ensure_ascii=False,indent=2),encoding="utf-8"); self.log(f"Дополнительный JSON-аудит сохранён: {target}")
+        if not self.cfg.output_iso.is_file():
+            return
+        component_reports = getattr(self, "language_component_report", [])
+        setup_report = getattr(self, "_ll_setup_report", {}) or {}
+        boot_indices = setup_report.get("boot_indices", {}) if isinstance(setup_report, dict) else {}
+        winpe_index_1_modified = any(str(index) == "1" for index in boot_indices)
+        winre_modified = any(
+            isinstance(item, dict)
+            and isinstance(item.get("winre"), dict)
+            and item["winre"].get("status") == "localized"
+            for item in component_reports
+        )
+        hyperv_result = getattr(self, "_ll_hyperv_smoke_result", None) or {}
+        updates_applied = getattr(self, "_ll_update_report", [])
+        data = {
+            "application": APP_NAME,
+            "version": APP_VERSION,
+            "created_at": datetime.now().isoformat(timespec="seconds"),
+            "source_iso": str(self.cfg.source_iso),
+            "requested_fod_source": str(getattr(self, "_ll_requested_fod_iso", self.cfg.fod_root)) if self.cfg.fod_root else None,
+            "used_packages": getattr(self, "_ll_used_packages", []),
+            "image_language_checks": component_reports,
+            "checks": {
+                "cache_sha256_manifest": True,
+                "redirect_host_revalidated": True,
+                "partial_resume": True,
+                "capability_audit": True,
+                "vm_boot_test": bool(hyperv_result.get("visual_setup_confirmed")),
+                "winre_modified": winre_modified,
+                "winpe_index_1_modified": winpe_index_1_modified,
+                "update_packages_applied": bool(updates_applied),
+            },
+            "hyperv_smoke_test": hyperv_result or None,
+            "limitations": [
+                "Статическая проверка ISO не заменяет полноценный запуск на виртуальной машине или целевом оборудовании.",
+                "Дополнительные языковые возможности и WinRE обрабатываются только при наличии совместимых CAB/источников; результат каждой возможности записывается в аудит.",
+                "OOBE может влиять на предпочитаемый язык интерфейса первого пользователя."
+            ]
+        }
+        target = self.cfg.output_iso.with_suffix(".localization-audit.json")
+        target.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        self.log(f"Дополнительный JSON-аудит сохранён: {target}")
     except Exception as exc:
-        try: self.log(f"Не удалось сохранить аудит: {exc}")
-        except Exception: pass
+        try:
+            self.log(f"Не удалось сохранить аудит: {exc}")
+        except Exception:
+            pass
+
+
 
 def _ll_worker_run(self):
     requested,mounted=self.cfg.fod_root,False
