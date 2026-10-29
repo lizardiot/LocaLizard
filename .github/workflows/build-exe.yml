@@ -33,7 +33,7 @@ jobs:
           if (-not $parts -or $parts.Count -lt 2) { throw "Application source parts are missing." }
           $content = ($parts | ForEach-Object { Get-Content -Raw -Encoding UTF8 $_.FullName }) -join ""
           $content = $content.Replace("IoT LTSC Russianizer", "LocaLizard").Replace("IoTLTSC_Russianizer", "LocaLizard").Replace("IoT_LTSC_Russianizer", "LocaLizard")
-          $content = $content.Replace('APP_VERSION = "0.2.0"', 'APP_VERSION = "0.0.1.8"')
+          $content = [regex]::Replace($content, 'APP_VERSION = "[^"]+"', 'APP_VERSION = "0.0.1.9"')
           Set-Content -Path "main.py" -Value $content -Encoding UTF8
           python -m py_compile main.py
 
@@ -70,7 +70,7 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Publish LocaLizard 0.0.1.8 and keep only this release
+      - name: Publish LocaLizard 0.0.1.9 and preserve previous releases
         if: success() && github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -83,22 +83,6 @@ jobs:
             exit 0
           }
 
-          # Remove all previous releases. The replacement release is created only after this build passed tests.
-          $releases = gh api "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" | ConvertFrom-Json
-          foreach ($release in $releases) {
-            Write-Host "Removing older release: $($release.tag_name)"
-            gh api --method DELETE "repos/$env:GITHUB_REPOSITORY/releases/$($release.id)"
-            if ($LASTEXITCODE -ne 0) { throw "Failed to remove old release $($release.tag_name)" }
-          }
-
-          # Remove old tags too, including a prior 0.0.1.8, so the release points at this exact build.
-          $tags = gh api "repos/$env:GITHUB_REPOSITORY/git/matching-refs/tags/" | ConvertFrom-Json
-          foreach ($tag in $tags) {
-            $short = $tag.ref.Substring("refs/tags/".Length)
-            Write-Host "Removing old tag: $short"
-            gh api --method DELETE "repos/$env:GITHUB_REPOSITORY/git/refs/tags/$short"
-            if ($LASTEXITCODE -ne 0) { throw "Failed to remove tag $short" }
-          }
-
-          gh release create "0.0.1.8" "dist/LocaLizard.exe" "dist/SHA256.txt" "README.md" "CHANGELOG.md" --title "LocaLizard 0.0.1.8" --notes-file "CHANGELOG.md" --latest
-          if ($LASTEXITCODE -ne 0) { throw "Failed to publish release LocaLizard 0.0.1.8" }
+          # Keep existing releases and tags; publish this version under its own semver tag.
+          gh release create "0.0.1.9" "dist/LocaLizard.exe" "dist/SHA256.txt" "README.md" "CHANGELOG.md" --title "LocaLizard 0.0.1.9" --notes-file "CHANGELOG.md" --latest
+          if ($LASTEXITCODE -ne 0) { throw "Failed to publish release LocaLizard 0.0.1.9" }
