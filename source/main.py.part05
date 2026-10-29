@@ -66,16 +66,37 @@
         return result
 
     def locate_ru_lp(self, image_info: dict, candidates: list[Path]) -> Path | None:
-        arch = (image_info.get("architecture") or "").lower()
-        if "arm" in arch and "64" in arch: tokens = ("arm64",)
-        elif "x86" in arch and "64" not in arch: tokens = ("x86",)
-        else: tokens = ("x64", "amd64")
+        """Find a Russian client language pack by language/type/architecture, not commercial SKU name.
+
+        Compatible Windows Enterprise/Pro/Education client language packs may also be used with
+        Windows IoT Enterprise because the client OS base is shared. The servicing engine (DISM)
+        is still the final compatibility check for the exact version/build and package metadata.
+        """
+        architecture = self.arch_token(image_info.get("architecture", ""))
         exact = []
         for p in candidates:
             n = p.name.lower()
-            if p.suffix.lower() != ".cab" or "ru-ru" not in n: continue
-            if "client-language-pack" not in n: continue
-            if not any(t in n for t in tokens): continue
-            if any(x in n for x in ("server", "winpe", "setup", "recovery")): continue
-            exact.append(p)
-        return exact[0] if exact else None
+            if p.suffix.lower() != ".cab" or "ru-ru" not in n:
+                continue
+            # Accept both explicit client LP names and generic language-pack names used by UUP sets.
+            # Do not mistake FOD, LXP, WinPE, recovery, setup or Server CABs for a base LP.
+            has_lp_marker = any(token in n for token in (
+                "client-language-pack", "client-languagepack", "clientlanguagepack",
+                "language-pack", "languagepack"
+            ))
+            if not has_lp_marker:
+                continue
+            if any(token in n for token in (
+                "server", "winpe", "setup", "recovery", "languagefeatures", "local-experience-pack"
+            )):
+                continue
+            if architecture == "arm64":
+                arch_match = "arm64" in n
+            elif architecture == "x86":
+                arch_match = any(token in n for token in ("_x86_", "-x86-", "~x86~")) and not any(token in n for token in ("x86_64", "x86-64"))
+            else:
+                arch_match = any(token in n for token in ("_x64_", "_amd64_", "x86_64", "amd64", "x64"))
+            if arch_match:
+                exact.append(p)
+        # Stable order makes selection deterministic if the catalog contains multiple matching CABs.
+        return sorted(exact, key=lambda p: (0 if "client-language-pack" in p.name.lower() else 1, p.name.lower()))[0] if exact else None
