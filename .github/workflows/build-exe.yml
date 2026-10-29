@@ -159,6 +159,15 @@ jobs:
               Set-Content -Path "legacy-release-0.0.2/README.md" -Value ("# LocaLizard 0.0.2" + [Environment]::NewLine + [Environment]::NewLine + "Historical release. Full project history: https://github.com/lizardiot/LocaLizard/blob/main/CHANGELOG.md" + [Environment]::NewLine) -Encoding UTF8
               Set-Content -Path "legacy-release-0.0.2/README_RU.md" -Value ("# LocaLizard 0.0.2" + [Environment]::NewLine + [Environment]::NewLine + "Исторический выпуск LocaLizard. Другие версии: https://github.com/lizardiot/LocaLizard/releases" + [Environment]::NewLine) -Encoding UTF8
 
+              # Create the short tag explicitly first; release creation then attaches to this existing ref.
+              gh api "repos/$env:GITHUB_REPOSITORY/git/ref/tags/0.0.2" *> $null
+              if ($LASTEXITCODE -ne 0) {
+                git tag "0.0.2" $oldTagSha
+                if ($LASTEXITCODE -ne 0) { throw "Could not create local tag 0.0.2." }
+                git push origin "refs/tags/0.0.2"
+                if ($LASTEXITCODE -ne 0) { throw "Could not push replacement tag 0.0.2." }
+              }
+
               gh release view "0.0.2" *> $null
               if ($LASTEXITCODE -eq 0) {
                 gh release upload "0.0.2" "legacy-release-0.0.2/LocaLizard.exe" "legacy-release-0.0.2/SHA256.txt" "legacy-release-0.0.2/CHANGELOG.md" "legacy-release-0.0.2/README.md" "legacy-release-0.0.2/README_RU.md" --clobber
@@ -166,7 +175,7 @@ jobs:
                 gh release edit "0.0.2" --title "LocaLizard 0.0.2" --notes-file "legacy-release-0.0.2/CHANGELOG.md"
                 if ($LASTEXITCODE -ne 0) { throw "Failed to update release notes for 0.0.2." }
               } else {
-                gh release create "0.0.2" "legacy-release-0.0.2/LocaLizard.exe" "legacy-release-0.0.2/SHA256.txt" "legacy-release-0.0.2/README.md" "legacy-release-0.0.2/README_RU.md" "legacy-release-0.0.2/CHANGELOG.md" --target "$oldTagSha" --title "LocaLizard 0.0.2" --notes-file "legacy-release-0.0.2/CHANGELOG.md"
+                gh release create "0.0.2" "legacy-release-0.0.2/LocaLizard.exe" "legacy-release-0.0.2/SHA256.txt" "legacy-release-0.0.2/README.md" "legacy-release-0.0.2/README_RU.md" "legacy-release-0.0.2/CHANGELOG.md" --title "LocaLizard 0.0.2" --notes-file "legacy-release-0.0.2/CHANGELOG.md"
                 if ($LASTEXITCODE -ne 0) { throw "Failed to create release 0.0.2." }
               }
 
