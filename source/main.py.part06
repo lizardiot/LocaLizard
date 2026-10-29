@@ -21,7 +21,7 @@
             # One matching base language pack is mandatory; guessing is not permitted.
             lp = self.locate_ru_lp(info, package_files)
             if not lp:
-                raise RuntimeError(f"Для индекса {idx} ({info['name']}) не найден совместимый на вид Client Language Pack x64/amd64 ru-RU. Добавьте официальный CAB в каталог языковых пакетов.")
+                raise RuntimeError(f"Для индекса {idx} ({info['name']}) не найден клиентский CAB языкового пакета ru-RU подходящей архитектуры. Поиск не ограничивает коммерческую редакцию; точная совместимость версии/сборки проверяется DISM. Добавьте официальный Client Language Pack в каталог или проверьте доступность UUP Dump.")
             self.log(f"Индекс {idx}: добавление базового пакета {lp.name}")
             self.run_cmd(["dism.exe", f"/Image:{mount}", "/Add-Package", f"/PackagePath:{lp}", "/NoRestart"])
             # Optional Russian language capabilities. Prefer a full FOD repository if supplied;
