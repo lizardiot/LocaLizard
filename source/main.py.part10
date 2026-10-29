@@ -1,5 +1,5 @@
         ttk.Label(header, text=APP_NAME, font=("Segoe UI", 18, "bold")).pack(anchor="w")
-        ttk.Label(header, text="Подготовка русифицированного ISO Windows IoT Enterprise LTSC", font=("Segoe UI", 10)).pack(anchor="w", pady=(2, 8))
+        ttk.Label(header, text="Подготовка русифицированного ISO / WIM Windows", font=("Segoe UI", 10)).pack(anchor="w", pady=(2, 8))
 
         files = ttk.LabelFrame(root, text="1. Образы", padding=10)
         files.pack(fill="x", pady=4)
@@ -18,23 +18,29 @@
         self.donor_iso_var = tk.StringVar()
         self.pack_var = tk.StringVar(value=str(app_data_dir() / "Packages"))
         self.fod_var = tk.StringVar()
+        self.updates_var = tk.StringVar()
         self._file_row(packs, 0, "Русский ISO-источник (необязательно):", self.donor_iso_var, self.choose_donor_iso)
         self._file_row(packs, 1, "Кэш языковых пакетов (автозагрузка):", self.pack_var, self.choose_packages, directory=True)
-        self._file_row(packs, 2, "Локальный FOD-репозиторий (необязательно):", self.fod_var, self.choose_fod, directory=True)
+        self._file_row(packs, 2, "FOD: каталог или ISO Language and Optional Features:", self.fod_var, self.choose_fod, directory=True)
+        self._file_row(packs, 3, "Обновления: каталог с updates.json (необязательно):", self.updates_var, self.choose_updates, directory=True)
         ttk.Label(
             packs,
-            text="Если UUP Dump недоступен, программа проверит дополнительный русский ISO и попробует использовать совместимые отдельные CAB. Русский язык, встроенный только в install.wim/install.esd, не гарантирует наличия извлекаемого базового CAB.",
-            wraplength=920
-        ).grid(row=3, column=0, columnspan=3, sticky="w", pady=(5, 0))
+            text="Для checkpoint cumulative updates и актуального LCU используйте совместимые официальные MSU/CAB и манифест updates.json. Русский ISO служит источником отдельных CAB и Setup-ресурсов, если его сборка соответствует цели.",
+            wraplength=980
+        ).grid(row=4, column=0, columnspan=3, sticky="w", pady=(5, 0))
         packs.columnconfigure(1, weight=1)
 
         opts = ttk.LabelFrame(root, text="3. Обработка и проверки", padding=10)
         opts.pack(fill="x", pady=4)
         self.keep_var = tk.BooleanVar(value=True)
         self.setup_var = tk.BooleanVar(value=True)
+        self.split_var = tk.BooleanVar(value=False)
+        self.vm_test_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(opts, text="Сохранять рабочие файлы для диагностики", variable=self.keep_var).grid(row=0, column=0, sticky="w")
-        ttk.Checkbutton(opts, text="Попытаться русифицировать Setup/WinPE при наличии подходящих пакетов ADK", variable=self.setup_var).grid(row=0, column=1, sticky="w", padx=(15, 0))
-        ttk.Label(opts, text="WinRE пока не редактируется этой версией; проверка виртуальной машиной не выполняется.", foreground="#8a4b08").grid(row=1, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        ttk.Checkbutton(opts, text="Локализовать Windows Setup и WinPE при наличии WinPE Add-on", variable=self.setup_var).grid(row=0, column=1, sticky="w", padx=(15, 0))
+        ttk.Checkbutton(opts, text="Разбить итоговый install.wim на SWM для FAT32", variable=self.split_var).grid(row=1, column=0, sticky="w", pady=(5, 0))
+        ttk.Checkbutton(opts, text="Выполнить 120-секундный запуск ISO в Hyper-V", variable=self.vm_test_var).grid(row=1, column=1, sticky="w", padx=(15, 0), pady=(5, 0))
+        ttk.Label(opts, text="WinRE локализуется из L&O ISO, если подходящий набор доступен. Hyper-V smoke-test требует Hyper-V/прав администратора и не распознаёт автоматически экран Setup.", foreground="#555").grid(row=2, column=0, columnspan=2, sticky="w", pady=(6, 0))
         opts.columnconfigure(1, weight=1)
 
         actions = ttk.Frame(root)
@@ -44,6 +50,7 @@
         self.cancel_btn = ttk.Button(actions, text="Отменить", command=self.cancel, state="disabled")
         self.cancel_btn.pack(side="left", padx=8)
         ttk.Button(actions, text="Проверить UUP Dump", command=self.check_uup).pack(side="left", padx=(12, 0))
+        ttk.Button(actions, text="Обработать существующий WIM…", command=self.patch_existing_wim).pack(side="left", padx=8)
         ttk.Button(actions, text="Документация Microsoft", command=lambda: webbrowser.open(DOCS_LANG)).pack(side="left", padx=8)
 
         self.status_var = tk.StringVar(value="Готово к настройке. Ничего не будет изменено до нажатия кнопки запуска.")
