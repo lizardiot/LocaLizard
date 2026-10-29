@@ -21,10 +21,21 @@
                 for name, meta in files.items():
                     low = name.lower()
                     if not low.endswith(".cab") or "ru-ru" not in low: continue
-                    if "client-language-pack" in low and not any(bad in low for bad in ("server", "winpe", "setup", "recovery")):
-                        if arch == "x64" and ("_x64_" in low or "_amd64_" in low): lp_candidates.append((name, meta))
-                        elif arch == "arm64" and "arm64" in low: lp_candidates.append((name, meta))
-                        elif arch == "x86" and "_x86_" in low: lp_candidates.append((name, meta))
+                    # Do not require an edition marker such as "IoT" or "Enterprise".
+                    # Client language packs are shared by compatible client SKUs; DISM is the
+                    # final authority on whether this exact package can be serviced into this image.
+                    has_lp_marker = any(token in low for token in (
+                        "client-language-pack", "client-languagepack", "clientlanguagepack",
+                        "language-pack", "languagepack"
+                    ))
+                    forbidden = ("server", "winpe", "setup", "recovery", "languagefeatures", "local-experience-pack")
+                    if has_lp_marker and not any(bad in low for bad in forbidden):
+                        if arch == "x64" and any(token in low for token in ("_x64_", "_amd64_", "x86_64", "amd64", "x64")):
+                            lp_candidates.append((name, meta))
+                        elif arch == "arm64" and "arm64" in low:
+                            lp_candidates.append((name, meta))
+                        elif arch == "x86" and any(token in low for token in ("_x86_", "-x86-", "~x86~")) and not any(token in low for token in ("x86_64", "x86-64")):
+                            lp_candidates.append((name, meta))
                     elif any(token in low for token in ("languagefeatures-basic", "languagefeatures-ocr", "languagefeatures-speech", "languagefeatures-texttospeech", "languagefeatures-handwriting")):
                         optional.append((name, meta))
                 if not lp_candidates: continue
