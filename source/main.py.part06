@@ -1,0 +1,67 @@
+    def packages_for_info(self, image_info: dict) -> list[Path]:
+        """Avoid mixing cached CABs from unrelated Windows build families."""
+        root = self.cfg.package_root
+        default_root = app_data_dir() / "Packages"
+        if root.resolve() != default_root.resolve():
+            return self.find_packages(root)
+        branch = self.build_family(image_info.get("version", ""))
+        arch = self.arch_token(image_info.get("architecture", ""))
+        build_dir = root / "auto" / f"{branch}_{arch}"
+        # Files placed directly in the package folder by the user are treated as explicit overrides.
+        manual_files = [p for p in root.iterdir() if p.is_file() and p.suffix.lower() in (".cab", ".msu", ".appx", ".msix")] if root.exists() else []
+        return manual_files + self.find_packages(build_dir)
+
+    def dism_image(self, media: Path, image_wim: Path, info: dict, package_files: list[Path], fod_root: Path | None) -> None:
+        idx = info["index"]
+        mount = self.work / f"mount_install_{idx}"
+        mount.mkdir(parents=True, exist_ok=True)
+        self.mounts.append(mount)
+        self.run_cmd(["dism.exe", "/Mount-Image", f"/ImageFile:{image_wim}", f"/Index:{idx}", f"/MountDir:{mount}", "/CheckIntegrity"])
+        try:
+            # One matching base language pack is mandatory; guessing is not permitted.
+            lp = self.locate_ru_lp(info, package_files)
+            if not lp:
+                raise RuntimeError(f"Для индекса {idx} ({info['name']}) не найден совместимый на вид Client Language Pack x64/amd64 ru-RU. Добавьте официальный CAB в каталог языковых пакетов.")
+            self.log(f"Индекс {idx}: добавление базового пакета {lp.name}")
+            self.run_cmd(["dism.exe", f"/Image:{mount}", "/Add-Package", f"/PackagePath:{lp}", "/NoRestart"])
+            # Optional Russian language capabilities. Prefer a full FOD repository if supplied;
+            # otherwise try language-feature CABs downloaded from the same UUP build family.
+            caps = [
+                ("Language.Basic~~~ru-RU~0.0.1.0", ("languagefeatures-basic", "languagefeatures-basic-ru-ru")),
+                ("Language.OCR~~~ru-RU~0.0.1.0", ("languagefeatures-ocr",)),
+                ("Language.Speech~~~ru-RU~0.0.1.0", ("languagefeatures-speech",)),
+                ("Language.TextToSpeech~~~ru-RU~0.0.1.0", ("languagefeatures-texttospeech", "languagefeatures-text-to-speech")),
+                ("Language.Handwriting~~~ru-RU~0.0.1.0", ("languagefeatures-handwriting",)),
+            ]
+            for cap, filename_tokens in caps:
+                self.check_cancel()
+                if fod_root and fod_root.exists():
+                    self.log(f"Попытка добавить возможность из выбранного FOD-репозитория: {cap}")
+                    cp = self.run_cmd(["dism.exe", f"/Image:{mount}", "/Add-Capability", f"/CapabilityName:{cap}", f"/Source:{fod_root}", "/LimitAccess"], check=False)
+                    if cp.returncode == 0:
+                        continue
+                    self.log(f"FOD-репозиторий не обеспечил {cap}; ищу отдельный CAB. Код DISM: {cp.returncode}")
+                matches = [p for p in package_files if p.suffix.lower() == ".cab" and "ru-ru" in p.name.lower() and any(tok in p.name.lower() for tok in filename_tokens)]
+                if matches:
+                    package_path = matches[0]
+                    self.log(f"Попытка добавить необязательный языковой компонент: {package_path.name}")
+                    cp = self.run_cmd(["dism.exe", f"/Image:{mount}", "/Add-Package", f"/PackagePath:{package_path}", "/NoRestart"], check=False)
+                    if cp.returncode:
+                        self.log(f"Не удалось добавить необязательный компонент {package_path.name}; продолжаю. Код DISM: {cp.returncode}")
+                else:
+                    self.log(f"Не найден отдельный CAB для {cap}; компонент будет отмечен как недоступный.")
+            # Set international preferences after adding available language satellites.
+            self.run_cmd(["dism.exe", f"/Image:{mount}", "/Set-AllIntl:ru-RU"])
+            self.run_cmd(["dism.exe", f"/Image:{mount}", "/Set-UILang:ru-RU"])
+            self.run_cmd(["dism.exe", f"/Image:{mount}", "/Set-UserLocale:ru-RU"])
+            self.run_cmd(["dism.exe", f"/Image:{mount}", "/Set-SystemLocale:ru-RU"])
+            self.run_cmd(["dism.exe", f"/Image:{mount}", "/Set-InputLocale:0419:00000419"])
+            # Inventory and locale verification are mandatory static checks.
+            intl_check = self.run_cmd(["dism.exe", f"/Image:{mount}", "/Get-Intl"])
+            if "ru-ru" not in (intl_check.stdout or "").lower():
+                raise RuntimeError(f"DISM не подтвердил локаль ru-RU для индекса {idx}.")
+            package_check = self.run_cmd(["dism.exe", f"/Image:{mount}", "/Get-Packages", "/Format:Table"])
+            if "ru-ru" not in (package_check.stdout or "").lower():
+                self.log(f"Предупреждение: вывод Get-Packages для индекса {idx} не содержит ru-RU; проверьте пакет вручную.")
+            self.run_cmd(["dism.exe", f"/Image:{mount}", "/Unmount-Image", "/Commit", "/CheckIntegrity"])
+            self.mounts.remove(mount)
