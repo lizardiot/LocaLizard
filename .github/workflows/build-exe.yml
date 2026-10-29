@@ -162,10 +162,9 @@ jobs:
               # Create the short tag explicitly first; release creation then attaches to this existing ref.
               gh api "repos/$env:GITHUB_REPOSITORY/git/ref/tags/0.0.2" *> $null
               if ($LASTEXITCODE -ne 0) {
-                git tag "0.0.2" $oldTagSha
-                if ($LASTEXITCODE -ne 0) { throw "Could not create local tag 0.0.2." }
-                git push origin "refs/tags/0.0.2"
-                if ($LASTEXITCODE -ne 0) { throw "Could not push replacement tag 0.0.2." }
+                # Create the ref via GitHub's refs API before publishing the release.
+                gh api --method POST "repos/$env:GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/0.0.2" -f sha="$oldTagSha"
+                if ($LASTEXITCODE -ne 0) { throw "Could not create replacement tag 0.0.2 via the GitHub refs API." }
               }
 
               gh release view "0.0.2" *> $null
