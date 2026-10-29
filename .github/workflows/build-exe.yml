@@ -1,4 +1,4 @@
-name: Build Windows EXE
+name: Build LocaLizard Windows EXE
 
 on:
   push:
@@ -7,6 +7,10 @@ on:
 
 permissions:
   contents: write
+
+concurrency:
+  group: localizard-windows-release-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -44,29 +48,55 @@ jobs:
       - name: Build standalone EXE
         shell: pwsh
         run: |
-          pyinstaller --noconfirm --clean --onefile --windowed --name IoT_LTSC_Russianizer --collect-all tkinterdnd2 main.py
-          if (-not (Test-Path "dist/IoT_LTSC_Russianizer.exe")) { throw "EXE build did not produce an output file." }
-          $f = Get-Item "dist/IoT_LTSC_Russianizer.exe"
+          pyinstaller --noconfirm --clean --onefile --windowed --name LocaLizard --collect-all tkinterdnd2 main.py
+          if (-not (Test-Path "dist/LocaLizard.exe")) { throw "EXE build did not produce an output file." }
+          $f = Get-Item "dist/LocaLizard.exe"
           if ($f.Length -lt 1000000) { throw "EXE is unexpectedly small ($($f.Length) bytes)." }
-          Get-FileHash "dist/IoT_LTSC_Russianizer.exe" -Algorithm SHA256 | Format-List | Out-File "dist/SHA256.txt"
-          Copy-Item "README_RU.md" "dist/README_RU.txt" -ErrorAction SilentlyContinue
+          Get-FileHash "dist/LocaLizard.exe" -Algorithm SHA256 | Format-List | Out-File "dist/SHA256.txt"
+          Copy-Item "README.md" "dist/README.md"
+          Copy-Item "CHANGELOG.md" "dist/CHANGELOG.md"
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: IoT-LTSC-Russianizer-Windows-x64
+          name: LocaLizard-Windows-x64
           path: |
-            dist/IoT_LTSC_Russianizer.exe
+            dist/LocaLizard.exe
             dist/SHA256.txt
-            dist/README_RU.txt
+            dist/README.md
+            dist/CHANGELOG.md
           if-no-files-found: error
           retention-days: 30
 
-      - name: Publish downloadable GitHub release
+      - name: Publish LocaLizard 0.0.1.8 and keep only this release
         if: success() && github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ github.token }}
         shell: pwsh
         run: |
-          $tag = "build-$env:GITHUB_RUN_NUMBER"
-          gh release create $tag "dist/IoT_LTSC_Russianizer.exe" "dist/SHA256.txt" --title "IoT LTSC Russianizer build $env:GITHUB_RUN_NUMBER" --notes "Automated Windows x64 build. This release contains the standalone EXE and SHA-256 checksum. Review README_RU for current scope and limitations." --latest
+          # A newer commit cancels/invalidates this release run so an older build cannot overwrite the latest release.
+          $head = gh api "repos/$env:GITHUB_REPOSITORY/commits/main" --jq ".sha"
+          if ($head -ne $env:GITHUB_SHA) {
+            Write-Host "Skipping release because main has advanced to $head."
+            exit 0
+          }
+
+          # Remove all previous releases. The replacement release is created only after this build passed tests.
+          $releases = gh api "repos/$env:GITHUB_REPOSITORY/releases?per_page=100" | ConvertFrom-Json
+          foreach ($release in $releases) {
+            Write-Host "Removing older release: $($release.tag_name)"
+            gh api --method DELETE "repos/$env:GITHUB_REPOSITORY/releases/$($release.id)"
+            if ($LASTEXITCODE -ne 0) { throw "Failed to remove old release $($release.tag_name)" }
+          }
+
+          # Remove old tags too, including a prior 0.0.1.8, so the release points at this exact build.
+          $tags = gh api "repos/$env:GITHUB_REPOSITORY/git/matching-refs/tags/" | ConvertFrom-Json
+          foreach ($tag in $tags) {
+            $short = $tag.ref.Substring("refs/tags/".Length)
+            Write-Host "Removing old tag: $short"
+            gh api --method DELETE "repos/$env:GITHUB_REPOSITORY/git/refs/tags/$short"
+            if ($LASTEXITCODE -ne 0) { throw "Failed to remove tag $short" }
+          }
+
+          gh release create "0.0.1.8" "dist/LocaLizard.exe" "dist/SHA256.txt" "README.md" "CHANGELOG.md" --title "LocaLizard 0.0.1.8" --notes-file "CHANGELOG.md" --latest
+          if ($LASTEXITCODE -ne 0) { throw "Failed to publish release LocaLizard 0.0.1.8" }
