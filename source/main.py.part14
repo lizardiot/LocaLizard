@@ -554,7 +554,7 @@ def _ll_esd_to_wim_with_swm(self, media: Path) -> list[Path]:
             self.run_cmd([
                 "dism.exe", "/Export-Image", f"/SourceImageFile:{first}", f"/SWMFile:{sources / (stem + '*.swm')}",
                 f"/SourceIndex:{image['index']}", f"/DestinationImageFile:{wim}",
-                f"/DestinationName:{image.get('name') or 'Windows image ' + str(image['index']}",
+                f"/DestinationName:{image.get('name') or ('Windows image ' + str(image['index']))}",
                 "/Compress:max", "/CheckIntegrity",
             ])
         output_infos = self.image_info(wim)
@@ -612,19 +612,14 @@ def _ll_verify_iso_v089(self, expected: dict[str, int]) -> dict:
             if not boot_info:
                 raise RuntimeError("boot.wim итогового ISO не читается через DISM.")
             split_observed = {}
-            for swm in sorted(sources.glob("install*.swm")):
-                if swm.name.lower().endswith(".swm") and re.fullmatch(r"install(?:[0-9]+)?\.swm", swm.name, re.I):
-                    stem = "install"
-                    parts = _ll_sequence_swm(sources, stem)
-                    if not parts:
-                        continue
-                    for name, count in expected.items():
-                        if name.lower() == "install.wim":
-                            if any(p.stat().st_size == 0 or p.stat().st_size > 4 * 1024**3 for p in parts):
-                                raise RuntimeError("Обнаружена пустая или слишком крупная SWM-часть.")
-                            split_observed[name] = {"parts": [p.name for p in parts], "indexes_before_split": count}
-                            break
-                    break
+            for name, count in expected.items():
+                stem = Path(name).stem
+                parts = _ll_sequence_swm(sources, stem)
+                if not parts:
+                    raise RuntimeError(f"В итоговом ISO отсутствует split-WIM набор для {name}.")
+                if any(p.stat().st_size == 0 or p.stat().st_size > 4 * 1024**3 for p in parts):
+                    raise RuntimeError(f"Обнаружена пустая или слишком крупная SWM-часть у {stem}.")
+                split_observed[name] = {"parts": [p.name for p in parts], "indexes_before_split": count}
             if not split_observed:
                 raise RuntimeError("В итоговом ISO не найден complete install.swm set.")
             result = {"mounted_iso": True, "boot_wim_indexes": len(boot_info), "split_install_images": split_observed,
@@ -737,7 +732,7 @@ def _ll_patch_existing_wim(self, source_wim: Path, output_wim: Path) -> None:
     for position, (wim, info) in enumerate(image_plan, 1):
         self.check_cancel()
         self.emit("progress", f"Обработка WIM-индекса {position}/{len(image_plan)}: {info['name']}")
-        self.dism_image(wim, info, package_plan[int(info["index"])], self.cfg.fod_root)
+        self.dism_image(self.work, staged, info, package_plan[int(info["index"])], self.cfg.fod_root)
     verified = self.image_info(staged)
     if len(verified) != len(infos):
         raise RuntimeError(f"После обслуживания осталось {len(verified)} индексов вместо {len(infos)}.")
