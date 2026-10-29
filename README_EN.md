@@ -1,4 +1,4 @@
-# LocaLizard 0.0.9.2
+# LocaLizard 0.0.9.3
 
 **LocaLizard** is a graphical utility for preparing Windows IoT Enterprise LTSC installation media with Russian as the default language.
 
@@ -6,7 +6,7 @@
 
 - [Latest LocaLizard release](https://github.com/lizardiot/LocaLizard/releases/latest)
 - [All releases](https://github.com/lizardiot/LocaLizard/releases)
-- [LocaLizard.exe for Windows x64 — version 0.0.9.2](https://github.com/lizardiot/LocaLizard/releases/download/0.0.9.2/LocaLizard.exe)
+- [LocaLizard.exe for Windows x64 — version 0.0.9.3](https://github.com/lizardiot/LocaLizard/releases/download/0.0.9.3/LocaLizard.exe)
 
 ## Features
 
@@ -32,8 +32,8 @@
 
 ## Run
 
-1. Download `LocaLizard.exe` from the [0.0.9.2 release](https://github.com/lizardiot/LocaLizard/releases/tag/0.0.9.2).
-2. Run the application and approve the Windows administrator prompt.
+1. Download `LocaLizard.exe` from the [0.0.9.3 release](https://github.com/lizardiot/LocaLizard/releases/tag/0.0.9.3).
+2. Run the application. The main window runs without elevation, so you can drag an ISO from Windows Explorer. Approve the UAC prompt when the application starts an operation that requires administrator privileges.
 3. Select the source Windows ISO, output ISO path, and working directory.
 4. If needed, specify a Russian ISO source, FOD / Language and Optional Features sources, and an update catalog.
 5. Click **Check prerequisites and create ISO**. The Hyper-V test also requires Hyper-V to be installed and the user to visually confirm the Setup screen.
@@ -42,7 +42,10 @@ You do not need to install Python or development tools manually. The source ISO 
 
 ## Version history
 
-### [0.0.9.2](https://github.com/lizardiot/LocaLizard/releases/tag/0.0.9.2) — current release
+### [0.0.9.3](https://github.com/lizardiot/LocaLizard/releases/tag/0.0.9.3) — current release
+Fixed dragging ISO files from Windows Explorer: the main window starts without administrator privileges, and elevation is requested only when an operation requires it. Added regression checks for arguments passed to the elevated instance.
+
+### [0.0.9.2](https://github.com/lizardiot/LocaLizard/releases/tag/0.0.9.2) — previous release
 Fixed ISO mounting and added diagnostics for a missing Windows Virtual Disk provider.
 
 ### [0.0.9.1](https://github.com/lizardiot/LocaLizard/releases/tag/0.0.9.1) — previous release
