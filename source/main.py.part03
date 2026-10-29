@@ -1,0 +1,90 @@
+            with urllib.request.urlopen(request, timeout=60) as response, temp.open("wb") as f:
+                length_header = response.headers.get("Content-Length")
+                total = int(length_header) if length_header and length_header.isdigit() else expected_size
+                while True:
+                    self.check_cancel()
+                    block = response.read(1024 * 1024)
+                    if not block:
+                        break
+                    f.write(block); sha.update(block); size += len(block)
+                    if total:
+                        self.emit("progress", f"Загрузка языкового компонента: {dest.name} — {human_bytes(size)} / {human_bytes(total)}")
+            if size == 0:
+                raise RuntimeError(f"Скачан пустой файл: {dest.name}")
+            if expected_size and size != expected_size:
+                raise RuntimeError(f"Размер {dest.name} не совпадает с метаданными UUP Dump: {size} вместо {expected_size}")
+            if expected_sha1 and sha.hexdigest().lower() != expected_sha1.lower():
+                raise RuntimeError(f"SHA-1 не совпал для {dest.name}; файл удалён как повреждённый.")
+            temp.replace(dest)
+        except Exception:
+            try: temp.unlink(missing_ok=True)
+            except OSError: pass
+            raise
+
+    @staticmethod
+    def api_json(url: str) -> dict:
+        request = urllib.request.Request(url, headers={"User-Agent": f"IoT-LTSC-Russianizer/{APP_VERSION}", "Accept": "application/json"})
+        with urllib.request.urlopen(request, timeout=40) as response:
+            data = json.loads(response.read().decode("utf-8", "replace"))
+        body = data.get("response", {})
+        if body.get("error"):
+            raise RuntimeError(f"UUP Dump API: {body.get('error')}")
+        return body
+
+    @staticmethod
+    def build_family(version: str) -> int | None:
+        match = re.search(r"(?:^|\D)10\.0\.(\d+)\.(\d+)", version or "")
+        return int(match.group(1)) if match else None
+
+    @staticmethod
+    def arch_token(architecture: str) -> str:
+        value = (architecture or "").lower()
+        if "arm64" in value or "aarch64" in value: return "arm64"
+        if "x86" in value and "64" not in value: return "x86"
+        return "x64"
+
+    def auto_download_ru_assets(self, image_info: dict) -> list[Path]:
+        """Get matching Russian LP and optional RU language capability packages via UUP Dump.
+
+        UUP Dump is only used as a metadata/catalog API; file downloads must point to
+        Microsoft delivery domains and pass the API-provided SHA-1/size checks.
+        """
+        target_build = self.build_family(image_info.get("version", ""))
+        arch = self.arch_token(image_info.get("architecture", ""))
+        if not target_build:
+            raise RuntimeError(f"Не удалось определить сборку образа из версии: {image_info.get('version')!r}")
+        self.cfg.package_root.mkdir(parents=True, exist_ok=True)
+        target_dir = self.cfg.package_root / "auto" / f"{target_build}_{arch}"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        existing = self.packages_for_info(image_info)
+        if self.locate_ru_lp(image_info, existing):
+            self.log("Совместимый по архитектуре CAB ru-RU уже найден в каталоге кэша для этой ветки.")
+            return existing
+        self.log(f"Автоматический поиск Client Language Pack ru-RU: ветка {target_build}, архитектура {arch}, через UUP Dump API.")
+        search_terms = [str(target_build)]
+        if 19042 <= target_build <= 19045:
+            # Windows 10 20H2–22H2 share the 19041 servicing baseline. DISM remains the final compatibility check.
+            search_terms.append("19041")
+        candidates: list[dict] = []
+        seen: set[str] = set()
+        for term in search_terms:
+            url = UUP_API + "/listid.php?" + urllib.parse.urlencode({"search": term, "sortByDate": "1"})
+            try:
+                response = self.api_json(url)
+                for build in response.get("builds", []):
+                    uid = str(build.get("uuid", ""))
+                    if not uid or uid in seen: continue
+                    candidate_arch = str(build.get("arch", "")).lower()
+                    if arch == "x64" and candidate_arch not in ("amd64", "x64", "x86_64"): continue
+                    if arch == "arm64" and candidate_arch not in ("arm64", "aarch64"): continue
+                    if arch == "x86" and candidate_arch not in ("x86", "i386"): continue
+                    title = str(build.get("title", "")).lower()
+                    if any(w in title for w in ("insider", "canary", "dev channel", "beta channel")): continue
+                    cbuild = str(build.get("build", ""))
+                    numeric_parts = re.findall(r"\d+", cbuild)
+                    if cbuild.startswith("10.0.") and len(numeric_parts) >= 3:
+                        branch = int(numeric_parts[2])
+                    else:
+                        branch = int(numeric_parts[0]) if numeric_parts else None
+                    allowed = {target_build}
+                    if 19042 <= target_build <= 19045: allowed.add(19041)
