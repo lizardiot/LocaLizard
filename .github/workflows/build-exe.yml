@@ -61,6 +61,7 @@ jobs:
           Set-Content -Path "dist/CHANGELOG.md" -Value ($releaseSection.Value.Trim() + [Environment]::NewLine) -Encoding UTF8
           Copy-Item "README.md" "dist/README.md"
           Copy-Item "README_RU.md" "dist/README_RU.md"
+          Copy-Item "README_EN.md" "dist/README_EN.md"
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
@@ -70,6 +71,7 @@ jobs:
             dist/SHA256.txt
             dist/README.md
             dist/README_RU.md
+            dist/README_EN.md
             dist/CHANGELOG.md
           if-no-files-found: error
           retention-days: 30
@@ -97,12 +99,12 @@ jobs:
           gh release view $tag *> $null
           if ($LASTEXITCODE -eq 0) {
             Write-Host "Release $tag already exists; refreshing version-specific notes and docs while preserving EXE assets."
-            gh release upload "$tag" "dist/CHANGELOG.md" "dist/README.md" "dist/README_RU.md" --clobber
+            gh release upload "$tag" "dist/CHANGELOG.md" "dist/README.md" "dist/README_RU.md" "dist/README_EN.md" --clobber
             if ($LASTEXITCODE -ne 0) { throw "Failed to refresh release assets for $tag" }
             gh release edit "$tag" --title "LocaLizard $version" --notes-file "dist/CHANGELOG.md"
             if ($LASTEXITCODE -ne 0) { throw "Failed to refresh notes for $tag" }
           } else {
-            gh release create "$tag" "dist/LocaLizard.exe" "dist/SHA256.txt" "dist/README.md" "dist/README_RU.md" "dist/CHANGELOG.md" --target "$env:GITHUB_SHA" --title "LocaLizard $version" --notes-file "dist/CHANGELOG.md" --latest
+            gh release create "$tag" "dist/LocaLizard.exe" "dist/SHA256.txt" "dist/README.md" "dist/README_RU.md" "dist/README_EN.md" "dist/CHANGELOG.md" --target "$env:GITHUB_SHA" --title "LocaLizard $version" --notes-file "dist/CHANGELOG.md" --latest
             if ($LASTEXITCODE -ne 0) { throw "Failed to publish release $tag" }
           }
 

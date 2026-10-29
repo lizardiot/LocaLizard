@@ -1,77 +1,71 @@
 # LocaLizard 0.0.9.2
 
-**LocaLizard** is a Windows utility for preparing Windows IoT Enterprise LTSC installation media with Russian language support.
+Это руководство к текущему выпуску. Полная история изменений репозитория находится в [CHANGELOG.md](CHANGELOG.md); страница релиза содержит отдельный журнал именно своей версии.
 
-## Download
+## Скачать и запустить
 
-- [Latest LocaLizard release](https://github.com/lizardiot/LocaLizard/releases/latest)
-- [All releases](https://github.com/lizardiot/LocaLizard/releases)
-- [LocaLizard.exe for Windows x64 — version 0.0.9.2](https://github.com/lizardiot/LocaLizard/releases/download/0.0.9.2/LocaLizard.exe)
+1. [Скачайте LocaLizard.exe — версия 0.0.9.2](https://github.com/lizardiot/LocaLizard/releases/download/0.0.9.2/LocaLizard.exe).
+2. Запустите программу и подтвердите запрос прав администратора Windows.
+3. Выберите исходный ISO, выходной ISO и рабочую папку.
+4. При необходимости задайте русский ISO-источник, FOD/Language and Optional Features и каталог обновлений.
+5. Нажмите «Проверить условия и создать ISO». Для Hyper-V теста также требуется установленный Hyper-V и визуальное подтверждение пользователя.
 
-## Features
+Python и инструменты разработки устанавливать вручную не нужно. Исходный ISO остаётся без изменений.
 
-- GUI for selecting the source ISO, output ISO, working directory, language sources, and update catalog.
-- Search for a stable cumulative update (LCU) or a specified KB through Microsoft Update Catalog.
-- Filtering of Preview/Insider/Canary, Windows Server, and mismatched architectures before download; users review and confirm the selected catalog entry.
-- Downloads from trusted Microsoft Update HTTPS domains, verification of the published Catalog SHA-1, and SHA-256 calculation. Each prepared update set includes `updates.json`, `catalog-source.json`, and `SHA256.txt`.
-- Search for a compatible Client Language Pack ru-RU in a matching Russian ISO, the managed cache, or through UUP Dump API.
-- Russian locale configuration through DISM and installation of available Language Features from a FOD / Language and Optional Features source.
-- Optional localization of Windows Setup `boot.wim` index 2, WinPE index 1, and nested WinRE when compatible resources are available.
-- WIM/ESD processing, support for input split-WIM `.swm` files, optional splitting of the output WIM into SWM parts for FAT32, and processing an existing WIM into a separate output file.
-- Static image validation, logging, and JSON audit report.
-- Optional interactive Hyper-V boot check using VMConnect and visual confirmation of the Windows Setup screen.
+## Возможности
 
-## Limitations
+- GUI для выбора исходного ISO, выходного ISO, рабочей папки, источников языковых компонентов и каталога обновлений.
+- Поиск стабильного накопительного обновления (LCU) или конкретного KB через Microsoft Update Catalog.
+- Фильтрация Preview/Insider/Canary, Windows Server и несовпадающей архитектуры до загрузки; пользователь подтверждает выбранную запись.
+- Загрузка только с доверенных HTTPS-доменов Microsoft Update, проверка опубликованного Catalog SHA-1 и расчёт SHA-256. Для каждого набора обновлений создаются `updates.json`, `catalog-source.json` и `SHA256.txt`.
+- Поиск подходящего Client Language Pack ru-RU в совместимом русском ISO, управляемом кэше или через UUP Dump API.
+- Настройка русской локали через DISM и установка доступных Language Features из источника FOD / Language and Optional Features.
+- При наличии подходящих компонентов — локализация Windows Setup `boot.wim` index 2, WinPE index 1 и вложенного WinRE.
+- Обработка WIM/ESD, входных split-WIM `.swm`, разбиение итогового WIM на SWM для FAT32 и обработка существующего WIM в отдельный выходной файл.
+- Статическая проверка образа, журналирование и JSON-аудит.
+- Необязательная интерактивная Hyper-V проверка через VMConnect с визуальным подтверждением экрана Windows Setup.
 
-- Automatic LCU search covers known build families; older or unusual releases may require entering a KB manually.
-- Check the target build, architecture, and update-chain contents before integration. If Microsoft Update Catalog returns ambiguous results or changes its page structure, the utility stops instead of guessing which package to use.
-- A Russian language already embedded in a donor WIM does not guarantee that a standalone Client Language Pack CAB is available. DISM remains the final compatibility check.
-- Availability of FOD, speech, OCR, handwriting, and WinRE localization depends on a compatible Language and Optional Features repository.
-- ISO mounting relies on the Windows Virtual Disk provider. If Windows reports that the provider is missing (`0xC03A0014`), LocaLizard shows diagnostic guidance, but the missing Windows component must be repaired at the OS level.
-- The Hyper-V test requires Windows, Hyper-V, administrator privileges, and manual confirmation of the Setup screen. It does not run in GitHub CI.
-- Test the generated ISO on a separate machine before using it for deployment.
+## Ограничения
 
-## Run
+- Автопоиск LCU охватывает известные семейства сборок; для старых или нестандартных версий может потребоваться вручную указать KB.
+- Перед интеграцией проверьте целевую сборку, архитектуру и состав цепочки обновлений. Если Microsoft Update Catalog возвращает неоднозначные результаты или меняет структуру страницы, программа останавливается, а не угадывает пакет.
+- Наличие русского языка внутри донорского WIM не гарантирует наличие отдельного Client Language Pack CAB. Окончательную совместимость пакета проверяет DISM.
+- Полнота FOD, речи, OCR, рукописного ввода и локализации WinRE зависит от доступности подходящего репозитория Language and Optional Features.
+- Подключение ISO зависит от системного Windows Virtual Disk provider. Если Windows сообщает, что поставщик отсутствует (`0xC03A0014`), LocaLizard выводит диагностические рекомендации, но восстановить отсутствующий компонент Windows на уровне ОС не может.
+- Hyper-V тест требует Windows, Hyper-V, прав администратора и ручного подтверждения экрана Setup. В GitHub CI он не запускается.
+- Перед рабочим развёртыванием проверьте созданный ISO на отдельной тестовой машине.
 
-1. Download `LocaLizard.exe` from the [0.0.9.2 release](https://github.com/lizardiot/LocaLizard/releases/tag/0.0.9.2).
-2. Run the application and approve the Windows administrator prompt.
-3. Select the source Windows ISO, output ISO path, and working directory.
-4. Optionally select a Russian ISO source, FOD / Language and Optional Features source, and update catalog.
-5. Click **Check prerequisites and create ISO**. The optional Hyper-V test also requires Hyper-V to be installed and the user to confirm the Setup screen.
+## История версий
 
-Python and development tools do not need to be installed manually. The source ISO is not modified.
-
-## Version history
-
-### [0.0.9.2](https://github.com/lizardiot/LocaLizard/releases/tag/0.0.9.2) — current release
-Made ISO mounting explicitly use the ISO storage type, separated mounting from drive-letter detection, and added diagnostics for a missing Windows Virtual Disk provider.
+### [0.0.9.2](https://github.com/lizardiot/LocaLizard/releases/tag/0.0.9.2) — текущий выпуск
+Исправлено подключение ISO с явным указанием типа ISO; добавлена диагностика отсутствующего Windows Virtual Disk provider и безопасная обработка отказа монтирования.
 
 ### [0.0.9.1](https://github.com/lizardiot/LocaLizard/releases/tag/0.0.9.1)
-Updated the official Microsoft ADK bootstrapper links and added one redownload/retry after installer hash-check error `0x80091007`.
+Исправлена установка ADK при ошибке проверки хеша `0x80091007`; актуализированы ссылки на официальные установщики Microsoft.
 
 ### [0.0.9](https://github.com/lizardiot/LocaLizard/releases/tag/0.0.9)
-Added Microsoft Update Catalog search and preparation of cumulative update chains, plus an interactive Hyper-V check with manual confirmation of the Setup screen.
+Добавлен поиск и подготовка накопительных обновлений через Microsoft Update Catalog и интерактивная Hyper-V проверка.
 
 ### [0.0.8.9](https://github.com/lizardiot/LocaLizard/releases/tag/0.0.8.9)
-Improved managed-cache validation and explicit update chains via `updates.json`; added Setup/WinPE/WinRE processing when compatible resources are available, SWM support, and processing of an existing WIM.
+Добавлены проверка целостности кэша, явные цепочки обновлений через `updates.json`, обработка Setup/WinPE/WinRE при наличии совместимых компонентов, поддержка SWM и обслуживание существующего WIM.
 
 ### [0.0.8.1](https://github.com/lizardiot/LocaLizard/releases/tag/0.0.8.1)
-Improved UUP candidate selection by build family and architecture, retries and resumable downloads, managed-cache integrity checks, DISM diagnostics, and ISO prerequisite checks.
+Улучшены подбор и фильтрация кандидатов UUP по ветке и архитектуре, повторные и возобновляемые загрузки, проверка целостности управляемого кэша, диагностика DISM и предварительная проверка условий обработки ISO.
 
 ### [0.0.2](https://github.com/lizardiot/LocaLizard/releases/tag/0.0.2)
-Added an optional Russian ISO source for finding and copying standalone language-pack, FOD, and Setup/WinPE CAB files. The target ISO remains separate and is never replaced with the donor image.
+Добавлен дополнительный русский ISO-источник для поиска и копирования отдельных CAB языкового пакета, FOD и компонентов Setup/WinPE. Целевой ISO проверяется отдельно, образ из дополнительного ISO не подменяет целевой IoT-образ.
 
 ### [0.0.1.9](https://github.com/lizardiot/LocaLizard/releases/tag/0.0.1.9)
-Improved Client Language Pack ru-RU discovery by accepting common CAB filename variations without requiring an exact edition-name match, while retaining architecture and Windows build-family checks.
+Улучшен поиск базового Client Language Pack ru-RU: разрешены распространённые варианты имени CAB без строгого совпадения названия редакции; архитектура и подходящая ветка Windows по-прежнему проверяются.
 
-### [0.0.1.8](https://github.com/lizardiot/LocaLizard/releases/tag/0.0.1.8) — first release under the LocaLizard name
-Renamed the project to LocaLizard and introduced the Windows GUI, ISO selection, basic structure validation, logging and JSON reports, UUP Dump language-package discovery, and standalone Windows x64 CI builds.
+### [0.0.1.8](https://github.com/lizardiot/LocaLizard/releases/tag/0.0.1.8) — первый выпуск под именем LocaLizard
+Проект переименован в LocaLizard; добавлены Windows GUI, выбор ISO, базовая проверка структуры, журнал и JSON-отчёт, поиск ru-RU пакетов через UUP Dump API и CI-сборка автономного Windows x64 EXE.
 
-## Documentation
+## Документация
 
-- [CHANGELOG.md](CHANGELOG.md) — complete project change history.
-- [LocaLizard releases](https://github.com/lizardiot/LocaLizard/releases)
-- [Microsoft: Add language packs to Windows](https://learn.microsoft.com/windows-hardware/manufacture/desktop/add-language-packs-to-windows?view=windows-11)
-- [Microsoft: Languages and optional features](https://learn.microsoft.com/windows-hardware/manufacture/desktop/languages-overview?view=windows-11)
+- [CHANGELOG.md](CHANGELOG.md) — полная история изменений проекта.
+- [Релизы LocaLizard](https://github.com/lizardiot/LocaLizard/releases)
+- [Microsoft: добавление языковых пакетов Windows](https://learn.microsoft.com/windows-hardware/manufacture/desktop/add-language-packs-to-windows?view=windows-11)
+- [Microsoft: языковые компоненты и FOD](https://learn.microsoft.com/windows-hardware/manufacture/desktop/languages-overview?view=windows-11)
 - [Windows IoT Enterprise overview](https://learn.microsoft.com/en-us/windows/iot/iot-enterprise/overview)
 - [UUP Dump](https://uupdump.net/)
