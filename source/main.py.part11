@@ -1,6 +1,9 @@
-            self.drop_label.configure(text="Перетащите сюда ISO Windows")
+            self.drop_label.configure(text="Перетащите сюда исходный ISO Windows")
+            self.donor_drop_label.configure(text="Перетащите сюда донорский русский ISO")
         except Exception as exc:
-            self.drop_label.configure(text=f"Не удалось подключить drag-and-drop ({exc}); выберите ISO через кнопку.")
+            message = f"Не удалось подключить drag-and-drop ({exc}); выберите ISO через кнопку."
+            self.drop_label.configure(text=message)
+            self.donor_drop_label.configure(text=message)
 
     def _on_drop(self, event):
         try:
@@ -15,6 +18,19 @@
                 messagebox.showwarning(APP_NAME, "Перетащите один файл с расширением .iso.")
         except Exception as exc:
             messagebox.showerror(APP_NAME, f"Не удалось обработать перетаскивание: {exc}")
+
+    def _on_donor_drop(self, event):
+        """Set the optional Russian donor ISO without changing the target ISO."""
+        try:
+            items = self.tk.splitlist(event.data)
+            iso = next((Path(x.strip('{}')) for x in items if Path(x.strip('{}')).suffix.lower() == '.iso'), None)
+            if iso and iso.is_file():
+                self.donor_iso_var.set(str(iso))
+                self.status_var.set(f"Выбран донорский русский ISO: {iso}")
+            else:
+                messagebox.showwarning(APP_NAME, "Перетащите один существующий файл ISO с русским языком.")
+        except Exception as exc:
+            messagebox.showerror(APP_NAME, f"Не удалось обработать перетаскивание донорского ISO: {exc}")
 
     def _check_elevation(self):
         if is_windows() and not is_admin():

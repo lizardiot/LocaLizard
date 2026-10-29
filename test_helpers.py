@@ -20,6 +20,82 @@ class HelperTests(unittest.TestCase):
         self.assertGreater(pane_min_sizes["content"], pane_min_sizes["log"])
         self.assertGreater(pane_min_sizes["footer"], 0)
 
+    def test_donor_iso_drop_populates_donor_field(self):
+        class Value:
+            def __init__(self):
+                self.value = ""
+
+            def set(self, value):
+                self.value = value
+
+        with tempfile.TemporaryDirectory() as td:
+            iso = Path(td) / "donor_ru-RU.iso"
+            iso.write_bytes(b"test")
+            donor = Value()
+            status = Value()
+            app = type("FakeApp", (), {})()
+            app.tk = type("FakeTk", (), {"splitlist": lambda _self, _data: [str(iso)]})()
+            app.donor_iso_var = donor
+            app.status_var = status
+            event = type("FakeEvent", (), {"data": str(iso)})()
+            with patch.object(main.messagebox, "showwarning") as warning, patch.object(main.messagebox, "showerror") as error:
+                main.App._on_donor_drop(app, event)
+            self.assertEqual(donor.value, str(iso))
+            self.assertIn("донорский", status.value.lower())
+            warning.assert_not_called()
+            error.assert_not_called()
+
+    def test_donor_iso_drop_rejects_non_iso(self):
+        class Value:
+            def __init__(self):
+                self.value = ""
+
+            def set(self, value):
+                self.value = value
+
+        with tempfile.TemporaryDirectory() as td:
+            txt = Path(td) / "not-an-iso.txt"
+            txt.write_text("test", encoding="utf-8")
+            app = type("FakeApp", (), {})()
+            app.tk = type("FakeTk", (), {"splitlist": lambda _self, _data: [str(txt)]})()
+            app.donor_iso_var = Value()
+            app.status_var = Value()
+            event = type("FakeEvent", (), {"data": str(txt)})()
+            with patch.object(main.messagebox, "showwarning") as warning:
+                main.App._on_donor_drop(app, event)
+            warning.assert_called_once()
+            self.assertEqual(app.donor_iso_var.value, "")
+
+    def test_both_iso_drop_zones_register_independently(self):
+        class DropLabel:
+            def __init__(self):
+                self.targets = []
+                self.bindings = []
+                self.options = {}
+
+            def drop_target_register(self, target):
+                self.targets.append(target)
+
+            def dnd_bind(self, sequence, handler):
+                self.bindings.append((sequence, handler))
+
+            def configure(self, **kwargs):
+                self.options.update(kwargs)
+
+        app = type("FakeApp", (), {})()
+        app.drop_label = DropLabel()
+        app.donor_drop_label = DropLabel()
+        app._on_drop = lambda event: None
+        app._on_donor_drop = lambda event: None
+        with patch.object(main, "DND_FILES", "DND_FILES"):
+            main.App._try_enable_dnd(app)
+        for label in (app.drop_label, app.donor_drop_label):
+            self.assertEqual(label.targets, ["DND_FILES"])
+            self.assertEqual(len(label.bindings), 1)
+            self.assertEqual(label.bindings[0][0], "<<Drop>>")
+        self.assertIn("исходный", app.drop_label.options["text"])
+        self.assertIn("донорский", app.donor_drop_label.options["text"])
+
     def test_human_bytes(self):
         self.assertEqual(main.human_bytes(0), "0 Б")
         self.assertIn("КиБ", main.human_bytes(2048))

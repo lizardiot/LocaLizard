@@ -23,11 +23,19 @@
         self._file_row(packs, 1, "Кэш языковых пакетов (автозагрузка):", self.pack_var, self.choose_packages, directory=True)
         self._file_row(packs, 2, "FOD: каталог или ISO Language and Optional Features:", self.fod_var, self.choose_fod, directory=True)
         self._file_row(packs, 3, "Обновления: каталог с updates.json (необязательно):", self.updates_var, self.choose_updates, directory=True)
+        self.donor_drop_label = ttk.Label(
+            packs,
+            text="Перетащите сюда донорский ISO с русским языком (необязательно)",
+            anchor="center",
+            relief="ridge",
+            padding=9,
+        )
+        self.donor_drop_label.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(8, 0))
         ttk.Label(
             packs,
             text="Для checkpoint cumulative updates и актуального LCU используйте совместимые официальные MSU/CAB и манифест updates.json. Русский ISO служит источником отдельных CAB и Setup-ресурсов, если его сборка соответствует цели.",
             wraplength=980
-        ).grid(row=4, column=0, columnspan=3, sticky="w", pady=(5, 0))
+        ).grid(row=5, column=0, columnspan=3, sticky="w", pady=(5, 0))
         packs.columnconfigure(1, weight=1)
 
         opts = ttk.LabelFrame(root, text="3. Обработка и проверки", padding=10)
@@ -73,8 +81,12 @@
 
     def _try_enable_dnd(self):
         if DND_FILES is None:
-            self.drop_label.configure(text="Перетаскивание недоступно в этой сборке; выберите ISO через кнопку «Выбрать…».")
+            message = "Перетаскивание недоступно в этой сборке; выберите ISO через кнопку «Выбрать…»."
+            self.drop_label.configure(text=message)
+            self.donor_drop_label.configure(text=message)
             return
         try:
             self.drop_label.drop_target_register(DND_FILES)
             self.drop_label.dnd_bind("<<Drop>>", self._on_drop)
+            self.donor_drop_label.drop_target_register(DND_FILES)
+            self.donor_drop_label.dnd_bind("<<Drop>>", self._on_donor_drop)
