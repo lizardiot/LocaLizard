@@ -7,6 +7,13 @@ public sealed class IsoBuildService
     private readonly ProcessRunner _runner = new();
     private readonly WindowsImageService _images;
     private readonly UupDumpClient _uup = new();
+    private readonly AdkBootstrapper _adk;
+    private readonly WimSplitService _splitter;
+    private readonly WinReService _winre;
+    private readonly SetupLocalizationService _setup;
+    private readonly HyperVSmokeTestService _hyperv;
+    private readonly List<string> _donorSetupPackages = [];
+    public Func<string, Task<bool>>? ConfirmHyperVSetup { get; set; }
 
     public event Action<string>? Log;
     public event Action<string>? Status;
@@ -14,6 +21,11 @@ public sealed class IsoBuildService
     public IsoBuildService()
     {
         _images = new WindowsImageService(_runner);
+        _adk = new AdkBootstrapper(_runner);
+        _splitter = new WimSplitService(_runner, _images);
+        _winre = new WinReService(_runner, _adk);
+        _setup = new SetupLocalizationService(_runner, _images, _adk);
+        _hyperv = new HyperVSmokeTestService(_runner);
         _runner.OutputLine += line => Log?.Invoke(line);
     }
 
@@ -53,6 +65,8 @@ public sealed class IsoBuildService
             var sources = Path.Combine(media, "sources");
             var boot = Path.Combine(sources, "boot.wim");
             if (!File.Exists(boot)) throw new InvalidDataException("В исходном ISO отсутствует sources\\boot.wim.");
+            _donorSetupPackages.Clear();
+            _ = await _splitter.MergeInputAsync(sources, ct, message => Log?.Invoke(message));
             var installImages = Directory.EnumerateFiles(sources, "install*.wim").ToList();
             var esdImages = Directory.EnumerateFiles(sources, "install*.esd").ToArray();
             if (installImages.Count == 0 && esdImages.Length == 0)
@@ -109,14 +123,31 @@ public sealed class IsoBuildService
 
                 Status?.Invoke($"Локализую {Path.GetFileName(item.File)}, индекс {item.Info.Index}…");
                 await _images.ServiceAsync(item.File, item.Info, candidates, options.FodDirectory,
-                    updatePlan, work, message => Log?.Invoke(message), ct);
+                    updatePlan, work, message => Log?.Invoke(message), ct,
+                    mount => _winre.LocalizeAsync(mount, item.Info.NormalizedArchitecture, options.FodDirectory,
+                        updatePlan, ct, message => Log?.Invoke(message)));
                 completed++;
                 Status?.Invoke($"Обработано индексов: {completed}/{imagePlan.Count}");
             }
 
+            LocalizationStep setupAudit = new("disabled");
+            if (options.ProcessSetup)
+            {
+                Status?.Invoke("Локализую Windows Setup и WinPE…");
+                try
+                {
+                    setupAudit = await _setup.LocalizeAsync(media, imagePlan[0].Info.NormalizedArchitecture,
+                        options.FodDirectory, _donorSetupPackages, updatePlan, ct, message => Log?.Invoke(message));
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    setupAudit = new LocalizationStep("failed", Error: ex.Message);
+                    Log?.Invoke("Setup/WinPE не локализованы; сборка ISO будет продолжена: " + ex.Message);
+                }
+            }
+            var splitReport = await _splitter.SplitOutputAsync(sources, options.SplitWim, ct, message => Log?.Invoke(message));
             ValidateMedia(media);
-            var oscdimg = FindOscdimg() ?? throw new FileNotFoundException(
-                "Не найден oscdimg.exe. Установите Windows ADK → Deployment Tools.");
+            var oscdimg = await _adk.EnsureOscdimgAsync(ct, message => Log?.Invoke(message));
             if (File.Exists(output)) throw new IOException("Выходной ISO уже существует; перезапись запрещена.");
             var bios = Path.Combine(media, "boot", "etfsboot.com");
             var uefi = Path.Combine(media, "efi", "microsoft", "boot", "efisys.bin");
@@ -132,6 +163,13 @@ public sealed class IsoBuildService
 
             Status?.Invoke("Повторно подключаю ISO и проверяю WIM…");
             var verification = await VerifyOutputIsoAsync(output, ct);
+            HyperVTestResult? hypervAudit = null;
+            if (options.RunHyperVTest)
+            {
+                Status?.Invoke("Проверяю загрузку ISO в Hyper-V…");
+                hypervAudit = await _hyperv.RunAsync(output, work,
+                    ConfirmHyperVSetup ?? (_ => Task.FromResult(false)), ct, message => Log?.Invoke(message));
+            }
             var audit = new
             {
                 application = AppInfo.Name,
@@ -140,13 +178,11 @@ public sealed class IsoBuildService
                 source_iso = source,
                 output_iso = output,
                 image_language_checks = _images.Audit,
+                setup_winpe_localization = setupAudit,
+                split_wim = splitReport,
+                hyperv_smoke_test = hypervAudit,
                 output_static_validation = verification,
-                limitations = new[]
-                {
-                    "C# preview не локализует Setup/WinPE или WinRE.",
-                    "C# preview пока не создаёт split-WIM SWM и не выполняет интерактивный Hyper-V тест.",
-                    "Перед развёртыванием проверьте ISO в отдельной виртуальной машине."
-                }
+                limitations = new[] { "Hyper-V screen verification is operator-confirmed, not automated." }
             };
             var auditPath = Path.ChangeExtension(output, ".localization-audit.json");
             await File.WriteAllTextAsync(auditPath, JsonSerializer.Serialize(audit, new JsonSerializerOptions { WriteIndented = true }), ct);
@@ -247,11 +283,21 @@ public sealed class IsoBuildService
             var sources = Path.Combine(root, "sources");
             if (!File.Exists(Path.Combine(sources, "boot.wim")))
                 throw new InvalidDataException("В выходном ISO отсутствует boot.wim.");
-            var files = Directory.EnumerateFiles(sources, "install*.wim").ToArray();
-            if (files.Length == 0) throw new InvalidDataException("В выходном ISO отсутствует install.wim.");
             var indexes = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-            foreach (var file in files)
+            foreach (var file in Directory.EnumerateFiles(sources, "install*.wim"))
                 indexes[Path.GetFileName(file)] = (await _images.GetImageInfoAsync(file, ct)).Count;
+            var stems = Directory.EnumerateFiles(sources, "install*.swm")
+                .Select(p => Regex.Match(Path.GetFileName(p), "^(install.*?)\\.swm$", RegexOptions.IgnoreCase))
+                .Where(m => m.Success).Select(m => m.Groups[1].Value)
+                .Distinct(StringComparer.OrdinalIgnoreCase);
+            foreach (var stem in stems)
+            {
+                var first = Path.Combine(sources, stem + ".swm");
+                var pattern = Path.Combine(sources, stem + "*.swm");
+                indexes[stem + ".swm"] = (await _images.GetImageInfoAsync(first, ct, pattern)).Count;
+                _ = WimSplitService.Sequence(sources, stem);
+            }
+            if (indexes.Count == 0) throw new InvalidDataException("В выходном ISO отсутствуют install.wim/install*.swm.");
             _ = await _images.GetImageInfoAsync(Path.Combine(sources, "boot.wim"), ct);
             return indexes;
         }
@@ -288,8 +334,9 @@ public sealed class IsoBuildService
     private static void ValidateMedia(string media)
     {
         var sources = Path.Combine(media, "sources");
-        if (!File.Exists(Path.Combine(sources, "boot.wim")) ||
-            !Directory.EnumerateFiles(sources, "install*.wim").Any() ||
+        var hasWim = Directory.EnumerateFiles(sources, "install*.wim").Any();
+        var hasSwm = File.Exists(Path.Combine(sources, "install.swm"));
+        if (!File.Exists(Path.Combine(sources, "boot.wim")) || (!hasWim && !hasSwm) ||
             !File.Exists(Path.Combine(media, "setup.exe")))
             throw new InvalidDataException("Структура установочного ISO не прошла проверку.");
     }
