@@ -58,6 +58,7 @@ public sealed class WindowsImageService(ProcessRunner runner)
                 await _runner.RunAsync("dism.exe", ["/Mount-Image", $"/ImageFile:{imageFile}", $"/Index:{image.Index}", $"/MountDir:{mount}", "/CheckIntegrity"],
                     cancellationToken: ct, timeout: TimeSpan.FromMinutes(25));
                 mounted = true;
+                await ApplyUpdatesAsync(mount, updates, "before_language", ct, log);
                 log?.Invoke($"Индекс {image.Index}: добавляю базовый языковой пакет {Path.GetFileName(candidate)}.");
                 try
                 {
@@ -78,7 +79,6 @@ public sealed class WindowsImageService(ProcessRunner runner)
             }
             if (selected is null) throw new InvalidOperationException($"DISM отклонил все языковые пакеты для индекса {image.Index}.", lastError);
 
-            await ApplyUpdatesAsync(mount, updates, "before_language", ct, log);
             var caps = new[]
             {
                 "Language.Basic~~~ru-RU~0.0.1.0",

@@ -167,7 +167,8 @@ public sealed class UupDumpClient : IDisposable
                 .FirstOrDefault(p => p.Contains("WinSxS", StringComparison.OrdinalIgnoreCase));
             if (mum is null) throw new InvalidDataException("В ESD не найден Client Language Pack update.mum.");
             var packageDirectory = Path.GetDirectoryName(mum)!;
-            var finalDirectory = Path.Combine(folder, "extracted_" + Guid.NewGuid().ToString("N"));
+            var finalDirectory = Path.Combine(folder, Path.GetFileNameWithoutExtension(esd) + "_extracted");
+            if (Directory.Exists(finalDirectory)) Directory.Delete(finalDirectory, true);
             Directory.Move(packageDirectory, finalDirectory);
             return Path.Combine(finalDirectory, "update.mum");
         }

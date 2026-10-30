@@ -157,7 +157,7 @@ public sealed class MainForm : Form
         start.Enabled = false; cancel.Enabled = true; log.Clear();
         var service = new IsoBuildService();
         service.Log += AppendLog;
-        service.Status += message => { if (!IsDisposed) BeginInvoke(() => status.Text = message); };
+        service.Status += message => { if (!IsDisposed) BeginInvoke((Action)(() => status.Text = message)); };
         try
         {
             var result = await Task.Run(() => service.RunAsync(options, cancellation.Token));
@@ -185,7 +185,7 @@ public sealed class MainForm : Form
     private void AppendLog(string message)
     {
         if (IsDisposed) return;
-        if (InvokeRequired) { BeginInvoke(() => AppendLog(message)); return; }
+        if (InvokeRequired) { BeginInvoke((Action)(() => AppendLog(message))); return; }
         log.AppendText($"[{DateTime.Now:HH:mm:ss}] {message}{Environment.NewLine}");
         log.SelectionStart = log.TextLength; log.ScrollToCaret();
     }
