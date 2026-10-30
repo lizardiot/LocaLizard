@@ -59,23 +59,60 @@ def _ll_retryable(exc: Exception) -> bool:
 
 def _ll_api_json(url: str) -> dict:
     p = urlparse(url)
-    if p.scheme != "https" or (p.hostname or "").lower() != "api.uupdump.net": raise RuntimeError("Отклонён неожиданный URL UUP Dump API.")
+    if p.scheme != "https" or (p.hostname or "").lower() != "api.uupdump.net":
+        raise RuntimeError("Отклонён неожиданный URL UUP Dump API.")
     req = urllib.request.Request(url, headers={"User-Agent": f"LocaLizard/{APP_VERSION}", "Accept":"application/json"})
-    last = None
+
+    def api_error_from_payload(payload: bytes) -> str:
+        try:
+            data = json.loads(payload.decode("utf-8-sig", "replace"))
+        except (UnicodeDecodeError, ValueError, TypeError):
+            return ""
+        if not isinstance(data, dict):
+            return ""
+        body = data.get("response", data)
+        return str(body.get("error", "") or "").strip() if isinstance(body, dict) else ""
+
     for attempt in range(4):
         try:
             with urllib.request.urlopen(req, timeout=40) as response:
                 final = urlparse(response.geturl())
-                if final.scheme != "https" or (final.hostname or "").lower() != "api.uupdump.net": raise RuntimeError("UUP API перенаправил запрос на непроверенный домен.")
-                data = json.loads(response.read().decode("utf-8", "replace"))
+                if final.scheme != "https" or (final.hostname or "").lower() != "api.uupdump.net":
+                    raise RuntimeError("UUP API перенаправил запрос на непроверенный домен.")
+                data = json.loads(response.read().decode("utf-8-sig", "replace"))
+            if not isinstance(data, dict):
+                raise RuntimeError("UUP Dump API вернул JSON не в виде объекта.")
             body = data.get("response", {})
-            if body.get("error"): raise RuntimeError(f"UUP Dump API: {body.get('error')}")
+            if not isinstance(body, dict):
+                raise RuntimeError("UUP Dump API вернул поле response не в виде объекта.")
+            error = str(body.get("error", "") or "").strip()
+            if error:
+                if error.upper() == "SEARCH_NO_RESULTS":
+                    return {"error": "SEARCH_NO_RESULTS"}
+                raise RuntimeError(f"UUP Dump API: {error}")
             return body
+        except urllib.error.HTTPError as exc:
+            detail = api_error_from_payload(exc.read())
+            # listid.php reports an ordinary empty search as HTTP 400 with SEARCH_NO_RESULTS.
+            if exc.code == 400 and detail.upper() == "SEARCH_NO_RESULTS":
+                return {"error": "SEARCH_NO_RESULTS"}
+            if _ll_retryable(exc) and attempt < 3:
+                time.sleep(min(8, 1.5 * (2 ** attempt)))
+                continue
+            message = f"UUP Dump API вернул HTTP {exc.code}"
+            if detail:
+                message += f": {detail}"
+            elif exc.reason:
+                message += f": {exc.reason}"
+            raise RuntimeError(message) from exc
         except Exception as exc:
-            last = exc
-            if attempt == 3 or not _ll_retryable(exc): break
-            time.sleep(min(8, 1.5 * (2 ** attempt)))
-    raise RuntimeError(f"UUP Dump API не ответил после повторных попыток: {last}")
+            if attempt < 3 and _ll_retryable(exc):
+                time.sleep(min(8, 1.5 * (2 ** attempt)))
+                continue
+            if isinstance(exc, RuntimeError):
+                raise
+            raise RuntimeError(f"Ошибка обращения к UUP Dump API: {exc}") from exc
+    raise RuntimeError("UUP Dump API не ответил после повторных попыток.")
 
 def _ll_download_file(self, url: str, dest: Path, expected_sha1: str | None, expected_size: int | None, expected_sha256: str | None = None) -> None:
     if not _ll_trusted_url(url): raise RuntimeError(f"Отклонена ссылка с непроверенного домена: {urlparse(url).hostname or '(нет домена)'}")
@@ -146,7 +183,7 @@ def _ll_auto_download(self, info: dict) -> list[Path]:
     for term in terms:
         try: body = self.api_json(UUP_API + "/listid.php?" + urllib.parse.urlencode({"search":term,"sortByDate":"1"}))
         except Exception as exc: self.log(f"Поиск UUP Dump по ветке {term} не удался: {exc}"); continue
-        for item in body.get("builds",[]):
+        for item in _ll_uup_response_body_builds(body):
             uid = str(item.get("uuid","")).strip()
             if not uid or uid in seen: continue
             try:
@@ -169,9 +206,9 @@ def _ll_auto_download(self, info: dict) -> list[Path]:
         try:
             body = self.api_json(UUP_API + "/get.php?" + urllib.parse.urlencode({"id":uid,"lang":"ru-ru"}))
             base, optional = [], []
-            for name, meta in body.get("files",{}).items():
+            for name, meta in _ll_uup_response_body_files(body):
                 low = str(name).lower()
-                if not low.endswith(".cab") or "ru-ru" not in low or not isinstance(meta,dict): continue
+                if not low.endswith(".cab") or "ru-ru" not in low: continue
                 if _ll_is_lp(Path(name.replace("\\","/")).name,arch): base.append((str(name),meta))
                 elif any(t in low for t in ("languagefeatures-basic","languagefeatures-ocr","languagefeatures-speech","languagefeatures-texttospeech","languagefeatures-text-to-speech","languagefeatures-handwriting")): optional.append((str(name),meta))
             base.sort(key=lambda x:(0 if "client-language-pack" in x[0].lower() else 1,x[0].lower()))

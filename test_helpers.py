@@ -464,6 +464,67 @@ ServicePack Build : 0
         with self.assertRaisesRegex(RuntimeError, "API"):
             main._ll_uup_response_builds({"response": {"error": "bad request"}})
 
+    def test_uup_dump_build_response_accepts_sparse_object_and_no_results(self):
+        rows = [
+            {"uuid": "first", "build": "10.0.26100.1", "arch": "amd64"},
+            {"uuid": "third", "build": "10.0.26100.2", "arch": "amd64"},
+        ]
+        self.assertEqual(
+            main._ll_uup_response_body_builds({"builds": {"0": rows[0], "2": rows[1]}}),
+            rows,
+        )
+        self.assertEqual(
+            main._ll_uup_response_body_builds({"error": "SEARCH_NO_RESULTS"}),
+            [],
+        )
+        with self.assertRaisesRegex(RuntimeError, "некорректные элементы"):
+            main._ll_uup_response_body_builds({"builds": {"0": "26100"}})
+
+    def test_uup_dump_file_metadata_normalizer_skips_string_values(self):
+        files = {
+            "Microsoft-Windows-Client-Language-Pack_x64_ru-ru.cab": {
+                "url": "https://download.microsoft.com/example.cab",
+                "sha1": "0123456789012345678901234567890123456789",
+            },
+            "bad-entry.cab": "unexpected-string",
+        }
+        rows = main._ll_uup_response_body_files({"files": files})
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0][0], "Microsoft-Windows-Client-Language-Pack_x64_ru-ru.cab")
+        self.assertIn("url", rows[0][1])
+
+    def test_uup_dump_api_treats_search_no_results_http_400_as_empty_result(self):
+        import io
+        payload = b'{"response":{"error":"SEARCH_NO_RESULTS"},"jsonApiVersion":"1"}'
+        error = main.urllib.error.HTTPError(
+            "https://api.uupdump.net/listid.php?search=10240",
+            400,
+            "Bad Request",
+            {},
+            io.BytesIO(payload),
+        )
+        with patch.object(main.urllib.request, "urlopen", side_effect=error):
+            result = main._ll_api_json("https://api.uupdump.net/listid.php?search=10240")
+        self.assertEqual(result, {"error": "SEARCH_NO_RESULTS"})
+
+    def test_uup_dump_diagnostic_reports_empty_historical_families_without_api_failure(self):
+        def fake_fetch(search_term):
+            family = int(search_term)
+            if family in (14393, 10240):
+                return main._ll_uup_response_body_builds({"error": "SEARCH_NO_RESULTS"})
+            return main._ll_uup_response_body_builds({
+                "builds": {
+                    "0": {"build": f"10.0.{family}.1", "arch": "amd64"},
+                    "2": {"build": f"10.0.{family}.2", "arch": "amd64"},
+                }
+            })
+
+        report = main._ll_uup_diagnostic_report(fake_fetch)
+        self.assertIn("сборка 14393): 0 записей", report)
+        self.assertIn("сборка 10240): 0 записей", report)
+        self.assertIn("сборка 26100): 2 записей", report)
+        self.assertNotIn("ошибка запроса", report)
+
     def test_uup_dump_diagnostic_covers_all_iot_enterprise_ltsc_families(self):
         self.assertEqual(
             main._LL_UUP_IOT_LTSC_FAMILIES,

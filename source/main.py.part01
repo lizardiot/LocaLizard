@@ -36,7 +36,7 @@ except Exception:
     BaseTk = tk.Tk
 
 APP_NAME = "LocaLizard"
-APP_VERSION = "0.1.0.5"
+APP_VERSION = "0.1.0.7"
 UUP_API = "https://api.uupdump.net"
 UUP_SITE = "https://uupdump.net/"
 def _ll_uup_listid_url(search_term: str) -> str:
@@ -46,15 +46,54 @@ def _ll_uup_listid_url(search_term: str) -> str:
 
 
 def _ll_uup_response_body_builds(response) -> list:
-    """Validate the response object returned by UUP Dump listid.php."""
+    """Normalize listid.php results, including sparse PHP arrays encoded as JSON objects."""
     if not isinstance(response, dict):
         raise RuntimeError("UUP Dump вернул response не в виде объекта.")
-    if response.get("error"):
-        raise RuntimeError(f"Ошибка UUP Dump API: {response['error']}")
+    error = str(response.get("error", "") or "").strip().upper()
+    if error:
+        if error == "SEARCH_NO_RESULTS":
+            return []
+        raise RuntimeError(f"Ошибка UUP Dump API: {response.get('error')}")
     builds = response.get("builds")
-    if not isinstance(builds, list):
-        raise RuntimeError("В ответе UUP Dump отсутствует список response.builds.")
-    return builds
+    if isinstance(builds, list):
+        rows = builds
+    elif isinstance(builds, dict):
+        # PHP encodes an array with non-contiguous numeric keys as a JSON object.
+        # This happens after listid.php removes non-matching rows from a filtered result.
+        rows = list(builds.values())
+    else:
+        raise RuntimeError("В ответе UUP Dump поле response.builds имеет неизвестный формат (ожидался массив или объект).")
+    invalid = [index for index, item in enumerate(rows) if not isinstance(item, dict)]
+    if invalid:
+        raise RuntimeError(f"UUP Dump вернул некорректные элементы списка сборок (позиции: {', '.join(map(str, invalid[:5]))}).")
+    return rows
+
+
+def _ll_uup_response_body_files(response) -> list[tuple[str, dict]]:
+    """Return only named file records with object metadata from get.php."""
+    if not isinstance(response, dict):
+        raise RuntimeError("UUP Dump вернул сведения о файлах не в виде объекта.")
+    error = response.get("error")
+    if error:
+        raise RuntimeError(f"Ошибка UUP Dump при получении файлов: {error}")
+    files = response.get("files", {})
+    if isinstance(files, dict):
+        rows = list(files.items())
+    elif isinstance(files, list):
+        rows = []
+        for item in files:
+            if not isinstance(item, dict):
+                continue
+            name = item.get("name") or item.get("filename") or item.get("fileName")
+            if name:
+                rows.append((str(name), item))
+    else:
+        raise RuntimeError("UUP Dump вернул files в неожиданном формате (ожидался объект или массив).")
+    return [
+        (str(name), metadata)
+        for name, metadata in rows
+        if isinstance(name, str) and isinstance(metadata, dict)
+    ]
 
 
 def _ll_uup_response_builds(data) -> list:
