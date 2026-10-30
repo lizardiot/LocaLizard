@@ -176,7 +176,7 @@ public sealed class IsoBuildService
         var donorImages = Directory.Exists(donorSources)
             ? Directory.EnumerateFiles(donorSources, "install*.wim")
                 .Concat(Directory.EnumerateFiles(donorSources, "install*.esd")).ToArray()
-            : [];
+            : Array.Empty<string>();
         var donorInfo = new List<ImageInfo>();
         foreach (var file in donorImages)
         {

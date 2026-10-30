@@ -227,9 +227,11 @@ public sealed class UupDumpClient : IDisposable
         };
         var buildText = Text(build, "build");
         var nums = Regex.Matches(buildText, @"\d+").Select(m => m.Value).ToArray();
-        var foundFamily = nums.Length >= 3 && buildText.StartsWith("10.0.", StringComparison.Ordinal)
-            ? int.TryParse(nums[2], out var f) ? f : 0
-            : nums.Length > 0 && int.TryParse(nums[0], out var f) ? f : 0;
+        var foundFamily = 0;
+        if (nums.Length >= 3 && buildText.StartsWith("10.0.", StringComparison.Ordinal))
+            int.TryParse(nums[2], out foundFamily);
+        else if (nums.Length > 0)
+            int.TryParse(nums[0], out foundFamily);
         return foundFamily == family && foundArch == arch &&
                (title.Contains("windows 10") || title.Contains("windows 11")) &&
                title.Contains("version") &&
