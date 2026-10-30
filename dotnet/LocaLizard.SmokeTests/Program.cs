@@ -22,8 +22,9 @@ try
 {
     var payload = Path.Combine(folder, "LCU.msu");
     await File.WriteAllTextAsync(payload, "test update payload");
-    await using var stream = File.OpenRead(payload);
-    var hash = Convert.ToHexString(await System.Security.Cryptography.SHA256.HashDataAsync(stream)).ToLowerInvariant();
+    string hash;
+    await using (var stream = File.OpenRead(payload))
+        hash = Convert.ToHexString(await System.Security.Cryptography.SHA256.HashDataAsync(stream)).ToLowerInvariant();
     var manifest = $$"""
     {
       "schema_version": 1,
