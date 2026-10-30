@@ -176,21 +176,32 @@ public sealed class WindowsImageService(ProcessRunner runner)
         return match.Success ? match.Groups[1].Value.Trim() : null;
     }
 
-    private static bool IsClientLp(string path, string arch)
+    internal static bool IsClientLp(string path, string arch)
     {
-        var name = Path.GetFileName(path).ToLowerInvariant();
-        if (name == "update.mum")
-            return (Path.GetDirectoryName(path) ?? "").Contains("client-languagepack", StringComparison.OrdinalIgnoreCase);
-        if (!name.EndsWith(".cab") || !name.Contains("ru-ru") ||
-            new[] { "server", "winpe", "setup", "recovery", "languagefeatures", "local-experience-pack" }.Any(name.Contains))
+        var fileName = Path.GetFileName(path);
+        var identity = fileName.Equals("update.mum", StringComparison.OrdinalIgnoreCase)
+            ? Path.GetFileName(Path.GetDirectoryName(path) ?? "")
+            : fileName;
+        var suffix = Path.GetExtension(fileName);
+        if (!fileName.Equals("update.mum", StringComparison.OrdinalIgnoreCase) &&
+            !suffix.Equals(".cab", StringComparison.OrdinalIgnoreCase)) return false;
+        return IsClientLpName(identity, arch);
+    }
+
+    internal static bool IsClientLpName(string value, string architecture)
+    {
+        var name = Path.GetFileName(value).ToLowerInvariant();
+        if (!name.Contains("ru-ru", StringComparison.Ordinal) ||
+            !new[] { "client-language-pack", "client-languagepack", "clientlanguagepack", "language-pack", "languagepack" }.Any(name.Contains) ||
+            new[] { "server", "winpe", "setup", "recovery", "languagefeatures", "local-experience-pack", "languageexperiencepack" }.Any(name.Contains))
             return false;
-        if (!new[] { "client-language-pack", "client-languagepack", "clientlanguagepack", "language-pack", "languagepack" }.Any(name.Contains))
-            return false;
+        var arch = BuildNumbers.Architecture(architecture);
         return arch switch
         {
             "x64" => name.Contains("x64") || name.Contains("amd64") || name.Contains("x86_64"),
             "arm64" => name.Contains("arm64"),
-            "x86" => Regex.IsMatch(name, @"(^|[-_.])x86([-_.]|$)") && !name.Contains("x86_64"),
+            "x86" => (name.Contains("_x86_") || name.Contains("-x86-") || name.Contains("~x86~")) &&
+                     !name.Contains("x86_64") && !name.Contains("x86-64"),
             _ => false
         };
     }
