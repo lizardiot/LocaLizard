@@ -87,7 +87,7 @@ Check(MicrosoftUpdateCatalogClient.ExtractDownloads(evilCatalogHtml).Count == 0,
     "Catalog rejects untrusted download hosts");
 
 var settings = JsonSerializer.Serialize(new AppSettings { SourceIso = "C:\\input.iso", SplitWim = true });
-Check(settings.Contains("\\"source_iso\\"") && settings.Contains("\\"split_wim\\""),
+Check(settings.Contains("source_iso", StringComparison.Ordinal) && settings.Contains("split_wim", StringComparison.Ordinal),
     "Python settings keys retained during migration");
 
 var folder = Path.Combine(Path.GetTempPath(), "LocaLizardTest_" + Guid.NewGuid().ToString("N"));
