@@ -124,6 +124,79 @@ try
     catch (InvalidDataException) { tamperRejected = true; }
     Check(tamperRejected, "reject modified update payload");
 
+    // Exercise the legacy manifest contract beyond the happy path: checkpoints must
+    // precede exactly one target LCU, and paths/types/duplicates must be rejected.
+    var checkpointPath = Path.Combine(folder, "checkpoint.cab");
+    await File.WriteAllTextAsync(checkpointPath, "checkpoint payload");
+    var checkpointHash = Convert.ToHexString(await System.Security.Cryptography.SHA256.HashDataAsync(
+        File.OpenRead(checkpointPath))).ToLowerInvariant();
+    var lcuHash = Convert.ToHexString(await System.Security.Cryptography.SHA256.HashDataAsync(
+        File.OpenRead(payload))).ToLowerInvariant();
+    async Task<bool> RejectManifestAsync(object value)
+    {
+        await File.WriteAllTextAsync(Path.Combine(folder, "updates.json"), JsonSerializer.Serialize(value));
+        try { await UpdateManifestValidator.LoadAsync(folder); return false; }
+        catch (Exception ex) when (ex is InvalidDataException or FileNotFoundException or KeyNotFoundException or JsonException)
+        { return true; }
+    }
+    var orderedManifest = new
+    {
+        schema_version = 1, target_build_family = 26100, architecture = "x64",
+        ordered_packages = new object[]
+        {
+            new { file = "checkpoint.cab", kind = "checkpoint", sha256 = checkpointHash },
+            new { file = "LCU.msu", kind = "target_lcu", sha256 = lcuHash }
+        }
+    };
+    await File.WriteAllTextAsync(Path.Combine(folder, "updates.json"), JsonSerializer.Serialize(orderedManifest));
+    var orderedPlan = await UpdateManifestValidator.LoadAsync(folder);
+    Check(orderedPlan.Packages.Count == 2 && orderedPlan.Packages[0].Kind == "checkpoint" &&
+          orderedPlan.Packages[1].Kind == "target_lcu", "checkpoint precedes target LCU");
+
+    Check(await RejectManifestAsync(new
+    {
+        schema_version = 1, target_build_family = 26100, architecture = "x64",
+        ordered_packages = new object[]
+        {
+            new { file = "LCU.msu", kind = "target_lcu", sha256 = lcuHash },
+            new { file = "checkpoint.cab", kind = "checkpoint", sha256 = checkpointHash }
+        }
+    }), "reject checkpoint after target LCU");
+    Check(await RejectManifestAsync(new
+    {
+        schema_version = 1, target_build_family = 26100, architecture = "x64",
+        ordered_packages = new object[]
+        {
+            new { file = "LCU.msu", kind = "target_lcu", sha256 = lcuHash },
+            new { file = "LCU.msu", kind = "target_lcu", sha256 = lcuHash }
+        }
+    }), "reject duplicate update package");
+    Check(await RejectManifestAsync(new
+    {
+        schema_version = 1, target_build_family = 26100, architecture = "x64",
+        ordered_packages = new object[]
+        {
+            new { file = "../LCU.msu", kind = "target_lcu", sha256 = lcuHash }
+        }
+    }), "reject update path traversal");
+    Check(await RejectManifestAsync(new
+    {
+        schema_version = 1, target_build_family = 26100, architecture = "x64",
+        ordered_packages = new object[]
+        {
+            new { file = "LCU.msu", kind = "unknown_kind", sha256 = lcuHash }
+        }
+    }), "reject unknown update kind");
+    Check(await RejectManifestAsync(new
+    {
+        schema_version = 1, target_build_family = 26100, architecture = "x64",
+        ordered_packages = new object[]
+        {
+            new { file = "LCU.msu", kind = "target_lcu", sha256 = lcuHash },
+            new { file = "checkpoint.cab", kind = "target_lcu", sha256 = checkpointHash }
+        }
+    }), "reject multiple target LCUs");
+
     await File.WriteAllTextAsync(Path.Combine(folder, "install.swm"), "first");
     await File.WriteAllTextAsync(Path.Combine(folder, "install2.swm"), "second");
     await File.WriteAllTextAsync(Path.Combine(folder, "install3.swm"), "third");
