@@ -253,7 +253,7 @@ public sealed class IsoBuildService
                 Status?.Invoke($"Ищу Client Language Pack ru-RU для индекса {item.Info.Index}…");
                 packages.AddRange(await _uup.DownloadRussianLanguagePackAsync(item.Info, options.PackageDirectory,
                     _runner, message => Log?.Invoke(message), ct));
-                candidates = FindMatchingPackages(packages, item.Info);
+                candidates = await FindVerifiedMatchingPackagesAsync(packages, item.Info, ct);
             }
             if (candidates.Count == 0)
                 throw new FileNotFoundException($"Нет проверенного Client Language Pack ru-RU для индекса {item.Info.Index}.");
