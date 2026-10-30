@@ -417,7 +417,10 @@ public sealed class SetupLocalizationService(ProcessRunner runner, WindowsImageS
         var peDir = await _adk.EnsureWinPeAddonAsync(architecture, ct, log);
         if (peDir is null) return new LocalizationStep("language_resources_missing");
         var donor = (donorSetupPackages ?? []).Where(File.Exists)
-            .ToDictionary(Path.GetFileName, StringComparer.OrdinalIgnoreCase);
+            .Select(path => (Name: Path.GetFileName(path), Path: path))
+            .Where(item => !string.IsNullOrWhiteSpace(item.Name))
+            .GroupBy(item => item.Name!, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First().Path, StringComparer.OrdinalIgnoreCase);
         string? Package(string name)
         {
             var local = Path.Combine(peDir, name);
