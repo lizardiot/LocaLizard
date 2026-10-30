@@ -13,10 +13,70 @@ def _ll_arch_token(value: str) -> str:
     raise RuntimeError(f"Неизвестная архитектура {value!r}; автоматический выбор языкового CAB остановлен.")
 
 def _ll_trusted_url(url: str) -> bool:
+    """Accept only HTTPS URLs hosted by Microsoft or Windows Update."""
     try:
-        p = urlparse(str(url)); host = (p.hostname or "").lower().rstrip(".")
-        return p.scheme.lower() == "https" and bool(host) and (host == "microsoft.com" or host.endswith(".microsoft.com") or host == "windowsupdate.com" or host.endswith(".windowsupdate.com"))
-    except Exception: return False
+        p = urlparse(str(url))
+        host = (p.hostname or "").lower().rstrip(".")
+        return (
+            p.scheme.lower() == "https"
+            and p.username is None
+            and p.password is None
+            and p.port in (None, 443)
+            and bool(host)
+            and (
+                host == "microsoft.com"
+                or host.endswith(".microsoft.com")
+                or host == "windowsupdate.com"
+                or host.endswith(".windowsupdate.com")
+            )
+        )
+    except (TypeError, ValueError):
+        return False
+
+
+_LL_MICROSOFT_PACKAGE_CDN_HOSTS = {
+    "dl.delivery.mp.microsoft.com",
+    "tlu.dl.delivery.mp.microsoft.com",
+}
+
+
+def _ll_trusted_package_url(url: str) -> bool:
+    """Validate a package URL; permit HTTP only for the exact Microsoft CDN file path.
+
+    HTTP is accepted solely as a bootstrap URL because the CDN commonly redirects
+    these UUP payload URLs to HTTPS. _ll_download_file separately requires the
+    final response URL to pass _ll_trusted_url before reading any package bytes.
+    """
+    try:
+        p = urlparse(str(url))
+        scheme = p.scheme.lower()
+        host = (p.hostname or "").lower().rstrip(".")
+        if p.username is not None or p.password is not None:
+            return False
+        if scheme == "https":
+            return _ll_trusted_url(url)
+        return (
+            scheme == "http"
+            and host in _LL_MICROSOFT_PACKAGE_CDN_HOSTS
+            and p.port in (None, 80)
+            and p.path.startswith("/filestreamingservice/files/")
+        )
+    except (TypeError, ValueError):
+        return False
+
+
+def _ll_url_summary(url: str) -> str:
+    """Return a credential/query-free URL diagnostic."""
+    try:
+        p = urlparse(str(url))
+        scheme = p.scheme.lower() or "(нет схемы)"
+        host = (p.hostname or "(нет домена)").lower().rstrip(".")
+        path = p.path or "/"
+        if len(path) > 160:
+            path = path[:157] + "..."
+        return f"{scheme}://{host}{path}"
+    except (TypeError, ValueError):
+        return "(некорректный URL)"
 
 def _ll_hash(path: Path, algorithm="sha256") -> str:
     digest = hashlib.new(algorithm)
@@ -115,7 +175,12 @@ def _ll_api_json(url: str) -> dict:
     raise RuntimeError("UUP Dump API не ответил после повторных попыток.")
 
 def _ll_download_file(self, url: str, dest: Path, expected_sha1: str | None, expected_size: int | None, expected_sha256: str | None = None) -> None:
-    if not _ll_trusted_url(url): raise RuntimeError(f"Отклонена ссылка с непроверенного домена: {urlparse(url).hostname or '(нет домена)'}")
+    if not _ll_trusted_package_url(url):
+        raise RuntimeError(
+            f"Отклонена ссылка на пакет: {_ll_url_summary(url)}. "
+            "HTTP допускается только для dl.delivery.mp.microsoft.com/"
+            "filestreamingservice/files/; конечный адрес обязан быть HTTPS Microsoft."
+        )
     dest.parent.mkdir(parents=True, exist_ok=True); temp = dest.with_suffix(dest.suffix + ".download"); last = None
     for attempt in range(4):
         self.check_cancel(); offset = temp.stat().st_size if temp.is_file() else 0
@@ -124,7 +189,11 @@ def _ll_download_file(self, url: str, dest: Path, expected_sha1: str | None, exp
         try:
             with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=60) as response:
                 final_url = response.geturl()
-                if not _ll_trusted_url(final_url): raise RuntimeError(f"Redirect на непроверенный домен: {urlparse(final_url).hostname or '(нет домена)'}")
+                if not _ll_trusted_url(final_url):
+                    raise RuntimeError(
+                        f"Конечный URL загрузки не является доверенным HTTPS-адресом Microsoft: "
+                        f"{_ll_url_summary(final_url)}."
+                    )
                 status = getattr(response, "status", None) or response.getcode()
                 resume = bool(offset and status == 206)
                 if offset and not resume: offset = 0
@@ -409,6 +478,10 @@ def _ll_auto_download(self, info: dict) -> list[Path]:
     last = None
     optional_source_found = False
     processed = 0
+    ru_language_candidates = 0
+    base_metadata_candidates = 0
+    base_prepare_failures = 0
+    base_prepared_candidates = 0
 
     def obtain_component(name: str, meta: dict, folder: Path) -> Path:
         filename = Path(str(name).replace("\\", "/")).name
@@ -420,8 +493,12 @@ def _ll_auto_download(self, info: dict) -> list[Path]:
                 raise RuntimeError(f"Ссылка UUP для {filename} уже истекла.")
         except (ValueError, TypeError):
             pass
-        if not _ll_trusted_url(url):
-            raise RuntimeError(f"Отклонён URL пакета UUP {filename}.")
+        if not _ll_trusted_package_url(url):
+            raise RuntimeError(
+                f"Отклонён URL пакета UUP {filename}: {_ll_url_summary(url)}. "
+                "Разрешены HTTPS-ресурсы Microsoft/Windows Update и HTTP только "
+                "для точного пути Microsoft CDN /filestreamingservice/files/."
+            )
         sha = str(meta.get("sha1", "") or "")
         size = int(meta["size"]) if str(meta.get("size", "")).isdigit() else None
         valid = _ll_verified_cache(path)
@@ -457,6 +534,7 @@ def _ll_auto_download(self, info: dict) -> list[Path]:
             if "ru-ru" not in languages:
                 self.log(f"UUP-запись пропущена: ru-RU отсутствует в списке языков — {title}")
                 continue
+            ru_language_candidates += 1
 
             try:
                 body = self.api_json(
@@ -492,6 +570,7 @@ def _ll_auto_download(self, info: dict) -> list[Path]:
             if not base:
                 self.log(f"В UUP-записи не найден базовый Client LP ru-RU в CAB/ESD: {title}")
                 continue
+            base_metadata_candidates += 1
 
             base_ready = False
             for name, meta in base:
@@ -503,9 +582,11 @@ def _ll_auto_download(self, info: dict) -> list[Path]:
                     break
                 except Exception as exc:
                     last = exc
+                    base_prepare_failures += 1
                     self.log(f"Базовый LP из записи {title} не удалось подготовить ({Path(name).name}): {exc}")
             if not base_ready:
                 continue
+            base_prepared_candidates += 1
 
             if not optional_source_found and optional:
                 for oname, ometa in optional:
@@ -523,11 +604,29 @@ def _ll_auto_download(self, info: dict) -> list[Path]:
 
     result = self.packages_for_info(info)
     if not self.locate_ru_lp(info, result):
-        details = f" Последняя ошибка: {last}" if last else ""
+        if base_metadata_candidates and base_prepare_failures:
+            raise RuntimeError(
+                f"UUP Dump обнаружил отдельный Client Language Pack ru-RU в "
+                f"{base_metadata_candidates} установочных записях, но подготовить пакет не удалось "
+                f"(ошибок загрузки/проверки/преобразования: {base_prepare_failures}). "
+                "Пакет не считается отсутствующим. Проверьте последнюю ошибку и URL источника. "
+                f"Последняя ошибка: {last}"
+            )
+        if base_metadata_candidates and base_prepared_candidates:
+            raise RuntimeError(
+                "UUP Dump предоставил и подготовил Client Language Pack ru-RU, "
+                "но пакет не появился в проверенном кэше. Проверьте манифест кэша и путь пакетов."
+            )
+        if ru_language_candidates:
+            raise RuntimeError(
+                f"UUP Dump подтвердил наличие ru-RU в {ru_language_candidates} установочных записях, "
+                "но отдельный базовый Client Language Pack в CAB/ESD не найден. "
+                "Наличие языка в install.wim само по себе не заменяет отдельный пакет."
+            )
         raise RuntimeError(
-            f"Не найден проверенный Client Language Pack ru-RU: проверено установочных кандидатов UUP — {processed}; "
-            "перед получением файлов проверялись доступные языки, а пакеты ESD преобразовывались в CAB. "
-            "Подберите совместимый донорский ISO или отдельный пакет ru-RU." + details
+            f"В проверенных установочных записях UUP Dump не обнаружен язык ru-RU: "
+            f"проверено установочных кандидатов — {processed}. "
+            "Это не доказывает отсутствие языкового пакета в других сборках или источниках."
         )
     return result
 

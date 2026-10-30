@@ -1,4 +1,4 @@
-# LocaLizard 0.1.1
+# LocaLizard 0.1.1.1
 
 **LocaLizard** is a graphical utility for preparing Windows IoT Enterprise LTSC installation media with Russian as the default language.
 
@@ -6,7 +6,7 @@
 
 - [Latest LocaLizard release](https://github.com/lizardiot/LocaLizard/releases/latest)
 - [All releases](https://github.com/lizardiot/LocaLizard/releases)
-- [LocaLizard.exe for Windows x64 — version 0.1.0.8](https://github.com/lizardiot/LocaLizard/releases/download/0.1.1/LocaLizard.exe)
+- [LocaLizard.exe for Windows x64 — version 0.1.1.1](https://github.com/lizardiot/LocaLizard/releases/download/0.1.1.1/LocaLizard.exe)
 
 ## Features
 
@@ -34,7 +34,7 @@
 - Static validation checks the ISO structure and whether images can be read, but cannot guarantee installation on every hardware configuration. Test the ISO in a separate VM or on a test device before deployment. OOBE can affect the preferred UI language of the first user.
 ## Run
 
-1. Download `LocaLizard.exe` from the [0.1.0.8 release](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.1).
+1. Download `LocaLizard.exe` from the [0.1.1.1 release](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.1.1).
 2. Run the application. The main window runs without elevation: drag the target ISO into the first drop zone and the Russian donor ISO into the separate zone in the language-components section. Approve the UAC prompt when the application starts an operation that requires administrator privileges.
 3. Select the source Windows ISO, output ISO path, and working directory.
 4. If needed, specify a Russian ISO source, FOD / Language and Optional Features sources, and an update catalog.
@@ -44,10 +44,13 @@ You do not need to install Python or development tools manually. The source ISO 
 
 ## Version history
 
-### [0.1.1](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.1) — current release
-UUP search now recognizes Client Language Pack ESD files, converts them into CAB packages with DISM, SXSEXP and Windows makecab, checks ru-RU availability before requesting file metadata, and skips non-installation OOBE/servicing records.
+### [0.1.1.1](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.1.1) — current release
+Fixed UUP Language Pack downloads from Microsoft Delivery CDN. HTTP is permitted only as a narrowly scoped bootstrap URL for the exact Microsoft CDN host and file path; the final URL after redirects must be trusted HTTPS. Diagnostics now distinguish a missing package from a detected package whose download, verification, or ESD conversion failed. Added URL policy and HTTPS-redirect tests.
 
-### [0.1.0.8](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.1) — current release
+### [0.1.1](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.1) — previous release
+UUP search recognizes Client Language Pack ESD files, converts them into CAB packages with DISM, SXSEXP and Windows makecab, checks ru-RU availability before requesting file metadata, and skips non-installation OOBE/servicing records.
+
+### [0.1.0.8](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.1) — previous release
 Language-component discovery now selects Windows 10/11 client builds, excludes Windows Server and Azure Stack HCI, and prefers the exact ISO revision before other builds from the same family.
 
 ### [0.1.0.3](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.0.3) — previous release

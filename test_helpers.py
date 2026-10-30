@@ -198,6 +198,88 @@ ServicePack Build : 0
         self.assertTrue(main._ll_trusted_url("https://catalog.s.download.windowsupdate.com/test.cab"))
         self.assertFalse(main._ll_trusted_url("https://microsoft.com.evil.example/test.cab"))
         self.assertFalse(main._ll_trusted_url("http://download.microsoft.com/test.cab"))
+        self.assertFalse(main._ll_trusted_url("https://user:pass@download.microsoft.com/test.cab"))
+        self.assertFalse(main._ll_trusted_url("https://@download.microsoft.com/test.cab"))
+        self.assertFalse(main._ll_trusted_url("https://download.microsoft.com:444/test.cab"))
+
+    def test_uup_package_url_allows_only_the_documented_http_microsoft_cdn_path(self):
+        cdn = "dl.delivery.mp.microsoft.com"
+        valid_http = f"http://{cdn}/filestreamingservice/files/example.esd"
+        valid_https = f"https://{cdn}/filestreamingservice/files/example.esd"
+        self.assertTrue(main._ll_trusted_package_url(valid_http))
+        self.assertTrue(main._ll_trusted_package_url(valid_https))
+        self.assertTrue(main._ll_trusted_package_url(
+            "http://tlu.dl.delivery.mp.microsoft.com/filestreamingservice/files/example.esd"
+        ))
+        self.assertFalse(main._ll_trusted_url(valid_http))
+        self.assertFalse(main._ll_trusted_package_url(f"http://{cdn}/other/example.esd"))
+        self.assertFalse(main._ll_trusted_package_url(f"http://{cdn}.evil.example/filestreamingservice/files/example.esd"))
+        self.assertFalse(main._ll_trusted_package_url(f"http://user@{cdn}/filestreamingservice/files/example.esd"))
+        self.assertFalse(main._ll_trusted_package_url("http://download.microsoft.com/filestreamingservice/files/example.esd"))
+        self.assertFalse(main._ll_trusted_package_url("https://example.invalid/filestreamingservice/files/example.esd"))
+
+    def test_uup_downloader_accepts_microsoft_cdn_http_bootstrap_when_redirected_to_https(self):
+        payload = b"unit-test-uup-esd"
+        final_url = "https://dl.delivery.mp.microsoft.com/filestreamingservice/files/example.esd"
+
+        class FakeResponse:
+            status = 200
+            headers = {"Content-Length": str(len(payload))}
+            _read = False
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def geturl(self):
+                return final_url
+
+            def read(self, _size=-1):
+                if self._read:
+                    return b""
+                self._read = True
+                return payload
+
+        with tempfile.TemporaryDirectory() as td:
+            worker = main.Worker(queue.Queue(), threading.Event(), None)
+            target = Path(td) / "package.esd"
+            with patch.object(main.urllib.request, "urlopen", return_value=FakeResponse()):
+                worker.download_file(
+                    "http://dl.delivery.mp.microsoft.com/filestreamingservice/files/example.esd",
+                    target,
+                    main.hashlib.sha1(payload).hexdigest(),
+                    len(payload),
+                )
+            self.assertEqual(target.read_bytes(), payload)
+
+    def test_uup_downloader_requires_https_after_redirect(self):
+        class FakeResponse:
+            status = 200
+            headers = {}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def geturl(self):
+                return "http://dl.delivery.mp.microsoft.com/filestreamingservice/files/example.esd"
+
+        with tempfile.TemporaryDirectory() as td:
+            worker = main.Worker(queue.Queue(), threading.Event(), None)
+            target = Path(td) / "package.esd"
+            with patch.object(main.urllib.request, "urlopen", return_value=FakeResponse()):
+                with self.assertRaisesRegex(RuntimeError, "Конечный URL загрузки"):
+                    worker.download_file(
+                        "http://dl.delivery.mp.microsoft.com/filestreamingservice/files/example.esd",
+                        target,
+                        None,
+                        None,
+                    )
+            self.assertFalse(target.exists())
 
     def test_managed_cache_manifest_and_tamper_detection(self):
         with tempfile.TemporaryDirectory() as td:

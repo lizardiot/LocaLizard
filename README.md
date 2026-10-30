@@ -1,4 +1,4 @@
-# LocaLizard 0.1.1
+# LocaLizard 0.1.1.1
 
 **LocaLizard** — графическая утилита для подготовки установочного ISO Windows IoT Enterprise LTSC с русским языком по умолчанию.
 
@@ -6,7 +6,7 @@
 
 - [Последний релиз LocaLizard](https://github.com/lizardiot/LocaLizard/releases/latest)
 - [Все релизы](https://github.com/lizardiot/LocaLizard/releases)
-- [LocaLizard.exe для Windows x64 — версия 0.1.0.8](https://github.com/lizardiot/LocaLizard/releases/download/0.1.1/LocaLizard.exe)
+- [LocaLizard.exe для Windows x64 — версия 0.1.1.1](https://github.com/lizardiot/LocaLizard/releases/download/0.1.1.1/LocaLizard.exe)
 
 ## Возможности
 
@@ -34,7 +34,7 @@
 - Статическая проверка проверяет структуру ISO и читаемость образов, но не гарантирует установку на каждой конфигурации оборудования. Перед развёртыванием проверьте ISO в отдельной VM или на тестовом устройстве. OOBE может повлиять на предпочитаемый язык интерфейса первого пользователя.
 ## Запуск
 
-1. Скачайте `LocaLizard.exe` из [релиза 0.1.0.8](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.1).
+1. Скачайте `LocaLizard.exe` из [релиза 0.1.1.1](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.1.1).
 2. Запустите программу. Главное окно работает без повышения прав: исходный ISO можно перетащить в первую область, а донорский ISO с русским языком — в отдельную область раздела языковых компонентов. Подтвердите запрос UAC, когда программа начнёт операцию, требующую прав администратора.
 3. Выберите исходный Windows ISO, путь для выходного ISO и рабочую папку.
 4. При необходимости задайте русский ISO-источник, FOD/L&O и каталог обновлений.
@@ -44,7 +44,13 @@ Python и инструменты разработки устанавливать
 
 ## История версий
 
-### [0.1.0.8](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.1) — текущий выпуск
+### [0.1.1.1](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.1.1) — текущий выпуск
+Исправлена загрузка UUP Language Pack с Microsoft CDN: исходная HTTP-ссылка разрешается только для точного пути Microsoft Delivery CDN, а перенаправление обязано завершиться на HTTPS Microsoft/Windows Update. Диагностика отличает отсутствие пакета от сбоя его загрузки или преобразования. Добавлены тесты URL и конечного HTTPS-адреса.
+
+### [0.1.1](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.1) — предыдущий выпуск
+UUP-поиск распознаёт Client Language Pack ESD и преобразует его в CAB с помощью DISM, SXSEXP и Windows makecab.
+
+### [0.1.0.8](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.1) — предыдущий выпуск
 Автопоиск языковых компонентов выбирает клиентские сборки Windows 10/11, исключает Windows Server и Azure Stack HCI, а точная ревизия ISO имеет приоритет перед другими сборками того же семейства.
 
 ### [0.1.0.3](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.0.3) — предыдущий выпуск
