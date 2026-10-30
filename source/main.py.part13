@@ -890,7 +890,7 @@ def _ll_dism_image(self, media, image_wim, info, package_files, fod_root):
     })
     self._ll_used_packages=getattr(self,"_ll_used_packages",[])+[str(selected)]
     try:
-        for cap in ("Language.Basic~~~ru-RU~0.0.1.0","Language.Fonts~~~ru-RU~0.0.1.0","Language.OCR~~~ru-RU~0.0.1.0","Language.Speech~~~ru-RU~0.0.1.0","Language.TextToSpeech~~~ru-RU~0.0.1.0","Language.Handwriting~~~ru-RU~0.0.1.0"):
+        for cap in ("Language.Basic~~~ru-RU~0.0.1.0","Language.OCR~~~ru-RU~0.0.1.0","Language.TextToSpeech~~~ru-RU~0.0.1.0","Language.Handwriting~~~ru-RU~0.0.1.0"):
             self.check_cancel(); cmd=["dism.exe",f"/Image:{mount}","/Add-Capability",f"/CapabilityName:{cap}"]
             if fod_root:
                 source=Path(fod_root)
@@ -900,7 +900,7 @@ def _ll_dism_image(self, media, image_wim, info, package_files, fod_root):
                 cmd.extend([f"/Source:{source}","/LimitAccess"])
             cp=self.run_cmd(cmd,check=False)
             self.language_component_report[-1]["capabilities"].append({"name":cap,"status":"installed" if cp.returncode==0 else "unavailable","dism_returncode":cp.returncode})
-        for setting in ("/Set-AllIntl:ru-RU","/Set-UILang:ru-RU","/Set-UserLocale:ru-RU","/Set-SystemLocale:ru-RU","/Set-InputLocale:0419:00000419"):
+        for setting in ("/Set-AllIntl:ru-RU","/Set-UILang:ru-RU","/Set-UserLocale:ru-RU","/Set-SysLocale:ru-RU","/Set-InputLocale:0419:00000419"):
             self.run_cmd(["dism.exe",f"/Image:{mount}",setting])
         intl=self.run_cmd(["dism.exe",f"/Image:{mount}","/Get-Intl"])
         if "ru-ru" not in (intl.stdout or "").lower(): raise RuntimeError(f"DISM не подтвердил ru-RU для индекса {idx}.")

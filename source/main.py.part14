@@ -269,94 +269,234 @@ def _ll_dism_image_v089(self, media: Path, image_wim: Path, info: dict, package_
     )
     if not candidates:
         raise RuntimeError(f"Для индекса {idx} не найден Client Language Pack ru-RU для архитектуры {arch}.")
+
     update_plan = self.load_update_plan(info)
     mount = self.work / f"mount_install_{idx}"
-    selected, last_error = None, None
+    selected = None
+    last_error = None
+    mounted = False
+
+    def discard_mount() -> None:
+        nonlocal mounted
+        if mounted:
+            result = self.run_cmd(
+                ["dism.exe", "/Unmount-Image", f"/MountDir:{mount}", "/Discard"],
+                check=False,
+                respect_cancel=False,
+            )
+            if result.returncode:
+                raise RuntimeError(
+                    f"Не удалось безопасно откатить DISM mount для индекса {idx}; "
+                    f"код {result.returncode}. Каталог оставлен для восстановления: {mount}"
+                )
+            mounted = False
+        if mount in self.mounts:
+            self.mounts.remove(mount)
+        shutil.rmtree(mount, ignore_errors=True)
+
+    # Retry a different base LP only when DISM rejects /Add-Package itself.
+    # Mounting and the pre-LP update plan are independent preparation steps.
     for lp in candidates:
         self.check_cancel()
         mount.mkdir(parents=True, exist_ok=True)
-        if mount not in self.mounts:
-            self.mounts.append(mount)
         try:
-            self.run_cmd(["dism.exe", "/Mount-Image", f"/ImageFile:{image_wim}", f"/Index:{idx}", f"/MountDir:{mount}", "/CheckIntegrity"])
-            self.apply_update_plan(mount, info, "before_language", update_plan, scope=f"{image_wim.name} index {idx}")
-            self.log(f"Индекс {idx}: попытка добавить базовый языковой пакет {lp.name}")
-            self.run_cmd(["dism.exe", f"/Image:{mount}", "/Add-Package", f"/PackagePath:{lp}", "/NoRestart"])
-            component_result = {
-                "index": idx, "image": image_wim.name, "architecture": arch,
-                "language_pack": lp.name, "language_pack_sha256": _ll_hash(lp), "capabilities": [],
-                "updates": [],
-            }
-            caps = (
-                "Language.Basic~~~ru-RU~0.0.1.0", "Language.Fonts~~~ru-RU~0.0.1.0",
-                "Language.OCR~~~ru-RU~0.0.1.0", "Language.Speech~~~ru-RU~0.0.1.0",
-                "Language.TextToSpeech~~~ru-RU~0.0.1.0", "Language.Handwriting~~~ru-RU~0.0.1.0",
+            self.run_cmd([
+                "dism.exe", "/Mount-Image", f"/ImageFile:{image_wim}",
+                f"/Index:{idx}", f"/MountDir:{mount}", "/CheckIntegrity",
+            ])
+            mounted = True
+            if mount not in self.mounts:
+                self.mounts.append(mount)
+            self.apply_update_plan(
+                mount, info, "before_language", update_plan,
+                scope=f"{image_wim.name} index {idx}",
             )
-            for cap in caps:
-                self.check_cancel()
-                cmd = ["dism.exe", f"/Image:{mount}", "/Add-Capability", f"/CapabilityName:{cap}"]
-                if fod_root:
-                    source = Path(fod_root)
-                    if source.is_file():
-                        raise RuntimeError(f"FOD-источник должен быть каталогом или смонтированным L&O ISO, получен файл {source}.")
-                    if not source.is_dir():
-                        self.log(f"FOD-репозиторий недоступен; пропускаю {cap}.")
-                        component_result["capabilities"].append({"name": cap, "status": "source_missing"})
-                        continue
-                    cmd.extend([f"/Source:{source}", "/LimitAccess"])
-                cp = self.run_cmd(cmd, check=False)
-                component_result["capabilities"].append({
-                    "name": cap, "status": "installed" if cp.returncode == 0 else "unavailable",
-                    "dism_returncode": cp.returncode,
-                })
-            for locale_arg in ("/Set-AllIntl:ru-RU", "/Set-UILang:ru-RU", "/Set-UserLocale:ru-RU", "/Set-SystemLocale:ru-RU", "/Set-InputLocale:0419:00000419"):
-                self.run_cmd(["dism.exe", f"/Image:{mount}", locale_arg])
-            intl = self.run_cmd(["dism.exe", f"/Image:{mount}", "/Get-Intl"])
-            if "ru-ru" not in (intl.stdout or "").lower():
-                raise RuntimeError(f"DISM не подтвердил локаль ru-RU для индекса {idx}.")
-            component_result["intl_ru_ru_confirmed"] = True
-            cap_text = self.run_cmd(["dism.exe", f"/Image:{mount}", "/Get-Capabilities"], check=False).stdout or ""
-            for item in component_result["capabilities"]:
-                found = re.search(re.escape(item["name"]) + r"\s*:\s*([^\r\n]+)", cap_text, re.I)
-                if found:
-                    item["reported_state"] = found.group(1).strip()
-                    if "installed" in found.group(1).lower():
-                        item["status"] = "installed"
-            component_result["winre"] = _ll_service_winre(self, mount, info, update_plan)
-            self.apply_update_plan(mount, info, "after_language", update_plan, scope=f"{image_wim.name} index {idx}")
-            component_result["updates"] = list(getattr(self, "_ll_update_report", []))
-            pkg_check = self.run_cmd(["dism.exe", f"/Image:{mount}", "/Get-Packages", "/Format:Table"], check=False)
-            component_result["ru_ru_package_inventory"] = "ru-ru" in (pkg_check.stdout or "").lower()
-            self.run_cmd(["dism.exe", "/Unmount-Image", f"/MountDir:{mount}", "/Commit", "/CheckIntegrity"])
-            if mount in self.mounts:
-                self.mounts.remove(mount)
-            self.language_component_report = getattr(self, "language_component_report", []) + [component_result]
-            self._ll_used_packages = getattr(self, "_ll_used_packages", []) + [str(lp)]
-            self.log(f"Индекс {idx}: LP, capability-инвентарь и WinRE завершены.")
-            return
+        except Exception as exc:
+            try:
+                discard_mount()
+            except Exception as cleanup_exc:
+                raise RuntimeError(
+                    f"Не удалось подготовить индекс {idx} к установке языка; "
+                    f"ошибка очистки DISM: {cleanup_exc}"
+                ) from exc
+            raise RuntimeError(
+                f"Не удалось смонтировать/подготовить образ {image_wim.name}, индекс {idx}: {exc}"
+            ) from exc
+
+        self.log(f"Индекс {idx}: попытка добавить базовый языковой пакет {lp.name}")
+        try:
+            self.run_cmd([
+                "dism.exe", f"/Image:{mount}", "/Add-Package",
+                f"/PackagePath:{lp}", "/NoRestart",
+            ])
+            selected = lp
+            break
         except Exception as exc:
             last_error = exc
-            self.log(f"DISM не завершил кандидата {lp.name}; откатываю mount и проверяю следующий CAB: {exc}")
+            self.log(
+                f"DISM отклонил базовый пакет {lp.name}; "
+                f"откатываю только эту попытку и проверяю следующий пакет: {exc}"
+            )
             try:
-                self.run_cmd(["dism.exe", "/Unmount-Image", f"/MountDir:{mount}", "/Discard"], check=False, respect_cancel=False)
-            except Exception:
-                pass
-            if mount in self.mounts:
-                self.mounts.remove(mount)
-            shutil.rmtree(mount, ignore_errors=True)
+                discard_mount()
+            except Exception as cleanup_exc:
+                raise RuntimeError(
+                    f"DISM отклонил {lp.name}, и mount не удалось безопасно откатить: {cleanup_exc}"
+                ) from exc
             if self.cancel_event.is_set():
                 raise RuntimeError("Отмена после безопасного завершения операции DISM.") from exc
-    raise RuntimeError(f"Не удалось применить ни один базовый Client Language Pack к индексу {idx}: {last_error}")
 
+    if selected is None:
+        raise RuntimeError(
+            f"DISM не смог применить ни один базовый Client Language Pack к индексу {idx}: {last_error}"
+        )
+
+    component_result = {
+        "index": idx,
+        "image": image_wim.name,
+        "architecture": arch,
+        "language_pack": selected.name,
+        "language_pack_sha256": _ll_hash(selected),
+        "capabilities": [],
+        "updates": [],
+    }
+    capabilities = (
+        "Language.Basic~~~ru-RU~0.0.1.0",
+        "Language.OCR~~~ru-RU~0.0.1.0",
+        "Language.TextToSpeech~~~ru-RU~0.0.1.0",
+        "Language.Handwriting~~~ru-RU~0.0.1.0",
+    )
+
+    # Optional offline FOD must have a real repository source.
+    fod_source = Path(fod_root) if fod_root else None
+    if fod_source is None:
+        self.log("FOD/L&O-источник не выбран; необязательные Language Features пропускаю.")
+        component_result["capabilities"] = [
+            {"name": cap, "status": "not_requested"} for cap in capabilities
+        ]
+    elif not fod_source.is_dir():
+        status = "invalid_source" if fod_source.exists() else "source_missing"
+        self.log(
+            f"FOD/L&O-источник {fod_source} не является доступным каталогом; "
+            "необязательные Language Features пропускаю."
+        )
+        component_result["capabilities"] = [
+            {"name": cap, "status": status} for cap in capabilities
+        ]
+    else:
+        for cap in capabilities:
+            self.check_cancel()
+            cmd = [
+                "dism.exe", f"/Image:{mount}", "/Add-Capability",
+                f"/CapabilityName:{cap}", f"/Source:{fod_source}", "/LimitAccess",
+            ]
+            try:
+                cp = self.run_cmd(cmd, check=False)
+                status = "installed" if cp.returncode == 0 else "unavailable"
+                row = {"name": cap, "status": status, "dism_returncode": cp.returncode}
+                if cp.returncode:
+                    self.log(
+                        f"Необязательная возможность {cap} недоступна из FOD-источника; "
+                        f"код DISM {cp.returncode}. Базовая локализация продолжается."
+                    )
+            except Exception as exc:
+                if self.cancel_event.is_set():
+                    raise
+                row = {"name": cap, "status": "unavailable", "error": str(exc)}
+                self.log(f"Не удалось добавить необязательную возможность {cap}: {exc}")
+            component_result["capabilities"].append(row)
+
+    try:
+        for locale_arg in (
+            "/Set-AllIntl:ru-RU",
+            "/Set-UILang:ru-RU",
+            "/Set-UserLocale:ru-RU",
+            "/Set-SysLocale:ru-RU",
+            "/Set-InputLocale:0419:00000419",
+        ):
+            self.run_cmd(["dism.exe", f"/Image:{mount}", locale_arg])
+
+        # Best-effort on older images that do not recognize System Preferred UI Language.
+        sys_ui = self.run_cmd(
+            ["dism.exe", f"/Image:{mount}", "/Set-SysUILang:ru-RU"],
+            check=False,
+        )
+        component_result["system_preferred_ui_language"] = {
+            "status": "configured" if sys_ui.returncode == 0 else "unsupported_or_unavailable",
+            "dism_returncode": sys_ui.returncode,
+        }
+
+        intl = self.run_cmd(["dism.exe", f"/Image:{mount}", "/Get-Intl"])
+        if "ru-ru" not in (intl.stdout or "").lower():
+            raise RuntimeError(f"DISM не подтвердил локаль ru-RU для индекса {idx}.")
+        component_result["intl_ru_ru_confirmed"] = True
+
+        cap_text = self.run_cmd(
+            ["dism.exe", f"/Image:{mount}", "/Get-Capabilities"],
+            check=False,
+        ).stdout or ""
+        for item in component_result["capabilities"]:
+            found = re.search(re.escape(item["name"]) + r"\s*:\s*([^\r\n]+)", cap_text, re.I)
+            if found:
+                item["reported_state"] = found.group(1).strip()
+                if "installed" in found.group(1).lower():
+                    item["status"] = "installed"
+
+        component_result["winre"] = _ll_service_winre(self, mount, info, update_plan)
+        self.apply_update_plan(
+            mount, info, "after_language", update_plan,
+            scope=f"{image_wim.name} index {idx}",
+        )
+        component_result["updates"] = list(getattr(self, "_ll_update_report", []))
+        pkg_check = self.run_cmd(
+            ["dism.exe", f"/Image:{mount}", "/Get-Packages", "/Format:Table"],
+            check=False,
+        )
+        component_result["ru_ru_package_inventory"] = "ru-ru" in (pkg_check.stdout or "").lower()
+        self.run_cmd([
+            "dism.exe", "/Unmount-Image", f"/MountDir:{mount}",
+            "/Commit", "/CheckIntegrity",
+        ])
+        mounted = False
+        if mount in self.mounts:
+            self.mounts.remove(mount)
+        shutil.rmtree(mount, ignore_errors=True)
+    except Exception as exc:
+        self.log(
+            f"Индекс {idx}: базовый пакет {selected.name} уже принят DISM, "
+            f"но последующая настройка/проверка не завершилась; откатываю этот mount: {exc}"
+        )
+        try:
+            discard_mount()
+        except Exception as cleanup_exc:
+            raise RuntimeError(
+                f"Пакет {selected.name} принят, но последующая операция завершилась ошибкой "
+                f"({exc}); дополнительно не удалось безопасно закрыть mount: {cleanup_exc}"
+            ) from exc
+        raise RuntimeError(
+            f"Базовый Client Language Pack {selected.name} успешно добавлен, "
+            f"но последующая настройка индекса {idx} завершилась ошибкой: {exc}"
+        ) from exc
+
+    self.language_component_report = getattr(self, "language_component_report", []) + [component_result]
+    self._ll_used_packages = getattr(self, "_ll_used_packages", []) + [str(selected)]
+    self.log(f"Индекс {idx}: базовый LP, настройки локали, capabilities и WinRE завершены.")
 
 def _ll_copy_donor_setup_resources(self, image_plan) -> None:
     """Copy localized Setup UI files only from a donor ISO with matching build and architecture."""
-    if not self.cfg.donor_iso or not self.work:
+    if not self.work:
         return
     media = self.work / "media"
     dest = media / "sources" / "ru-ru"
     if dest.is_dir() and any(dest.iterdir()):
         self.log("В целевом ISO уже есть sources\\ru-ru; Setup resources не перезаписываю.")
+        return
+    if not self.cfg.donor_iso:
+        self.log(
+            "Русский ISO-донор не выбран, а sources\\ru-ru отсутствует: "
+            "локализованные файлы Setup не импортированы. Для полного UI Setup укажите "
+            "совместимый по семейству сборки и архитектуре ru-RU ISO."
+        )
         return
     quoted = str(self.cfg.donor_iso).replace("'", "''")
     mounted = False

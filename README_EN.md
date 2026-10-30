@@ -1,4 +1,4 @@
-# LocaLizard 0.1.1.3
+# LocaLizard 0.1.1.4
 
 **LocaLizard** is a graphical utility for preparing Windows IoT Enterprise LTSC installation media with Russian as the default language.
 
@@ -6,7 +6,7 @@
 
 - [Latest LocaLizard release](https://github.com/lizardiot/LocaLizard/releases/latest)
 - [All releases](https://github.com/lizardiot/LocaLizard/releases)
-- [LocaLizard.exe for Windows x64 — version 0.1.1.3](https://github.com/lizardiot/LocaLizard/releases/download/0.1.1.3/LocaLizard.exe)
+- [LocaLizard.exe for Windows x64 — version 0.1.1.4](https://github.com/lizardiot/LocaLizard/releases/download/0.1.1.4/LocaLizard.exe)
 
 ## Features
 
@@ -32,7 +32,7 @@
 
 - Latest-LCU search uses the build family and architecture detected from the selected ISO. If a build has no predefined query profile, the utility searches by numeric OS build and tries fallback Microsoft Update Catalog queries. Automatic download still requires an unambiguous stable update matching the exact build family and architecture. If the Catalog HTML changes or no matching entry is returned, the utility stops rather than guessing; a KB can be entered manually.
 - Client Language Pack discovery checks the local cache, a donor ISO, and up to 32 matching client installation builds after a ru-RU language availability check for the same build family and architecture. Localization of an image index cannot continue if no compatible standalone Client Language Pack in CAB or UUP ESD form is available from trusted sources. DISM performs the final applicability check. This covers LTSC build families 10240, 14393, 17763, 19044, and 26100; UUP Dump may not retain entries for every older release, so a compatible donor ISO or local package may be required.
-- Extra language capabilities (Basic, Fonts, OCR, Speech, Text-to-Speech, Handwriting) are attempted individually and recorded in the JSON audit. A capability can remain unavailable when compatible files are missing from the selected FOD/Language and Optional Features source and cannot be obtained through the servicing sources used by DISM.
+- Extra Russian language capabilities (Basic, OCR, Text-to-Speech, Handwriting) are installed only when a Language and Optional Features repository or mounted ISO is selected. Without a FOD source, LocaLizard skips them instead of asking offline DISM to query Windows Update; a failed optional capability does not roll back the successfully added base Client Language Pack. Results are recorded in the JSON audit.
 - Setup/WinPE and WinRE use compatible Russian resources from the selected source and/or the official ADK WinPE Add-on. If the add-on cannot be downloaded or signature-verified, disk space is insufficient, or DISM rejects the CABs, that part of the image is left unchanged; details are written to the log and audit.
 - The interactive Hyper-V test requires Windows with Hyper-V enabled, administrator privileges, and VMConnect. It launches a temporary VM without networking but asks the user to visually confirm the Windows Setup screen: a running VM alone does not prove that Setup appeared. This interactive test is not run in GitHub Actions.
 - Static validation checks the ISO structure and whether images can be read, but cannot guarantee installation on every hardware configuration. Test the ISO in a separate VM or on a test device before deployment. OOBE can affect the preferred UI language of the first user.
@@ -47,6 +47,13 @@
 You do not need to install Python or development tools manually. The source ISO remains unchanged.
 
 ## Version history
+
+### [0.1.1.4](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.1.4) — current release
+Fixed the invalid DISM system-locale switch (/Set-SysLocale replaces /Set-SystemLocale) and separated base Client Language Pack candidate selection from later servicing, so another LP is tried only when /Add-Package rejects the current one. Optional Russian FODs are limited to Basic, OCR, Text-to-Speech, and Handwriting and are attempted only with a selected source. Optional FOD failures no longer roll back a successfully added base package. Added regression tests. Full Windows Setup resource localization still requires a compatible Russian donor ISO containing sources/ru-ru.
+
+### [0.1.1.3](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.1.3) — previous release
+Fixed Microsoft CDN ESD download handling and installed the extracted base Client Language Pack directly through update.mum with integrity verification.
+
 
 ### [0.1.1.3](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.1.3) — current release
 Fixed Microsoft Delivery CDN downloads when the final URL remains HTTP: the exact Microsoft CDN host/path is accepted only when UUP metadata provides a valid SHA-1 and expected file size. Base Client Language Pack ESD files are now extracted by DISM and installed directly through `update.mum`, without rebuilding a CAB; the extracted manifest is cached and verified. Added regression tests for the HTTP integrity policy and update.mum discovery.

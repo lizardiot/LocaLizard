@@ -29,7 +29,7 @@
             caps = [
                 ("Language.Basic~~~ru-RU~0.0.1.0", ("languagefeatures-basic", "languagefeatures-basic-ru-ru")),
                 ("Language.OCR~~~ru-RU~0.0.1.0", ("languagefeatures-ocr",)),
-                ("Language.Speech~~~ru-RU~0.0.1.0", ("languagefeatures-speech",)),
+                
                 ("Language.TextToSpeech~~~ru-RU~0.0.1.0", ("languagefeatures-texttospeech", "languagefeatures-text-to-speech")),
                 ("Language.Handwriting~~~ru-RU~0.0.1.0", ("languagefeatures-handwriting",)),
             ]
@@ -54,7 +54,7 @@
             self.run_cmd(["dism.exe", f"/Image:{mount}", "/Set-AllIntl:ru-RU"])
             self.run_cmd(["dism.exe", f"/Image:{mount}", "/Set-UILang:ru-RU"])
             self.run_cmd(["dism.exe", f"/Image:{mount}", "/Set-UserLocale:ru-RU"])
-            self.run_cmd(["dism.exe", f"/Image:{mount}", "/Set-SystemLocale:ru-RU"])
+            self.run_cmd(["dism.exe", f"/Image:{mount}", "/Set-SysLocale:ru-RU"])
             self.run_cmd(["dism.exe", f"/Image:{mount}", "/Set-InputLocale:0419:00000419"])
             # Inventory and locale verification are mandatory static checks.
             intl_check = self.run_cmd(["dism.exe", f"/Image:{mount}", "/Get-Intl"])

@@ -898,5 +898,180 @@ ServicePack Build : 0
 
 
 
+
+    def test_active_dism_localization_uses_valid_locale_switches_and_skips_fod_without_source(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            lp = root / (
+                "Microsoft-Windows-Client-LanguagePack-Package_ru-ru"
+                "~31bf3856ad364e35~amd64~ru-ru~.cab"
+            )
+            lp.write_bytes(b"test-language-pack")
+            worker = main.Worker(queue.Queue(), threading.Event(), None)
+            worker.work = root / "work"
+            worker.work.mkdir()
+            worker.mounts = []
+            worker.load_update_plan = lambda info: []
+            worker.apply_update_plan = lambda *args, **kwargs: []
+
+            commands = []
+
+            class Result:
+                def __init__(self, returncode=0, stdout=""):
+                    self.returncode = returncode
+                    self.stdout = stdout
+
+            def fake_run_cmd(args, **kwargs):
+                command = [str(item) for item in args]
+                commands.append(command)
+                if "/Get-Intl" in command:
+                    return Result(stdout="Default system UI language: ru-RU")
+                if "/Get-Packages" in command:
+                    return Result(stdout="Microsoft-Windows-Client-LanguagePack ru-RU")
+                if "/Get-Capabilities" in command:
+                    return Result(stdout="")
+                return Result()
+
+            with patch.object(worker, "run_cmd", side_effect=fake_run_cmd), patch.object(
+                main, "_ll_service_winre", return_value={"status": "not_present"}
+            ):
+                main.Worker.dism_image(
+                    worker, root, root / "install.wim",
+                    {"index": 1, "architecture": "x64", "version": "10.0.26100.1742"},
+                    [lp], None,
+                )
+
+            flat = [arg for command in commands for arg in command]
+            self.assertIn("/Set-SysLocale:ru-RU", flat)
+            self.assertNotIn("/Set-SystemLocale:ru-RU", flat)
+            self.assertIn("/Set-SysUILang:ru-RU", flat)
+            self.assertFalse(any("/Add-Capability" in command for command in commands))
+            self.assertTrue(any("/Commit" in command for command in commands))
+            self.assertEqual(
+                [row["status"] for row in worker.language_component_report[0]["capabilities"]],
+                ["not_requested"] * 4,
+            )
+
+    def test_optional_ru_fod_failures_do_not_discard_a_successful_base_language_pack(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            lp = root / (
+                "Microsoft-Windows-Client-LanguagePack-Package_ru-ru"
+                "~31bf3856ad364e35~amd64~ru-ru~.cab"
+            )
+            lp.write_bytes(b"test-language-pack")
+            fod = root / "fod"
+            fod.mkdir()
+            worker = main.Worker(queue.Queue(), threading.Event(), None)
+            worker.work = root / "work"
+            worker.work.mkdir()
+            worker.mounts = []
+            worker.load_update_plan = lambda info: []
+            worker.apply_update_plan = lambda *args, **kwargs: []
+
+            commands = []
+            capabilities = (
+                "Language.Basic~~~ru-RU~0.0.1.0",
+                "Language.OCR~~~ru-RU~0.0.1.0",
+                "Language.TextToSpeech~~~ru-RU~0.0.1.0",
+                "Language.Handwriting~~~ru-RU~0.0.1.0",
+            )
+
+            class Result:
+                def __init__(self, returncode=0, stdout=""):
+                    self.returncode = returncode
+                    self.stdout = stdout
+
+            def fake_run_cmd(args, **kwargs):
+                command = [str(item) for item in args]
+                commands.append(command)
+                if "/Add-Capability" in command:
+                    return Result(returncode=0x800F081F)
+                if "/Set-SysUILang:ru-RU" in command:
+                    return Result(returncode=87)
+                if "/Get-Intl" in command:
+                    return Result(stdout="Default system UI language: ru-RU")
+                if "/Get-Packages" in command:
+                    return Result(stdout="Microsoft-Windows-Client-LanguagePack ru-RU")
+                if "/Get-Capabilities" in command:
+                    return Result(stdout="")
+                return Result()
+
+            with patch.object(worker, "run_cmd", side_effect=fake_run_cmd), patch.object(
+                main, "_ll_service_winre", return_value={"status": "not_present"}
+            ):
+                main.Worker.dism_image(
+                    worker, root, root / "install.wim",
+                    {"index": 1, "architecture": "x64", "version": "10.0.26100.1742"},
+                    [lp], fod,
+                )
+
+            cap_commands = [command for command in commands if "/Add-Capability" in command]
+            found_caps = [
+                next(item.split(":", 1)[1] for item in command if item.startswith("/CapabilityName:"))
+                for command in cap_commands
+            ]
+            self.assertEqual(tuple(found_caps), capabilities)
+            self.assertTrue(all(any(item.startswith("/Source:") for item in command) for command in cap_commands))
+            self.assertTrue(all("/LimitAccess" in command for command in cap_commands))
+            self.assertTrue(any("/Commit" in command for command in commands))
+            self.assertFalse(any("/Discard" in command for command in commands))
+            self.assertEqual(
+                [row["status"] for row in worker.language_component_report[0]["capabilities"]],
+                ["unavailable"] * 4,
+            )
+            self.assertEqual(
+                worker.language_component_report[0]["system_preferred_ui_language"]["status"],
+                "unsupported_or_unavailable",
+            )
+
+    def test_locale_configuration_error_after_lp_acceptance_does_not_retry_another_lp(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            first = root / (
+                "Microsoft-Windows-Client-LanguagePack-Package_ru-ru"
+                "~31bf3856ad364e35~amd64~ru-ru~.cab"
+            )
+            second = root / "Windows-Enterprise-Language-Pack_x64_ru-ru.cab"
+            first.write_bytes(b"first")
+            second.write_bytes(b"second")
+            worker = main.Worker(queue.Queue(), threading.Event(), None)
+            worker.work = root / "work"
+            worker.work.mkdir()
+            worker.mounts = []
+            worker.load_update_plan = lambda info: []
+            worker.apply_update_plan = lambda *args, **kwargs: []
+
+            commands = []
+
+            class Result:
+                def __init__(self, returncode=0, stdout=""):
+                    self.returncode = returncode
+                    self.stdout = stdout
+
+            def fake_run_cmd(args, **kwargs):
+                command = [str(item) for item in args]
+                commands.append(command)
+                if "/Set-SysLocale:ru-RU" in command:
+                    raise RuntimeError("synthetic locale failure")
+                return Result(stdout="")
+
+            with patch.object(worker, "run_cmd", side_effect=fake_run_cmd), patch.object(
+                main, "_ll_service_winre", return_value={"status": "not_present"}
+            ):
+                with self.assertRaisesRegex(RuntimeError, "успешно добавлен"):
+                    main.Worker.dism_image(
+                        worker, root, root / "install.wim",
+                        {"index": 1, "architecture": "x64", "version": "10.0.26100.1742"},
+                        [first, second], None,
+                    )
+
+            package_attempts = [
+                command for command in commands
+                if "/Add-Package" in command and any(item.startswith("/PackagePath:") for item in command)
+            ]
+            self.assertEqual(len(package_attempts), 1)
+            self.assertTrue(any("/Discard" in command for command in commands))
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
