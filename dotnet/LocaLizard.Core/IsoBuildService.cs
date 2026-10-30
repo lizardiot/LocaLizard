@@ -205,6 +205,102 @@ public sealed class IsoBuildService
         }
     }
 
+    public async Task<string> PatchExistingWimAsync(string sourceWim, string outputWim, RunOptions options, CancellationToken ct)
+    {
+        if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("Обработка WIM доступна только в Windows.");
+        EnsureWindowsAdmin();
+        sourceWim = Path.GetFullPath(sourceWim);
+        outputWim = Path.GetFullPath(outputWim);
+        if (!sourceWim.EndsWith(".wim", StringComparison.OrdinalIgnoreCase) || !File.Exists(sourceWim))
+            throw new FileNotFoundException("Для режима patch-existing требуется существующий WIM.", sourceWim);
+        if (!outputWim.EndsWith(".wim", StringComparison.OrdinalIgnoreCase) ||
+            sourceWim.Equals(outputWim, StringComparison.OrdinalIgnoreCase) || File.Exists(outputWim))
+            throw new InvalidOperationException("Выходной WIM должен быть новым файлом, отличным от исходного.");
+        var outputFolder = Path.GetDirectoryName(outputWim)!;
+        if (!Directory.Exists(outputFolder)) throw new DirectoryNotFoundException("Каталог выходного WIM не существует.");
+        if (!Directory.Exists(options.WorkDirectory)) Directory.CreateDirectory(options.WorkDirectory);
+        Directory.CreateDirectory(options.PackageDirectory);
+        if (options.FodDirectory is not null && !Directory.Exists(options.FodDirectory))
+            throw new DirectoryNotFoundException("FOD должен быть существующим каталогом.");
+        var work = Path.Combine(options.WorkDirectory, "LocaLizard_PatchWIM_" + DateTime.Now.ToString("yyyyMMdd_HHmmss"));
+        Directory.CreateDirectory(work);
+        var staged = Path.Combine(work, Path.GetFileName(sourceWim));
+        File.Copy(sourceWim, staged);
+        var sourceInfos = await _images.GetImageInfoAsync(staged, ct);
+        var imagePlan = sourceInfos.Select(info => (File: staged, Info: info)).ToList();
+        _donorSetupPackages.Clear();
+        if (!string.IsNullOrWhiteSpace(options.DonorIso))
+        {
+            var donor = Path.GetFullPath(options.DonorIso);
+            if (!File.Exists(donor) || donor.Equals(sourceWim, StringComparison.OrdinalIgnoreCase))
+                throw new FileNotFoundException("Русский ISO-донор не найден или совпадает с исходным WIM.", donor);
+            var donorRoot = await MountIsoAsync(donor, ct);
+            try { await ImportDonorPackagesAsync(donorRoot, imagePlan, options.PackageDirectory, work, ct); }
+            finally { await DismountIsoAsync(donor); }
+        }
+
+        var updatePlan = string.IsNullOrWhiteSpace(options.UpdatesDirectory)
+            ? null : await UpdateManifestValidator.LoadAsync(options.UpdatesDirectory, ct: ct);
+        var packages = FindPackages(options.PackageDirectory);
+        for (var i = 0; i < imagePlan.Count; i++)
+        {
+            ct.ThrowIfCancellationRequested();
+            var item = imagePlan[i];
+            var candidates = FindMatchingPackages(packages, item.Info);
+            if (candidates.Count == 0)
+            {
+                Status?.Invoke($"Ищу Client Language Pack ru-RU для индекса {item.Info.Index}…");
+                packages.AddRange(await _uup.DownloadRussianLanguagePackAsync(item.Info, options.PackageDirectory,
+                    _runner, message => Log?.Invoke(message), ct));
+                candidates = FindMatchingPackages(packages, item.Info);
+            }
+            if (candidates.Count == 0)
+                throw new FileNotFoundException($"Нет проверенного Client Language Pack ru-RU для индекса {item.Info.Index}.");
+            Status?.Invoke($"Обрабатываю существующий WIM: индекс {item.Info.Index} ({i + 1}/{imagePlan.Count})…");
+            await _images.ServiceAsync(staged, item.Info, candidates, options.FodDirectory, updatePlan, work,
+                message => Log?.Invoke(message), ct,
+                mount => _winre.LocalizeAsync(mount, item.Info.NormalizedArchitecture, options.FodDirectory,
+                    updatePlan, ct, message => Log?.Invoke(message)));
+        }
+
+        var stagedInfos = await _images.GetImageInfoAsync(staged, ct);
+        if (stagedInfos.Count != sourceInfos.Count)
+            throw new InvalidDataException("После обслуживания изменилось число WIM-индексов; публикация результата отменена.");
+        var pending = outputWim + ".pending";
+        try
+        {
+            File.Copy(staged, pending, true);
+            var pendingInfos = await _images.GetImageInfoAsync(pending, ct);
+            if (pendingInfos.Count != sourceInfos.Count)
+                throw new InvalidDataException("Повторная проверка выходного WIM не прошла; итоговый файл не опубликован.");
+            File.Move(pending, outputWim);
+        }
+        finally { try { File.Delete(pending); } catch { } }
+
+        var report = new
+        {
+            application = AppInfo.Name,
+            version = AppInfo.Version,
+            created_at = DateTimeOffset.Now,
+            mode = "patch-existing-wim",
+            source_wim = sourceWim,
+            output_wim = outputWim,
+            indexes_processed = stagedInfos,
+            image_language_checks = _images.Audit,
+            update_plan = updatePlan?.Packages.Select(x => new { x.File, x.Kind, x.Sha256 }),
+            limitations = new[] { "The WIM-only mode does not modify boot.wim or Windows Setup resources." }
+        };
+        await File.WriteAllTextAsync(Path.ChangeExtension(outputWim, ".localization-audit.json"),
+            JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }), ct);
+        if (!options.KeepWorkFiles)
+        {
+            try { Directory.Delete(work, true); }
+            catch (Exception ex) { Log?.Invoke("Не удалось удалить рабочую папку: " + ex.Message); }
+        }
+        Log?.Invoke("Обработанный WIM прошёл повторную проверку: " + outputWim);
+        return outputWim;
+    }
+
     private async Task ImportDonorPackagesAsync(
         string donorRoot, IReadOnlyList<(string File, ImageInfo Info)> targets, string packageRoot, string work, CancellationToken ct)
     {
