@@ -581,12 +581,13 @@ def _ll_build_ui_v090(self):
     try:
         root = getattr(self, "_main_content_frame", None) or self.winfo_children()[0]
         row = ttk.Frame(root)
-        row.pack(side="bottom", fill="x", pady=(5, 0))
-        self.ll_catalog_btn = ttk.Button(row, text="Найти/скачать LCU из Microsoft Update Catalog…",
+        row.pack(fill="x", pady=(5, 0))
+        self.ll_catalog_btn = ttk.Button(row, text="Найти / скачать LCU…",
                                          command=lambda: _ll_start_catalog_search(self))
-        self.ll_catalog_btn.pack(side="left", padx=(0, 8))
-        ttk.Label(row, text="Автопоиск учитывает сборку/архитектуру выбранного ISO; загрузка требует подтверждения.",
-                  wraplength=590).pack(side="left", padx=6)
+        self.ll_catalog_btn.pack(fill="x", padx=3, pady=(2, 4))
+        catalog_note = ttk.Label(row, text="Автопоиск учитывает сборку/архитектуру выбранного ISO; загрузка требует подтверждения.")
+        catalog_note.pack(fill="x", padx=6, pady=(0, 3))
+        self._register_responsive_text(catalog_note, 0.94, 260, 1000)
     except Exception as exc:
         try:
             self._append_log(f"Не удалось добавить Catalog UI: {exc}")
@@ -677,6 +678,60 @@ def _ll_poll_events_v090(self):
     except queue.Empty:
         pass
     self.after(150, self._poll_events)
+
+
+def _ll_register_responsive_text(self, widget, fraction=0.45, minimum=140, maximum=520):
+    self._responsive_wrap_widgets.append((widget, fraction, minimum, maximum))
+    width = max(1, self._main_content_canvas.winfo_width())
+    widget.configure(wraplength=_ll_responsive_wraplength(width, fraction, minimum, maximum))
+    return widget
+
+
+def _ll_on_main_canvas_configure(self, event):
+    self._main_content_canvas.itemconfigure(self._main_content_window, width=max(1, event.width))
+    width = max(1, event.width - 24)
+    for widget, fraction, minimum, maximum in tuple(self._responsive_wrap_widgets):
+        try:
+            widget.configure(wraplength=_ll_responsive_wraplength(width, fraction, minimum, maximum))
+        except tk.TclError:
+            pass
+
+
+def _ll_on_main_mousewheel(self, event):
+    widget = self.winfo_containing(event.x_root, event.y_root)
+    while widget is not None:
+        if widget is self._main_content_frame:
+            delta = getattr(event, "delta", 0)
+            if delta:
+                units = max(1, abs(int(delta / 120)))
+                direction = -1 if delta > 0 else 1
+                self._main_content_canvas.yview_scroll(direction * units, "units")
+                return "break"
+            return None
+        widget = getattr(widget, "master", None)
+    return None
+
+
+def _ll_on_main_mousewheel_linux(self, event):
+    widget = self.winfo_containing(event.x_root, event.y_root)
+    while widget is not None:
+        if widget is self._main_content_frame:
+            number = getattr(event, "num", 0)
+            if number == 4:
+                self._main_content_canvas.yview_scroll(-1, "units")
+                return "break"
+            if number == 5:
+                self._main_content_canvas.yview_scroll(1, "units")
+                return "break"
+            return None
+        widget = getattr(widget, "master", None)
+    return None
+
+
+App._register_responsive_text = _ll_register_responsive_text
+App._on_main_canvas_configure = _ll_on_main_canvas_configure
+App._on_main_mousewheel = _ll_on_main_mousewheel
+App._on_main_mousewheel_linux = _ll_on_main_mousewheel_linux
 
 
 _LL_PREV_BUILD_UI_V090 = App._build_ui

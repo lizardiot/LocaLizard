@@ -1,4 +1,4 @@
-# LocaLizard 0.1.0.1
+# LocaLizard 0.1.0.2
 
 **LocaLizard** is a graphical utility for preparing Windows IoT Enterprise LTSC installation media with Russian as the default language.
 
@@ -6,7 +6,7 @@
 
 - [Latest LocaLizard release](https://github.com/lizardiot/LocaLizard/releases/latest)
 - [All releases](https://github.com/lizardiot/LocaLizard/releases)
-- [LocaLizard.exe for Windows x64 — version 0.1.0.1](https://github.com/lizardiot/LocaLizard/releases/download/0.1.0.1/LocaLizard.exe)
+- [LocaLizard.exe for Windows x64 — version 0.1.0.2](https://github.com/lizardiot/LocaLizard/releases/download/0.1.0.2/LocaLizard.exe)
 
 ## Features
 
@@ -33,7 +33,7 @@
 - Static validation checks the ISO structure and whether images can be read, but cannot guarantee installation on every hardware configuration. Test the ISO in a separate VM or on a test device before deployment. OOBE can affect the preferred UI language of the first user.
 ## Run
 
-1. Download `LocaLizard.exe` from the [0.1.0.1 release](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.0.1).
+1. Download `LocaLizard.exe` from the [0.1.0.2 release](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.0.2).
 2. Run the application. The main window runs without elevation: drag the target ISO into the first drop zone and the Russian donor ISO into the separate zone in the language-components section. Approve the UAC prompt when the application starts an operation that requires administrator privileges.
 3. Select the source Windows ISO, output ISO path, and working directory.
 4. If needed, specify a Russian ISO source, FOD / Language and Optional Features sources, and an update catalog.
@@ -43,7 +43,10 @@ You do not need to install Python or development tools manually. The source ISO 
 
 ## Version history
 
-### [0.1.0.1](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.0.1) — current release
+### [0.1.0.2](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.0.2) — current release
+The main window is now responsive: when its height is reduced, controls and text remain accessible through scrolling instead of being clipped. Columns and long labels adapt to the available width, action buttons flow into multiple rows, and the minimum window size is smaller.
+
+### [0.1.0.1](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.0.1) — previous release
 Added a dedicated drop zone for the Russian donor ISO. Dropping into it fills the “Russian ISO source” field without changing the target ISO path. Both drag-and-drop zones are covered by tests.
 
 ### [0.1](https://github.com/lizardiot/LocaLizard/releases/tag/0.1) — previous release

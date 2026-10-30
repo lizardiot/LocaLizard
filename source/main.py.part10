@@ -1,5 +1,7 @@
         ttk.Label(header, text=APP_NAME, font=("Segoe UI", 18, "bold")).pack(anchor="w")
-        ttk.Label(header, text="Подготовка русифицированного ISO / WIM Windows", font=("Segoe UI", 10)).pack(anchor="w", pady=(2, 8))
+        header_subtitle = ttk.Label(header, text="Подготовка русифицированного ISO / WIM Windows", font=("Segoe UI", 10))
+        header_subtitle.pack(anchor="w", pady=(2, 8))
+        self._register_responsive_text(header_subtitle, 0.70, 220, 760)
 
         files = ttk.LabelFrame(root, text="1. Образы", padding=10)
         files.pack(fill="x", pady=4)
@@ -11,6 +13,7 @@
         self._file_row(files, 2, "Рабочая папка:", self.work_var, self.choose_work)
         self.drop_label = ttk.Label(files, text="Перетащите сюда файл ISO (если поддерживается оболочкой)", anchor="center", relief="ridge", padding=9)
         self.drop_label.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(8, 0))
+        self._register_responsive_text(self.drop_label, 0.94, 260, 1000)
         files.columnconfigure(1, weight=1)
 
         packs = ttk.LabelFrame(root, text="2. Языковые компоненты ru-RU", padding=10)
@@ -31,11 +34,13 @@
             padding=9,
         )
         self.donor_drop_label.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(8, 0))
-        ttk.Label(
+        self._register_responsive_text(self.donor_drop_label, 0.94, 260, 1000)
+        source_note = ttk.Label(
             packs,
             text="Для checkpoint cumulative updates и актуального LCU используйте совместимые официальные MSU/CAB и манифест updates.json. Русский ISO служит источником отдельных CAB и Setup-ресурсов, если его сборка соответствует цели.",
-            wraplength=980
-        ).grid(row=5, column=0, columnspan=3, sticky="w", pady=(5, 0))
+        )
+        source_note.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(5, 0))
+        self._register_responsive_text(source_note, 0.94, 260, 1000)
         packs.columnconfigure(1, weight=1)
 
         opts = ttk.LabelFrame(root, text="3. Обработка и проверки", padding=10)
@@ -44,25 +49,32 @@
         self.setup_var = tk.BooleanVar(value=True)
         self.split_var = tk.BooleanVar(value=False)
         self.vm_test_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(opts, text="Сохранять рабочие файлы для диагностики", variable=self.keep_var).grid(row=0, column=0, sticky="w")
-        ttk.Checkbutton(opts, text="Локализовать Windows Setup и WinPE при наличии WinPE Add-on", variable=self.setup_var).grid(row=0, column=1, sticky="w", padx=(15, 0))
-        ttk.Checkbutton(opts, text="Разбить итоговый install.wim на SWM для FAT32", variable=self.split_var).grid(row=1, column=0, sticky="w", pady=(5, 0))
-        ttk.Checkbutton(opts, text="Выполнить 120-секундный запуск ISO в Hyper-V", variable=self.vm_test_var).grid(row=1, column=1, sticky="w", padx=(15, 0), pady=(5, 0))
-        ttk.Label(opts, text="WinRE локализуется из L&O ISO, если подходящий набор доступен. Hyper-V smoke-test требует Hyper-V/прав администратора и не распознаёт автоматически экран Setup.", foreground="#555").grid(row=2, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        ttk.Checkbutton(opts, text="Сохранять рабочие файлы\nдля диагностики", variable=self.keep_var).grid(row=0, column=0, sticky="w", padx=3, pady=2)
+        ttk.Checkbutton(opts, text="Локализовать Windows Setup и\nWinPE при наличии WinPE Add-on", variable=self.setup_var).grid(row=0, column=1, sticky="w", padx=3, pady=2)
+        ttk.Checkbutton(opts, text="Разбить итоговый install.wim\nна SWM для FAT32", variable=self.split_var).grid(row=1, column=0, sticky="w", padx=3, pady=2)
+        ttk.Checkbutton(opts, text="Выполнить 120-секундный запуск\nISO в Hyper-V", variable=self.vm_test_var).grid(row=1, column=1, sticky="w", padx=3, pady=2)
+        opts_note = ttk.Label(opts, text="WinRE локализуется из L&O ISO, если подходящий набор доступен. Hyper-V smoke-test требует Hyper-V/прав администратора и не распознаёт автоматически экран Setup.", foreground="#555")
+        opts_note.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        self._register_responsive_text(opts_note, 0.94, 260, 1000)
+        opts.columnconfigure(0, weight=1)
         opts.columnconfigure(1, weight=1)
 
         actions = ttk.Frame(root)
         actions.pack(fill="x", pady=(8, 5))
+        actions.columnconfigure(0, weight=1)
+        actions.columnconfigure(1, weight=1)
         self.start_btn = ttk.Button(actions, text="Проверить условия и создать ISO", command=self.start)
-        self.start_btn.pack(side="left")
+        self.start_btn.grid(row=0, column=0, sticky="ew", padx=3, pady=3)
         self.cancel_btn = ttk.Button(actions, text="Отменить", command=self.cancel, state="disabled")
-        self.cancel_btn.pack(side="left", padx=8)
-        ttk.Button(actions, text="Проверить UUP Dump", command=self.check_uup).pack(side="left", padx=(12, 0))
-        ttk.Button(actions, text="Обработать существующий WIM…", command=self.patch_existing_wim).pack(side="left", padx=8)
-        ttk.Button(actions, text="Документация Microsoft", command=lambda: webbrowser.open(DOCS_LANG)).pack(side="left", padx=8)
+        self.cancel_btn.grid(row=0, column=1, sticky="ew", padx=3, pady=3)
+        ttk.Button(actions, text="Проверить UUP Dump", command=self.check_uup).grid(row=1, column=0, sticky="ew", padx=3, pady=3)
+        ttk.Button(actions, text="Обработать существующий WIM…", command=self.patch_existing_wim).grid(row=1, column=1, sticky="ew", padx=3, pady=3)
+        ttk.Button(actions, text="Документация Microsoft", command=lambda: webbrowser.open(DOCS_LANG)).grid(row=2, column=0, columnspan=2, sticky="ew", padx=3, pady=3)
 
         self.status_var = tk.StringVar(value="Готово к настройке. Ничего не будет изменено до нажатия кнопки запуска.")
-        ttk.Label(root, textvariable=self.status_var, wraplength=900).pack(fill="x", pady=(4, 3))
+        status_label = ttk.Label(root, textvariable=self.status_var)
+        status_label.pack(fill="x", pady=(4, 3))
+        self._register_responsive_text(status_label, 0.94, 260, 1000)
         self.progress = ttk.Progressbar(root, mode="indeterminate")
         self.progress.pack(fill="x", pady=(0, 6))
         self.log_text = tk.Text(logs_frame, height=10, wrap="word", state="disabled", font=("Consolas", 9))
@@ -71,12 +83,15 @@
         self.log_text.pack(side="left", fill="both", expand=True)
         scroll.pack(side="right", fill="y")
 
-        footer = ttk.Label(footer_frame, text="Windows 10/11 x64 и интернет нужны для автоматической загрузки компонентов, если пакеты не найдены в русском ISO или локальном кэше. При отсутствии oscdimg программа сама загрузит официальный ADK и установит Deployment Tools в свой каталог. Оригинальный ISO не изменяется.", foreground="#555", wraplength=900)
+        footer = ttk.Label(root, text="Windows 10/11 x64 и интернет нужны для автоматической загрузки компонентов, если пакеты не найдены в русском ISO или локальном кэше. При отсутствии oscdimg программа сама загрузит официальный ADK и установит Deployment Tools в свой каталог. Оригинальный ISO не изменяется.", foreground="#555")
         footer.pack(fill="x", pady=(4, 0))
+        self._register_responsive_text(footer, 0.94, 260, 1000)
 
     def _file_row(self, parent, row, label, var, command, directory=False):
-        ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", padx=(0, 10), pady=3)
-        ttk.Entry(parent, textvariable=var).grid(row=row, column=1, sticky="ew", pady=3)
+        label_widget = ttk.Label(parent, text=label)
+        label_widget.grid(row=row, column=0, sticky="w", padx=(0, 10), pady=3)
+        self._register_responsive_text(label_widget, 0.40, 150, 360)
+        ttk.Entry(parent, textvariable=var, width=14).grid(row=row, column=1, sticky="ew", pady=3)
         ttk.Button(parent, text="Выбрать…", command=command).grid(row=row, column=2, padx=(8, 0), pady=3)
 
     def _try_enable_dnd(self):

@@ -16,9 +16,13 @@ class HelperTests(unittest.TestCase):
         self.assertTrue(options["opaqueresize"])
         self.assertFalse(options["showhandle"])
         pane_min_sizes = main._ll_log_pane_min_sizes()
-        self.assertEqual(pane_min_sizes["log"], 80)
+        self.assertEqual(pane_min_sizes["log"], 70)
         self.assertGreater(pane_min_sizes["content"], pane_min_sizes["log"])
-        self.assertGreater(pane_min_sizes["footer"], 0)
+        self.assertLessEqual(pane_min_sizes["content"], 160)
+        self.assertEqual(main._ll_responsive_wraplength(320), 144)
+        self.assertEqual(main._ll_responsive_wraplength(1200), 520)
+        self.assertGreaterEqual(main._ll_responsive_wraplength(100), 140)
+        self.assertGreaterEqual(main._ll_responsive_wraplength(700, fraction=0.40, minimum=150), 150)
 
     def test_donor_iso_drop_populates_donor_field(self):
         class Value:

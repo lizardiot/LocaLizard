@@ -96,8 +96,15 @@ def _ll_log_panedwindow_options() -> dict:
 
 
 def _ll_log_pane_min_sizes() -> dict:
-    """Keep the controls, log, and footer usable when either sash is dragged."""
-    return {"content": 450, "log": 80, "footer": 38}
+    """Set compact minima; the controls pane is vertically scrollable."""
+    return {"content": 140, "log": 70}
+
+
+def _ll_responsive_wraplength(width: int, fraction: float = 0.45,
+                              minimum: int = 140, maximum: int = 520) -> int:
+    """Choose a readable label width that tracks the available window width."""
+    available = max(1, int(width))
+    return max(minimum, min(maximum, int(available * fraction)))
 
 
 class App(BaseTk):
@@ -105,8 +112,8 @@ class App(BaseTk):
     def __init__(self):
         super().__init__()
         self.title(f"{APP_NAME} — v{APP_VERSION}")
-        self.geometry("980x760")
-        self.minsize(850, 650)
+        self.geometry("980x700")
+        self.minsize(620, 420)
         self.events: queue.Queue = queue.Queue()
         self.cancel_event = threading.Event()
         self.worker_thread: threading.Thread | None = None
@@ -121,16 +128,31 @@ class App(BaseTk):
         panes = tk.PanedWindow(shell, **_ll_log_panedwindow_options())
         panes.pack(fill="both", expand=True)
 
-        root = ttk.Frame(panes, padding=10)
+        content_view = ttk.Frame(panes)
         logs_frame = ttk.LabelFrame(panes, text="Журнал работы", padding=5)
-        footer_frame = ttk.Frame(panes, padding=(0, 4, 0, 0))
         pane_min_sizes = _ll_log_pane_min_sizes()
-        panes.add(root, minsize=pane_min_sizes["content"], stretch="never")
+        panes.add(content_view, minsize=pane_min_sizes["content"], stretch="always")
         panes.add(logs_frame, minsize=pane_min_sizes["log"], stretch="always")
-        panes.add(footer_frame, minsize=pane_min_sizes["footer"], stretch="never")
+
+        canvas = tk.Canvas(content_view, height=440, highlightthickness=0, borderwidth=0, takefocus=0)
+        content_scroll = ttk.Scrollbar(content_view, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=content_scroll.set)
+        content_scroll.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+        root = ttk.Frame(canvas, padding=10)
+        content_window = canvas.create_window((0, 0), window=root, anchor="nw")
+
+        self._main_content_canvas = canvas
+        self._main_content_window = content_window
         self._main_content_frame = root
+        self._responsive_wrap_widgets = []
         self._log_panedwindow = panes
         self._log_panel = logs_frame
+        root.bind("<Configure>", lambda _event: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", self._on_main_canvas_configure)
+        self.bind_all("<MouseWheel>", self._on_main_mousewheel, add="+")
+        self.bind_all("<Button-4>", self._on_main_mousewheel_linux, add="+")
+        self.bind_all("<Button-5>", self._on_main_mousewheel_linux, add="+")
 
         header = ttk.Frame(root)
         header.pack(fill="x")
