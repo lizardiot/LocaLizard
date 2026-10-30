@@ -14,7 +14,7 @@ public sealed record CatalogFile(string FileName, Uri Url, string? Sha1, long? S
 public sealed record CatalogDownloadResult(string Folder, string ManifestPath, string Sha256Path,
     IReadOnlyList<string> Files, int TargetBuild, string Architecture, string KnowledgeBase);
 
-public sealed class MicrosoftUpdateCatalogClient
+public sealed class MicrosoftUpdateCatalogClient : IDisposable
 {
     private const string CatalogBase = "https://www.catalog.update.microsoft.com";
     private const string CatalogHost = "www.catalog.update.microsoft.com";
@@ -118,8 +118,8 @@ public sealed class MicrosoftUpdateCatalogClient
             .ThenBy(x => x.File.FileName, StringComparer.OrdinalIgnoreCase).ToArray();
         var ordered = checkpoints.Concat(targets).ToArray();
 
-        var folder = Path.Combine(Path.GetFullPath(packageRoot), "catalog",
-            $"KB{kb}_{architecture}_{DateTime.Now:yyyyMMdd_HHmmss}_{Guid.NewGuid():N}"[..Math.Min(74, $"KB{kb}_{architecture}_{DateTime.Now:yyyyMMdd_HHmmss}_{Guid.NewGuid():N}".Length)]);
+        var folderName = $"KB{kb}_{architecture}_{DateTime.Now:yyyyMMdd_HHmmss}_{Guid.NewGuid():N}";
+        var folder = Path.Combine(Path.GetFullPath(packageRoot), "catalog", folderName);
         Directory.CreateDirectory(folder);
         var fileRows = new List<object>();
         var manifestRows = new List<object>();
