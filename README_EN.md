@@ -1,4 +1,4 @@
-# LocaLizard 0.1.0.8
+# LocaLizard 0.1.1
 
 **LocaLizard** is a graphical utility for preparing Windows IoT Enterprise LTSC installation media with Russian as the default language.
 
@@ -6,7 +6,7 @@
 
 - [Latest LocaLizard release](https://github.com/lizardiot/LocaLizard/releases/latest)
 - [All releases](https://github.com/lizardiot/LocaLizard/releases)
-- [LocaLizard.exe for Windows x64 — version 0.1.0.8](https://github.com/lizardiot/LocaLizard/releases/download/0.1.0.8/LocaLizard.exe)
+- [LocaLizard.exe for Windows x64 — version 0.1.0.8](https://github.com/lizardiot/LocaLizard/releases/download/0.1.1/LocaLizard.exe)
 
 ## Features
 
@@ -27,14 +27,14 @@
 ## Limitations and environment requirements
 
 - Latest-LCU search uses the build family and architecture detected from the selected ISO. If a build has no predefined query profile, the utility searches by numeric OS build and tries fallback Microsoft Update Catalog queries. Automatic download still requires an unambiguous stable update matching the exact build family and architecture. If the Catalog HTML changes or no matching entry is returned, the utility stops rather than guessing; a KB can be entered manually.
-- Client Language Pack discovery checks the local cache, a donor ISO, and up to five recent stable UUP Dump entries for the same build family and architecture. Localization of an image index cannot continue if no compatible standalone CAB is available from trusted sources. DISM performs the final applicability check. This covers LTSC build families 10240, 14393, 17763, 19044, and 26100; UUP Dump may not retain entries for every older release, so a compatible donor ISO or local package may be required.
+- Client Language Pack discovery checks the local cache, a donor ISO, and up to 32 matching client installation builds after a ru-RU language availability check for the same build family and architecture. Localization of an image index cannot continue if no compatible standalone CAB is available from trusted sources. DISM performs the final applicability check. This covers LTSC build families 10240, 14393, 17763, 19044, and 26100; UUP Dump may not retain entries for every older release, so a compatible donor ISO or local package may be required.
 - Extra language capabilities (Basic, Fonts, OCR, Speech, Text-to-Speech, Handwriting) are attempted individually and recorded in the JSON audit. A capability can remain unavailable when compatible files are missing from the selected FOD/Language and Optional Features source and cannot be obtained through the servicing sources used by DISM.
 - Setup/WinPE and WinRE use compatible Russian resources from the selected source and/or the official ADK WinPE Add-on. If the add-on cannot be downloaded or signature-verified, disk space is insufficient, or DISM rejects the CABs, that part of the image is left unchanged; details are written to the log and audit.
 - The interactive Hyper-V test requires Windows with Hyper-V enabled, administrator privileges, and VMConnect. It launches a temporary VM without networking but asks the user to visually confirm the Windows Setup screen: a running VM alone does not prove that Setup appeared. This interactive test is not run in GitHub Actions.
 - Static validation checks the ISO structure and whether images can be read, but cannot guarantee installation on every hardware configuration. Test the ISO in a separate VM or on a test device before deployment. OOBE can affect the preferred UI language of the first user.
 ## Run
 
-1. Download `LocaLizard.exe` from the [0.1.0.8 release](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.0.8).
+1. Download `LocaLizard.exe` from the [0.1.0.8 release](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.1).
 2. Run the application. The main window runs without elevation: drag the target ISO into the first drop zone and the Russian donor ISO into the separate zone in the language-components section. Approve the UAC prompt when the application starts an operation that requires administrator privileges.
 3. Select the source Windows ISO, output ISO path, and working directory.
 4. If needed, specify a Russian ISO source, FOD / Language and Optional Features sources, and an update catalog.
@@ -44,7 +44,10 @@ You do not need to install Python or development tools manually. The source ISO 
 
 ## Version history
 
-### [0.1.0.8](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.0.8) — current release
+### [0.1.1](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.1) — current release
+UUP search now recognizes Client Language Pack ESD files, converts them into CAB packages with DISM, SXSEXP and Windows makecab, checks ru-RU availability before requesting file metadata, and skips non-installation OOBE/servicing records.
+
+### [0.1.0.8](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.1) — current release
 Language-component discovery now selects Windows 10/11 client builds, excludes Windows Server and Azure Stack HCI, and prefers the exact ISO revision before other builds from the same family.
 
 ### [0.1.0.3](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.0.3) — previous release

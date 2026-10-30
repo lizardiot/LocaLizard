@@ -36,7 +36,7 @@ except Exception:
     BaseTk = tk.Tk
 
 APP_NAME = "LocaLizard"
-APP_VERSION = "0.1.0.8"
+APP_VERSION = "0.1.1"
 UUP_API = "https://api.uupdump.net"
 UUP_SITE = "https://uupdump.net/"
 def _ll_uup_listid_url(search_term: str) -> str:
@@ -103,6 +103,53 @@ def _ll_uup_response_builds(data) -> list:
     return _ll_uup_response_body_builds(data.get("response"))
 
 
+
+
+def _ll_uup_listlangs_url(update_id: str) -> str:
+    """Build the documented UUP Dump endpoint that lists languages for an update UUID."""
+    return UUP_API + "/listlangs.php?" + urllib.parse.urlencode({"id": str(update_id or "").strip()})
+
+
+def _ll_uup_response_body_langs(response) -> list[str]:
+    """Normalize listlangs.php response into lowercase culture tags."""
+    if not isinstance(response, dict):
+        raise RuntimeError("UUP Dump вернул список языков не в виде объекта.")
+    error = str(response.get("error", "") or "").strip()
+    if error:
+        raise RuntimeError(f"Ошибка UUP Dump при получении списка языков: {error}")
+    languages = response.get("langList")
+    if isinstance(languages, dict):
+        languages = list(languages.values())
+    if not isinstance(languages, (list, tuple)):
+        raise RuntimeError("UUP Dump вернул langList в неожиданном формате.")
+    return sorted({
+        str(language).strip().lower()
+        for language in languages
+        if isinstance(language, str) and str(language).strip()
+    })
+
+
+def _ll_uup_is_install_build(item) -> bool:
+    """Reject servicing updates; keep actual versioned Windows installation builds."""
+    if not isinstance(item, dict):
+        return False
+    title = str(item.get("title", "") or "").strip().lower()
+    if not title or "version" not in title:
+        return False
+    if not any(product in title for product in ("windows 10", "windows 11")):
+        return False
+    servicing_markers = (
+        "critical oobe", "oobe update", "security update", "cumulative update",
+        "servicing stack", "dynamic update", "update for microsoft",
+        "update for windows", "enablement package", "hotpatch",
+    )
+    return not any(marker in title for marker in servicing_markers)
+
+
+def _ll_uup_is_unsupported_combination(exc: Exception) -> bool:
+    """UUP Dump uses this HTTP 400 code for UUID/language pairs it cannot generate."""
+    return "UNSUPPORTED_COMBINATION" in str(exc).upper()
+
 # Microsoft IoT Enterprise LTSC releases and their OS build families.
 _LL_UUP_IOT_LTSC_FAMILIES = (
     ("Windows 11 IoT Enterprise LTSC 2024", 26100),
@@ -165,6 +212,7 @@ def _ll_uup_diagnostic_report(fetch_builds) -> str:
                 item for item in builds
                 if _ll_uup_item_build_family(item) == family
                 and _ll_uup_is_client_build(item, family)
+                and _ll_uup_is_install_build(item)
             ]
             architectures = sorted({
                 str(item.get("arch", "")).strip()

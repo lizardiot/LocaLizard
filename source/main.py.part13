@@ -161,23 +161,183 @@ def _ll_packages_for_info(self, info: dict) -> list[Path]:
         items.append(p)
     return sorted({str(p.resolve()).lower():p for p in items}.values(), key=lambda p:(0 if _ll_auto_root(p) is None else 1,str(p).lower()))
 
-def _ll_is_lp(path: Path, architecture: str) -> bool:
-    n = Path(path).name.lower()
-    if Path(path).suffix.lower() != ".cab" or "ru-ru" not in n: return False
-    if not any(t in n for t in ("client-language-pack","client-languagepack","clientlanguagepack","language-pack","languagepack")): return False
-    if any(t in n for t in ("server","winpe","setup","recovery","languagefeatures","local-experience-pack","languageexperiencepack")): return False
+def _ll_is_lp_name(name: str, architecture: str) -> bool:
+    n = Path(str(name)).name.lower()
+    if "ru-ru" not in n: return False
+    if not any(t in n for t in ("client-language-pack", "client-languagepack", "clientlanguagepack", "language-pack", "languagepack")): return False
+    if any(t in n for t in ("server", "winpe", "setup", "recovery", "languagefeatures", "local-experience-pack", "languageexperiencepack")): return False
     arch = _ll_arch_token(architecture)
     if arch == "arm64": return "arm64" in n
-    if arch == "x86": return any(t in n for t in ("_x86_","-x86-","~x86~")) and not any(t in n for t in ("x86_64","x86-64"))
-    return any(t in n for t in ("_x64_","_amd64_","x86_64","amd64","x64"))
+    if arch == "x86": return any(t in n for t in ("_x86_", "-x86-", "~x86~")) and not any(t in n for t in ("x86_64", "x86-64"))
+    return any(t in n for t in ("_x64_", "_amd64_", "x86_64", "amd64", "x64"))
+
+
+def _ll_is_lp(path: Path, architecture: str) -> bool:
+    return Path(path).suffix.lower() == ".cab" and _ll_is_lp_name(Path(path).name, architecture)
+
+
+def _ll_is_lp_esd(path: Path, architecture: str) -> bool:
+    return Path(path).suffix.lower() == ".esd" and _ll_is_lp_name(Path(path).name, architecture)
+
+
+def _ll_sxs_manifest_requires_expansion(path: Path) -> bool:
+    """Return true for Windows component manifests encoded with SxS compression."""
+    try:
+        with Path(path).open("rb") as stream:
+            signature = stream.read(4)
+        return signature in (b"DCN\x01", b"DCM\x01", b"DCS\x01", b"DCD\x01")
+    except OSError:
+        return False
+
+
+def _ll_sxsexp_binary() -> Path | None:
+    """Locate the bundled, pinned x64 SXSEXP helper in source and one-file builds."""
+    roots = []
+    bundle_root = getattr(sys, "_MEIPASS", None)
+    if bundle_root:
+        roots.append(Path(bundle_root))
+    roots.append(Path(__file__).resolve().parent / "tools")
+    for root in roots:
+        for name in ("sxsexp64.exe", "sxsexp.exe"):
+            candidate = root / name
+            if candidate.is_file():
+                return candidate
+    return None
+
+
+def _ll_makecab_ddf(root: Path, cabinet_name: str) -> str:
+    """Build a deterministic DDF for a single LZX cabinet while preserving package paths."""
+    root = Path(root)
+    files = sorted((p for p in root.rglob("*") if p.is_file()), key=lambda p: p.relative_to(root).as_posix().lower())
+    if not files:
+        raise RuntimeError("В распакованном UUP ESD не найдено файлов для создания CAB.")
+    lines = [
+        ".OPTION EXPLICIT",
+        f".Set CabinetNameTemplate={cabinet_name}",
+        ".Set DiskDirectoryTemplate=.",
+        ".Set SourceDir=.",
+        ".Set CompressionType=LZX",
+        ".Set CompressionMemory=21",
+        ".Set Cabinet=ON",
+        ".Set Compress=ON",
+        ".Set UniqueFiles=OFF",
+        ".Set MaxDiskSize=0",
+    ]
+    for path in files:
+        relative = path.relative_to(root).as_posix().replace("/", "\\")
+        if '"' in relative or "\r" in relative or "\n" in relative:
+            raise RuntimeError("Имя файла в UUP ESD содержит неподдерживаемый символ для CAB.")
+        lines.append(f'"{relative}"')
+    return "\r\n".join(lines) + "\r\n"
+
+
+def _ll_expand_uup_esd_to_cab(self, esd_path: Path) -> Path:
+    """Convert a UUP client language-pack ESD into a DISM-installable LZX CAB."""
+    esd_path = Path(esd_path)
+    if not esd_path.is_file() or esd_path.suffix.lower() != ".esd":
+        raise RuntimeError(f"UUP ESD не найден: {esd_path}")
+    existing_cab = esd_path.with_suffix(".cab")
+    if existing_cab.is_file() and _ll_verified_cache(existing_cab):
+        return existing_cab
+    existing_cab.unlink(missing_ok=True)
+
+    sxsexp = _ll_sxsexp_binary()
+    if not sxsexp:
+        raise RuntimeError("Не найден встроенный SXSEXP для преобразования UUP ESD.")
+    windir = Path(os.environ.get("WINDIR", r"C:\Windows"))
+    makecab = shutil.which("makecab.exe") or str(windir / "System32" / "makecab.exe")
+    if not Path(makecab).is_file():
+        raise RuntimeError("В Windows не найден makecab.exe для сборки языкового CAB.")
+
+    work_root = esd_path.parent / "_esd2cab_work"
+    payload = work_root / "payload"
+    tool_dir = work_root / "tool"
+    try:
+        if work_root.exists():
+            shutil.rmtree(work_root, ignore_errors=True)
+        payload.mkdir(parents=True, exist_ok=True)
+        tool_dir.mkdir(parents=True, exist_ok=True)
+        helper_copy = tool_dir / "sxsexp64.exe"
+        shutil.copy2(sxsexp, helper_copy)
+
+        update_compression = windir / "System32" / "UpdateCompression.dll"
+        if update_compression.is_file():
+            quoted = str(update_compression).replace("'", "''")
+            signature_cmd = (
+                "$s=Get-AuthenticodeSignature -LiteralPath '" + quoted + "'; "
+                "if ($s.Status -eq 'Valid' -and $s.SignerCertificate.Subject -match 'Microsoft') { exit 0 }; exit 81"
+            )
+            signature = self.run_cmd(
+                ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", signature_cmd],
+                check=False,
+            )
+            if signature.returncode == 0:
+                shutil.copy2(update_compression, tool_dir / "msdelta.dll")
+                self.log("Для распаковки новых DCM-манифестов используется подписанная Microsoft UpdateCompression.dll.")
+            else:
+                self.log("Подпись UpdateCompression.dll не подтверждена; используется системная MSDelta.")
+
+        self.log(f"UUP ESD: распаковка {esd_path.name} через DISM перед сборкой CAB.")
+        self.run_cmd(
+            [
+                "dism.exe", "/Apply-Image", f"/ImageFile:{esd_path}",
+                "/Index:1", f"/ApplyDir:{payload}", "/CheckIntegrity", "/NoRpFix",
+            ],
+            timeout=7200,
+        )
+
+        expanded_count = 0
+        for manifest in sorted(payload.rglob("*.manifest")):
+            self.check_cancel()
+            if not _ll_sxs_manifest_requires_expansion(manifest):
+                continue
+            expanded = manifest.with_name(manifest.name + ".expanded")
+            result = self.run_cmd(
+                [str(helper_copy), str(manifest), str(expanded)],
+                check=False,
+                timeout=900,
+            )
+            if result.returncode != 0 or not expanded.is_file() or expanded.stat().st_size == 0:
+                expanded.unlink(missing_ok=True)
+                raise RuntimeError(f"SXSEXP не смог распаковать манифест {manifest.name}.")
+            expanded.replace(manifest)
+            expanded_count += 1
+
+        ddf_path = work_root / "language-pack.ddf"
+        ddf_path.write_text(
+            _ll_makecab_ddf(payload, existing_cab.name),
+            encoding="mbcs",
+            newline="",
+        )
+        self.log(
+            f"UUP ESD: обработано манифестов SxS: {expanded_count}; "
+            f"создаётся CAB с {sum(1 for p in payload.rglob('*') if p.is_file())} файлами."
+        )
+        self.run_cmd(
+            [str(makecab), "/F", str(ddf_path), "/L", str(esd_path.parent)],
+            cwd=str(payload),
+            timeout=7200,
+        )
+        if not existing_cab.is_file() or existing_cab.stat().st_size == 0:
+            raise RuntimeError("makecab не создал CAB из UUP ESD.")
+        _ll_record_cache(existing_cab, None, None)
+        self.log(f"UUP ESD успешно преобразован в CAB: {existing_cab.name}.")
+        return existing_cab
+    finally:
+        shutil.rmtree(work_root, ignore_errors=True)
+
 
 def _ll_auto_download(self, info: dict) -> list[Path]:
-    build, arch = self.build_family(info.get("version","")), self.arch_token(info.get("architecture",""))
-    if not build: raise RuntimeError(f"Не удалось определить сборку Windows: {info.get('version')!r}")
+    build, arch = self.build_family(info.get("version", "")), self.arch_token(info.get("architecture", ""))
+    if not build:
+        raise RuntimeError(f"Не удалось определить сборку Windows: {info.get('version')!r}")
     self.cfg.package_root.mkdir(parents=True, exist_ok=True)
-    target = self.cfg.package_root / "auto" / f"{build}_{arch}"; target.mkdir(parents=True, exist_ok=True)
+    target = self.cfg.package_root / "auto" / f"{build}_{arch}"
+    target.mkdir(parents=True, exist_ok=True)
     current = self.packages_for_info(info)
-    if self.locate_ru_lp(info,current): return current
+    if self.locate_ru_lp(info, current):
+        return current
+
     target_key = _ll_uup_build_key(info.get("version", ""))
     terms = []
     if target_key and target_key[1]:
@@ -190,32 +350,32 @@ def _ll_auto_download(self, info: dict) -> list[Path]:
     candidates, seen = [], set()
     for term in terms:
         try:
-            body = self.api_json(UUP_API + "/listid.php?" + urllib.parse.urlencode({"search":term,"sortByDate":"1"}))
+            request_url = UUP_API + "/listid.php?" + urllib.parse.urlencode({"search": term, "sortByDate": "1"})
+            body = self.api_json(request_url)
         except Exception as exc:
             self.log(f"Поиск UUP Dump по ветке {term} не удался: {exc}")
             continue
         for item in _ll_uup_response_body_builds(body):
-            uid = str(item.get("uuid","")).strip()
+            uid = str(item.get("uuid", "")).strip()
             if not uid or uid in seen:
                 continue
             try:
-                if self.arch_token(str(item.get("arch",""))) != arch:
+                if self.arch_token(str(item.get("arch", ""))) != arch:
                     continue
             except RuntimeError:
                 continue
-            title = str(item.get("title","")).lower()
-            if any(x in title for x in ("insider","canary","dev channel","beta channel","flight","preview")):
+            title = str(item.get("title", "")).lower()
+            if any(x in title for x in ("insider", "canary", "dev channel", "beta channel", "flight", "preview")):
                 continue
             family = _ll_uup_item_build_family(item)
             allowed_families = {build} | ({19041} if 19042 <= build <= 19045 else set())
             if family not in allowed_families:
                 continue
-            if not _ll_uup_is_client_build(item, family):
+            if not _ll_uup_is_client_build(item, family) or not _ll_uup_is_install_build(item):
                 continue
             candidate_key = _ll_uup_build_key(item.get("build", ""))
             if not candidate_key:
                 continue
-            item["_ll_family"] = family
             item["_ll_key"] = _ll_version_key(item.get("build", ""))
             item["_ll_exact_build"] = bool(target_key and candidate_key == target_key)
             item["_ll_revision_distance"] = (
@@ -236,58 +396,139 @@ def _ll_auto_download(self, info: dict) -> list[Path]:
     )
     if not candidates:
         raise RuntimeError(
-            f"UUP Dump не нашёл клиентскую сборку Windows {build}/{arch}. "
-            "Серверные обновления и Azure Stack HCI исключены; проверьте донорский ISO или локальный Client LP ru-RU."
+            f"UUP Dump не нашёл подходящую клиентскую сборку Windows {build}/{arch}. "
+            "Записи Server, Azure Stack HCI и отдельные обновления OOBE/LCU исключены."
         )
+
+    candidate_limit = 32
     self.log(
-        f"UUP Dump: отобрано клиентских сборок Windows {build}/{arch}: {len(candidates)}; "
-        f"точное совпадение по ревизии: {sum(1 for item in candidates if item['_ll_exact_build'])}."
+        f"UUP Dump: найдено установочных клиентских сборок Windows {build}/{arch}: {len(candidates)}; "
+        f"точное совпадение по ревизии: {sum(1 for item in candidates if item['_ll_exact_build'])}. "
+        f"Проверяются доступные языки в первых {min(candidate_limit, len(candidates))} кандидатах."
     )
     last = None
     optional_source_found = False
-    for rank, candidate in enumerate(candidates[:8],1):
-        self.check_cancel(); uid = str(candidate["uuid"]); title = str(candidate.get("title",uid))
-        folder = target / f"{rank:02d}-{uid}"; folder.mkdir(parents=True,exist_ok=True)
+    processed = 0
+
+    def obtain_component(name: str, meta: dict, folder: Path) -> Path:
+        filename = Path(str(name).replace("\\", "/")).name
+        path = folder / filename
+        url = str(meta.get("url", ""))
         try:
-            body = self.api_json(UUP_API + "/get.php?" + urllib.parse.urlencode({"id":uid,"lang":"ru-ru"}))
+            expiry = float(meta.get("expire", 0))
+            if expiry > 100000000 and expiry < time.time():
+                raise RuntimeError(f"Ссылка UUP для {filename} уже истекла.")
+        except (ValueError, TypeError):
+            pass
+        if not _ll_trusted_url(url):
+            raise RuntimeError(f"Отклонён URL пакета UUP {filename}.")
+        sha = str(meta.get("sha1", "") or "")
+        size = int(meta["size"]) if str(meta.get("size", "")).isdigit() else None
+        valid = _ll_verified_cache(path)
+        if valid and size is not None and path.stat().st_size != size:
+            valid = False
+        if valid and sha and _ll_hash(path, "sha1") != sha.lower():
+            valid = False
+        if not valid:
+            path.unlink(missing_ok=True)
+            self.download_file(url, path, sha or None, size)
+        if path.suffix.lower() == ".esd":
+            return _ll_expand_uup_esd_to_cab(self, path)
+        return path
+
+    for rank, candidate in enumerate(candidates[:candidate_limit], 1):
+        self.check_cancel()
+        uid = str(candidate["uuid"])
+        title = str(candidate.get("title", uid))
+        folder = target / f"{rank:02d}-{uid}"
+        folder.mkdir(parents=True, exist_ok=True)
+        processed += 1
+        try:
+            try:
+                language_body = self.api_json(_ll_uup_listlangs_url(uid))
+                languages = _ll_uup_response_body_langs(language_body)
+            except Exception as exc:
+                if _ll_uup_is_unsupported_combination(exc):
+                    self.log(f"UUP пропущена запись без поддерживаемого списка языков ru-RU: {title} (UNSUPPORTED_COMBINATION).")
+                    continue
+                last = exc
+                self.log(f"Не удалось проверить языки UUP-записи {title}: {exc}")
+                continue
+            if "ru-ru" not in languages:
+                self.log(f"UUP-запись пропущена: ru-RU отсутствует в списке языков — {title}")
+                continue
+
+            try:
+                body = self.api_json(
+                    UUP_API + "/get.php?" + urllib.parse.urlencode({"id": uid, "lang": "ru-ru"})
+                )
+            except Exception as exc:
+                if _ll_uup_is_unsupported_combination(exc):
+                    self.log(f"UUP пропущена неподдерживаемая комбинация UUID/ru-RU: {title} (UNSUPPORTED_COMBINATION).")
+                    continue
+                raise
+
             base, optional = [], []
             for name, meta in _ll_uup_response_body_files(body):
                 low = str(name).lower()
-                if not low.endswith(".cab") or "ru-ru" not in low: continue
-                if _ll_is_lp(Path(name.replace("\\","/")).name,arch): base.append((str(name),meta))
-                elif any(t in low for t in ("languagefeatures-basic","languagefeatures-ocr","languagefeatures-speech","languagefeatures-texttospeech","languagefeatures-text-to-speech","languagefeatures-handwriting")): optional.append((str(name),meta))
-            base.sort(key=lambda x:(0 if "client-language-pack" in x[0].lower() else 1,x[0].lower()))
-            if not base: self.log(f"В UUP-записи нет базового Client LP: {title}"); continue
-            name, meta = base[0]; url = str(meta.get("url",""))
-            try:
-                expiry = float(meta.get("expire",0))
-                if expiry > 100000000 and expiry < time.time(): self.log(f"Просроченная ссылка: {Path(name).name}"); continue
-            except (ValueError,TypeError): pass
-            if not _ll_trusted_url(url): self.log(f"Отклонён URL базового CAB записи {title}"); continue
-            path = folder / Path(name.replace("\\","/")).name
-            sha = str(meta.get("sha1","") or ""); size = int(meta["size"]) if str(meta.get("size","")).isdigit() else None
-            valid = _ll_verified_cache(path)
-            if valid and size is not None and path.stat().st_size != size: valid = False
-            if valid and sha and _ll_hash(path,"sha1") != sha.lower(): valid = False
-            if not valid: path.unlink(missing_ok=True); self.download_file(url,path,sha or None,size)
+                suffix = Path(low).suffix
+                if "ru-ru" not in low or suffix not in (".cab", ".esd"):
+                    continue
+                basename = Path(str(name).replace("\\", "/")).name
+                if _ll_is_lp(basename, arch) or _ll_is_lp_esd(basename, arch):
+                    base.append((str(name), meta))
+                elif any(token in low for token in (
+                    "languagefeatures-basic", "languagefeatures-ocr", "languagefeatures-speech",
+                    "languagefeatures-texttospeech", "languagefeatures-text-to-speech",
+                    "languagefeatures-handwriting",
+                )):
+                    optional.append((str(name), meta))
+
+            base.sort(key=lambda item: (
+                0 if Path(item[0]).suffix.lower() == ".cab" else 1,
+                0 if "client-language-pack" in item[0].lower() else 1,
+                item[0].lower(),
+            ))
+            if not base:
+                self.log(f"В UUP-записи не найден базовый Client LP ru-RU в CAB/ESD: {title}")
+                continue
+
+            base_ready = False
+            for name, meta in base:
+                try:
+                    package_path = obtain_component(name, meta, folder)
+                    if package_path.suffix.lower() != ".cab" or not _ll_is_lp(package_path, arch):
+                        continue
+                    base_ready = True
+                    break
+                except Exception as exc:
+                    last = exc
+                    self.log(f"Базовый LP из записи {title} не удалось подготовить ({Path(name).name}): {exc}")
+            if not base_ready:
+                continue
+
             if not optional_source_found and optional:
                 for oname, ometa in optional:
-                    ourl = str(ometa.get("url",""))
-                    if not _ll_trusted_url(ourl): continue
-                    opath = folder / Path(oname.replace("\\","/")).name
-                    osha = str(ometa.get("sha1","") or ""); osize = int(ometa["size"]) if str(ometa.get("size","")).isdigit() else None
-                    ok = _ll_verified_cache(opath)
-                    if ok and osize is not None and opath.stat().st_size != osize: ok = False
-                    if ok and osha and _ll_hash(opath,"sha1") != osha.lower(): ok = False
                     try:
-                        if not ok:
-                            opath.unlink(missing_ok=True)
-                            self.download_file(ourl,opath,osha or None,osize)
+                        obtain_component(oname, ometa, folder)
                         optional_source_found = True
-                    except Exception as exc: self.log(f"Не удалось скачать optional CAB {opath.name}: {exc}")
-        except Exception as exc: last = exc; self.log(f"Кандидат UUP {title} не подошёл: {exc}")
+                    except Exception as exc:
+                        self.log(f"Не удалось подготовить optional CAB {Path(oname).name}: {exc}")
+
+            self.log(f"UUP Dump: Client Language Pack ru-RU получен из записи {title}.")
+            break
+        except Exception as exc:
+            last = exc
+            self.log(f"Кандидат UUP {title} не подошёл: {exc}")
+
     result = self.packages_for_info(info)
-    if not self.locate_ru_lp(info,result): raise RuntimeError(f"Не найден проверенный Client Language Pack ru-RU: {last or 'подходящий CAB отсутствует'}.")
+    if not self.locate_ru_lp(info, result):
+        details = f" Последняя ошибка: {last}" if last else ""
+        raise RuntimeError(
+            f"Не найден проверенный Client Language Pack ru-RU: проверено установочных кандидатов UUP — {processed}; "
+            "перед получением файлов проверялись доступные языки, а пакеты ESD преобразовывались в CAB. "
+            "Подберите совместимый донорский ISO или отдельный пакет ru-RU." + details
+        )
     return result
 
 def _ll_run_cmd(self, args: list[str], *, check=True, timeout=None, cwd=None, respect_cancel=True) -> subprocess.CompletedProcess:

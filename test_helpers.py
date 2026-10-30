@@ -602,5 +602,87 @@ ServicePack Build : 0
 
 
 
+    def test_uup_listlangs_url_and_language_response(self):
+        url = main._ll_uup_listlangs_url("12345678-abcd")
+        parsed = main.urllib.parse.urlparse(url)
+        self.assertEqual(parsed.path, "/listlangs.php")
+        self.assertEqual(main.urllib.parse.parse_qs(parsed.query), {"id": ["12345678-abcd"]})
+        self.assertEqual(
+            main._ll_uup_response_body_langs({"langList": ["en-us", "ru-RU", "de-de"]}),
+            ["de-de", "en-us", "ru-ru"],
+        )
+        self.assertEqual(
+            main._ll_uup_response_body_langs({"langList": {"0": "ru-RU", "1": "en-US"}}),
+            ["en-us", "ru-ru"],
+        )
+        with self.assertRaisesRegex(RuntimeError, "langList"):
+            main._ll_uup_response_body_langs({"languages": ["ru-ru"]})
+
+    def test_uup_install_build_filter_rejects_servicing_and_oobe_updates(self):
+        self.assertTrue(main._ll_uup_is_install_build({
+            "title": "Windows 11, version 24H2 (26100.1742) amd64"
+        }))
+        self.assertTrue(main._ll_uup_is_install_build({
+            "title": "Feature update to Windows 10, version 21H2 (19044.1) amd64"
+        }))
+        for title in (
+            "Critical OOBE Update for Windows 11 - KB5128942 (26100.9544)",
+            "Security Update for Windows 11, version 24H2 (26100.9544)",
+            "Cumulative Update for Windows 11, version 24H2 (26100.9544)",
+            "Update for Microsoft server operating system (26100.33674)",
+            "Windows 11 servicing stack (26100.9000)",
+        ):
+            self.assertFalse(main._ll_uup_is_install_build({"title": title}))
+        self.assertTrue(main._ll_uup_is_unsupported_combination(
+            RuntimeError("UUP Dump API вернул HTTP 400: UNSUPPORTED_COMBINATION")
+        ))
+
+    def test_uup_client_language_pack_esd_is_recognized_for_conversion(self):
+        self.assertTrue(main._ll_is_lp_esd(
+            Path("Microsoft-Windows-Client-LanguagePack-Package_ru-ru~31bf3856ad364e35~amd64~ru-ru~.esd"),
+            "x64",
+        ))
+        self.assertFalse(main._ll_is_lp_esd(
+            Path("Microsoft-Windows-Client-LanguagePack-Package_ru-ru~31bf3856ad364e35~arm64~ru-ru~.esd"),
+            "x64",
+        ))
+        self.assertFalse(main._ll_is_lp_esd(
+            Path("Microsoft-Windows-Server-LanguagePack-Package_ru-ru~31bf3856ad364e35~amd64~ru-ru~.esd"),
+            "x64",
+        ))
+        self.assertTrue(main._ll_is_lp(
+            Path("Microsoft-Windows-Client-LanguagePack-Package_ru-ru~31bf3856ad364e35~amd64~ru-ru~.cab"),
+            "x64",
+        ))
+
+    def test_sxs_manifest_compression_signatures_are_detected(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            for signature in (b"DCN\x01", b"DCM\x01", b"DCS\x01", b"DCD\x01"):
+                manifest = root / (signature[:3].decode("ascii") + ".manifest")
+                manifest.write_bytes(signature + b"payload")
+                self.assertTrue(main._ll_sxs_manifest_requires_expansion(manifest))
+            plain = root / "plain.manifest"
+            plain.write_text("<?xml version='1.0'?>", encoding="utf-8")
+            self.assertFalse(main._ll_sxs_manifest_requires_expansion(plain))
+
+    def test_makecab_ddf_preserves_paths_and_uses_lzx(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td) / "payload"
+            nested = root / "nested"
+            nested.mkdir(parents=True)
+            (root / "update.mum").write_text("mum", encoding="ascii")
+            (nested / "package.manifest").write_text("manifest", encoding="ascii")
+            ddf = main._ll_makecab_ddf(root, "Client-LP.cab")
+            self.assertIn(".Set CabinetNameTemplate=Client-LP.cab", ddf)
+            self.assertIn(".Set SourceDir=.", ddf)
+            self.assertIn(".Set CompressionType=LZX", ddf)
+            self.assertIn(".Set CompressionMemory=21", ddf)
+            self.assertIn('"update.mum"', ddf)
+            self.assertIn('"nested\\package.manifest"', ddf)
+            self.assertEqual(ddf, main._ll_makecab_ddf(root, "Client-LP.cab"))
+
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
