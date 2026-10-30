@@ -144,10 +144,10 @@ var uupEsd = new UupDumpClient.UupFile(
 Check(UupDumpClient.IsClientLp(uupEsd, "x64"), "UUP Dump recognizes Client Language Pack ESD");
 Check(!UupDumpClient.IsClientLp(uupEsd, "arm64"), "UUP Dump rejects wrong-architecture Client Language Pack ESD");
 Check(WindowsImageService.IsClientLp(
-    @"C:\\cache\\auto\\26100_x64\\Microsoft-Windows-Client-LanguagePack-Package_ru-ru~amd64~_extracted\\update.mum",
+    @"C:\cache\auto\26100_x64\Microsoft-Windows-Client-LanguagePack-Package_ru-ru~amd64~_extracted\update.mum",
     "x64"), "Client Language Pack update.mum inherits architecture from package identity");
 Check(!WindowsImageService.IsClientLp(
-    @"C:\\cache\\auto\\26100_x64\\Microsoft-Windows-Client-LanguagePack-Package_ru-ru~arm64~_extracted\\update.mum",
+    @"C:\cache\auto\26100_x64\Microsoft-Windows-Client-LanguagePack-Package_ru-ru~arm64~_extracted\update.mum",
     "x64"), "Client Language Pack update.mum rejects wrong architecture");
 var uupServer = JsonDocument.Parse("""{"title":"Update for Microsoft server operating system (26100.33674)","build":"10.0.26100.33674","arch":"amd64"}""");
 Check(!UupDumpClient.CandidateMatches(uupServer.RootElement, 26100, "x64"),
