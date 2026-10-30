@@ -16,14 +16,20 @@ public sealed class MainForm : Form
     private readonly Button start = new() { Text = "Проверить условия и создать ISO", AutoSize = true };
     private readonly Button cancel = new() { Text = "Отменить", AutoSize = true, Enabled = false };
     private readonly CheckBox keep = new() { Text = "Сохранять рабочие файлы для диагностики", Checked = true, AutoSize = true };
+    private readonly CheckBox setup = new() { Text = "Локализовать Setup / WinPE", Checked = true, AutoSize = true };
+    private readonly CheckBox split = new() { Text = "Разбить install.wim на SWM (FAT32)", AutoSize = true };
+    private readonly CheckBox hyperv = new() { Text = "Проверить ISO в Hyper-V (120 секунд)", AutoSize = true };
+    private readonly Button patch = new() { Text = "Обработать существующий WIM…", AutoSize = true };
     private CancellationTokenSource? cancellation;
 
     public MainForm()
     {
         Text = $"LocaLizard {AppInfo.Version}";
-        Width = 1020; Height = 780; MinimumSize = new Size(820, 620);
+        Width = 1060; Height = 840; MinimumSize = new Size(860, 680);
         StartPosition = FormStartPosition.CenterScreen;
         BuildUi();
+        Load += (_, _) => LoadSettings();
+        FormClosing += (_, _) => SaveSettings();
         AllowDrop = true;
         DragEnter += (_, e) => e.Effect = e.Data?.GetDataPresent(DataFormats.FileDrop) == true ? DragDropEffects.Copy : DragDropEffects.None;
         DragDrop += (_, e) =>
@@ -38,7 +44,7 @@ public sealed class MainForm : Form
 
     private void BuildUi()
     {
-        var root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(12), ColumnCount = 1, RowCount = 5, AutoScroll = true };
+        var root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(12), ColumnCount = 1, RowCount = 6, AutoScroll = true };
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -67,13 +73,16 @@ public sealed class MainForm : Form
 
         var options = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(0, 8, 0, 8) };
         options.Controls.Add(keep);
+        options.Controls.Add(setup);
+        options.Controls.Add(split);
+        options.Controls.Add(hyperv);
         root.Controls.Add(options);
 
         root.Controls.Add(new Label
         {
-            AutoSize = true, MaximumSize = new Size(940, 0), ForeColor = Color.DarkGoldenrod,
-            Text = "C# preview: базовая локализация install.wim, поиск языкового пакета через UUP Dump, обновления с SHA-256 и проверка результата. " +
-                   "Setup/WinPE, WinRE, split-WIM и интерактивный Hyper-V тест пока доступны в сохранённой Python-версии."
+            AutoSize = true, MaximumSize = new Size(980, 0), ForeColor = Color.DarkSlateGray,
+            Text = "Setup/WinPE и WinRE используют официальные ресурсы Windows ADK / WinPE Add-on или совместимый русский ISO-донор. " +
+                   "Разделение SWM создаёт части до 3800 MiB. Hyper-V проверка отключает сеть; оператор вручную подтверждает экран Windows Setup."
         });
 
         log.Dock = DockStyle.Fill; log.ReadOnly = true; log.Font = new Font("Consolas", 9);
@@ -81,8 +90,9 @@ public sealed class MainForm : Form
 
         var footer = new FlowLayoutPanel { Dock = DockStyle.Bottom, AutoSize = true };
         start.Click += async (_, _) => await StartAsync();
+        patch.Click += async (_, _) => await PatchExistingWimAsync();
         cancel.Click += (_, _) => cancellation?.Cancel();
-        footer.Controls.Add(start); footer.Controls.Add(cancel);
+        footer.Controls.Add(start); footer.Controls.Add(patch); footer.Controls.Add(cancel);
         status.Padding = new Padding(10, 8, 0, 0);
         footer.Controls.Add(status);
         root.Controls.Add(footer);
@@ -139,23 +149,15 @@ public sealed class MainForm : Form
             return;
         }
 
-        var options = new RunOptions
-        {
-            SourceIso = source.Text.Trim(),
-            DonorIso = string.IsNullOrWhiteSpace(donor.Text) ? null : donor.Text.Trim(),
-            OutputIso = output.Text.Trim(),
-            WorkDirectory = work.Text.Trim(),
-            PackageDirectory = packages.Text.Trim(),
-            FodDirectory = string.IsNullOrWhiteSpace(fod.Text) ? null : fod.Text.Trim(),
-            UpdatesDirectory = string.IsNullOrWhiteSpace(updates.Text) ? null : updates.Text.Trim(),
-            KeepWorkFiles = keep.Checked
-        };
+        var options = CurrentOptions();
         if (MessageBox.Show(this, "Исходный ISO не изменяется. Для DISM и монтирования ISO нужны права администратора. Продолжить?",
                 AppInfo.Name, MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
 
         cancellation = new CancellationTokenSource();
-        start.Enabled = false; cancel.Enabled = true; log.Clear();
+        start.Enabled = false; patch.Enabled = false; cancel.Enabled = true; log.Clear();
+        SaveSettings();
         var service = new IsoBuildService();
+        service.ConfirmHyperVSetup = ConfirmHyperVSetupAsync;
         service.Log += AppendLog;
         service.Status += message => { if (!IsDisposed) BeginInvoke((Action)(() => status.Text = message)); };
         try
@@ -178,7 +180,111 @@ public sealed class MainForm : Form
         finally
         {
             cancellation.Dispose(); cancellation = null;
-            start.Enabled = true; cancel.Enabled = false;
+            start.Enabled = true; patch.Enabled = true; cancel.Enabled = false;
+        }
+    }
+
+    private RunOptions CurrentOptions() => new()
+    {
+        SourceIso = source.Text.Trim(),
+        DonorIso = string.IsNullOrWhiteSpace(donor.Text) ? null : donor.Text.Trim(),
+        OutputIso = output.Text.Trim(),
+        WorkDirectory = work.Text.Trim(),
+        PackageDirectory = packages.Text.Trim(),
+        FodDirectory = string.IsNullOrWhiteSpace(fod.Text) ? null : fod.Text.Trim(),
+        UpdatesDirectory = string.IsNullOrWhiteSpace(updates.Text) ? null : updates.Text.Trim(),
+        KeepWorkFiles = keep.Checked,
+        ProcessSetup = setup.Checked,
+        SplitWim = split.Checked,
+        RunHyperVTest = hyperv.Checked
+    };
+
+    private void LoadSettings()
+    {
+        var saved = SettingsStore.Load();
+        if (!string.IsNullOrWhiteSpace(saved.SourceIso)) source.Text = saved.SourceIso;
+        if (!string.IsNullOrWhiteSpace(saved.DonorIso)) donor.Text = saved.DonorIso;
+        if (!string.IsNullOrWhiteSpace(saved.OutputIso)) output.Text = saved.OutputIso;
+        if (!string.IsNullOrWhiteSpace(saved.WorkRoot)) work.Text = saved.WorkRoot;
+        if (!string.IsNullOrWhiteSpace(saved.PackageRoot)) packages.Text = saved.PackageRoot;
+        if (!string.IsNullOrWhiteSpace(saved.FodSource)) fod.Text = saved.FodSource;
+        if (!string.IsNullOrWhiteSpace(saved.UpdatesRoot)) updates.Text = saved.UpdatesRoot;
+        keep.Checked = saved.KeepWorkFiles;
+        setup.Checked = saved.ProcessSetup;
+        split.Checked = saved.SplitWim;
+        hyperv.Checked = saved.RunHyperVTest;
+    }
+
+    private void SaveSettings()
+    {
+        try
+        {
+            SettingsStore.Save(new AppSettings
+            {
+                SourceIso = source.Text.Trim(),
+                DonorIso = donor.Text.Trim(),
+                OutputIso = output.Text.Trim(),
+                WorkRoot = work.Text.Trim(),
+                PackageRoot = packages.Text.Trim(),
+                FodSource = fod.Text.Trim(),
+                UpdatesRoot = updates.Text.Trim(),
+                KeepWorkFiles = keep.Checked,
+                ProcessSetup = setup.Checked,
+                SplitWim = split.Checked,
+                RunHyperVTest = hyperv.Checked
+            });
+        }
+        catch (Exception ex) { AppendLog("Не удалось сохранить настройки: " + ex.Message); }
+    }
+
+    private Task<bool> ConfirmHyperVSetupAsync(string vmName)
+    {
+        var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        BeginInvoke((Action)(() =>
+        {
+            var answer = MessageBox.Show(this,
+                $"Окно VMConnect открыто для виртуальной машины {vmName}. Видите экран Windows Setup?\\n\\nДа — подтвердить визуальную загрузку. Нет — оставить результат неподтверждённым.",
+                AppInfo.Name, MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+            completion.TrySetResult(answer == DialogResult.Yes);
+        }));
+        return completion.Task;
+    }
+
+    private async Task PatchExistingWimAsync()
+    {
+        if (cancellation is not null) return;
+        using var sourceDialog = new OpenFileDialog { Filter = "Windows image (*.wim)|*.wim", Title = "Выберите исходный WIM" };
+        if (sourceDialog.ShowDialog(this) != DialogResult.OK) return;
+        using var outputDialog = new SaveFileDialog
+        {
+            Filter = "Windows image (*.wim)|*.wim", DefaultExt = "wim",
+            FileName = Path.GetFileNameWithoutExtension(sourceDialog.FileName) + "_ru-RU.wim",
+            Title = "Сохранить обработанный WIM"
+        };
+        if (outputDialog.ShowDialog(this) != DialogResult.OK) return;
+        if (MessageBox.Show(this, "Исходный WIM не изменяется. Будет создана и проверена его рабочая копия. Продолжить?",
+                AppInfo.Name, MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+
+        cancellation = new CancellationTokenSource();
+        start.Enabled = false; patch.Enabled = false; cancel.Enabled = true; log.Clear();
+        SaveSettings();
+        var service = new IsoBuildService();
+        service.Log += AppendLog;
+        service.Status += message => { if (!IsDisposed) BeginInvoke((Action)(() => status.Text = message)); };
+        try
+        {
+            var result = await Task.Run(() => service.PatchExistingWimAsync(sourceDialog.FileName, outputDialog.FileName,
+                CurrentOptions(), cancellation.Token));
+            AppendLog("Создан WIM: " + result);
+            MessageBox.Show(this, "Обработанный WIM создан и повторно проверен:" + Environment.NewLine + result,
+                AppInfo.Name, MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        catch (OperationCanceledException) { AppendLog("Обработка WIM отменена."); }
+        catch (Exception ex) { AppendLog("ОШИБКА: " + ex); MessageBox.Show(this, ex.Message, AppInfo.Name, MessageBoxButtons.OK, MessageBoxIcon.Error); }
+        finally
+        {
+            cancellation.Dispose(); cancellation = null;
+            start.Enabled = true; patch.Enabled = true; cancel.Enabled = false;
         }
     }
 
