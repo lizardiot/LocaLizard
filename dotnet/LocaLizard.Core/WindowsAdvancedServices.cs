@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Security.Principal;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 
 namespace LocaLizard.Core;
@@ -11,17 +12,17 @@ public sealed record HyperVTestResult(string Status, bool VisualSetupConfirmed, 
 
 public sealed record AppSettings
 {
-    public string SourceIso { get; init; } = "";
-    public string DonorIso { get; init; } = "";
-    public string OutputIso { get; init; } = "";
-    public string WorkRoot { get; init; } = "";
-    public string PackageRoot { get; init; } = "";
-    public string FodSource { get; init; } = "";
-    public string UpdatesRoot { get; init; } = "";
-    public bool KeepWorkFiles { get; init; } = true;
-    public bool ProcessSetup { get; init; } = true;
-    public bool SplitWim { get; init; }
-    public bool RunHyperVTest { get; init; }
+    [JsonPropertyName("source_iso")] public string SourceIso { get; init; } = "";
+    [JsonPropertyName("donor_iso")] public string DonorIso { get; init; } = "";
+    [JsonPropertyName("output_iso")] public string OutputIso { get; init; } = "";
+    [JsonPropertyName("work_root")] public string WorkRoot { get; init; } = "";
+    [JsonPropertyName("package_root")] public string PackageRoot { get; init; } = "";
+    [JsonPropertyName("fod_source")] public string FodSource { get; init; } = "";
+    [JsonPropertyName("updates_root")] public string UpdatesRoot { get; init; } = "";
+    [JsonPropertyName("keep_work")] public bool KeepWorkFiles { get; init; } = true;
+    [JsonPropertyName("process_setup")] public bool ProcessSetup { get; init; } = true;
+    [JsonPropertyName("split_wim")] public bool SplitWim { get; init; }
+    [JsonPropertyName("vm_test")] public bool RunHyperVTest { get; init; }
 }
 
 public static class SettingsStore
