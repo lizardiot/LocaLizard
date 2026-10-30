@@ -308,7 +308,8 @@ public sealed class WinReService(ProcessRunner runner, AdkBootstrapper adk)
             try { peDir = await _adk.EnsureWinPeAddonAsync(arch, ct, log); }
             catch (Exception ex) { log?.Invoke("WinPE Add-on недоступен: " + ex.Message); }
         }
-        if (peDir is null) return new LocalizationStep("language_resources_missing");
+        if (peDir is null || !File.Exists(Path.Combine(peDir, "lp.cab")))
+            return new LocalizationStep("language_resources_missing", peDir);
         var mount = Path.Combine(Path.GetTempPath(), "LocaLizard_WinRE_" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(mount);
         var mounted = false;
@@ -322,7 +323,6 @@ public sealed class WinReService(ProcessRunner runner, AdkBootstrapper adk)
             var inventory = await _runner.RunAsync("dism.exe", [$"/Image:{mount}", "/Get-Packages", "/Format:Table"],
                 cancellationToken: ct, throwOnError: false, timeout: TimeSpan.FromMinutes(10));
             var baseLp = Path.Combine(peDir, "lp.cab");
-            if (!File.Exists(baseLp)) return new LocalizationStep("language_resources_missing", peDir);
             await _runner.RunAsync("dism.exe", [$"/Image:{mount}", "/Add-Package", $"/PackagePath:{baseLp}", "/NoRestart"],
                 cancellationToken: ct, timeout: TimeSpan.FromMinutes(60));
             applied.Add(Path.GetFileName(baseLp));
@@ -346,12 +346,13 @@ public sealed class WinReService(ProcessRunner runner, AdkBootstrapper adk)
             log?.Invoke($"WinRE локализован: {applied.Count} CAB-пакетов.");
             return new LocalizationStep("localized", peDir, applied);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex)
         {
-            log?.Invoke("WinRE не удалось локализовать; вложенный образ будет откачен: " + ex.Message);
             if (mounted)
                 await _runner.RunAsync("dism.exe", ["/Unmount-Image", $"/MountDir:{mount}", "/Discard"],
                     cancellationToken: CancellationToken.None, throwOnError: false, timeout: TimeSpan.FromMinutes(20));
+            if (ex is OperationCanceledException) throw;
+            log?.Invoke("WinRE не удалось локализовать; вложенный образ будет откачен: " + ex.Message);
             return new LocalizationStep("failed", peDir, applied, ex.Message);
         }
         finally
@@ -414,8 +415,12 @@ public sealed class SetupLocalizationService(ProcessRunner runner, WindowsImageS
         var boot = Path.Combine(media, "sources", "boot.wim");
         var install = Path.Combine(media, "sources", "install.wim");
         if (!File.Exists(boot) || !File.Exists(install)) return new LocalizationStep("boot_or_install_missing");
-        var peDir = await _adk.EnsureWinPeAddonAsync(architecture, ct, log);
-        if (peDir is null) return new LocalizationStep("language_resources_missing");
+        string? peDir = null;
+        try { peDir = await _adk.EnsureWinPeAddonAsync(architecture, ct, log); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            log?.Invoke("Официальный WinPE Add-on недоступен; использую CAB из ISO-донора: " + ex.Message);
+        }
         var donor = (donorSetupPackages ?? []).Where(File.Exists)
             .Select(path => (Name: Path.GetFileName(path), Path: path))
             .Where(item => !string.IsNullOrWhiteSpace(item.Name))
@@ -423,8 +428,8 @@ public sealed class SetupLocalizationService(ProcessRunner runner, WindowsImageS
             .ToDictionary(group => group.Key, group => group.First().Path, StringComparer.OrdinalIgnoreCase);
         string? Package(string name)
         {
-            var local = Path.Combine(peDir, name);
-            if (File.Exists(local)) return local;
+            var local = peDir is null ? null : Path.Combine(peDir, name);
+            if (local is not null && File.Exists(local)) return local;
             return donor.TryGetValue(name, out var found) ? found : null;
         }
         var baseLp = Package("lp.cab");
@@ -457,7 +462,7 @@ public sealed class SetupLocalizationService(ProcessRunner runner, WindowsImageS
                 if (index == 2) required.AddRange([setup, client]);
                 else
                 {
-                    foreach (var candidate in Directory.EnumerateFiles(peDir, "*_ru-ru.cab")
+                    foreach (var candidate in (peDir is null ? [] : Directory.EnumerateFiles(peDir, "*_ru-ru.cab"))
                                  .OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
                     {
                         var file = Path.GetFileName(candidate);
@@ -490,7 +495,7 @@ public sealed class SetupLocalizationService(ProcessRunner runner, WindowsImageS
                     await _runner.RunAsync("dism.exe", ["/Unmount-Image", $"/MountDir:{mount}", "/Discard"],
                         cancellationToken: CancellationToken.None, throwOnError: false, timeout: TimeSpan.FromMinutes(20));
                 if (index == 2) throw;
-                throw;
+                log?.Invoke("WinPE index 1 пропущен после ошибки; Setup index 2 остаётся обработанным.");
             }
             finally { try { if (Directory.Exists(mount)) Directory.Delete(mount, true); } catch { } }
         }
