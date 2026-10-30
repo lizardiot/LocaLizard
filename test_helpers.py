@@ -254,10 +254,14 @@ ServicePack Build : 0
                 )
             self.assertEqual(target.read_bytes(), payload)
 
-    def test_uup_downloader_requires_https_after_redirect(self):
+    def test_uup_downloader_accepts_exact_microsoft_http_cdn_final_url_with_integrity(self):
+        payload = b"microsoft-cdn-http-final"
+        final_url = "http://tlu.dl.delivery.mp.microsoft.com/filestreamingservice/files/example.esd"
+
         class FakeResponse:
             status = 200
-            headers = {}
+            headers = {"Content-Length": str(len(payload))}
+            _read = False
 
             def __enter__(self):
                 return self
@@ -266,19 +270,92 @@ ServicePack Build : 0
                 return False
 
             def geturl(self):
-                return "http://dl.delivery.mp.microsoft.com/filestreamingservice/files/example.esd"
+                return final_url
+
+            def read(self, _size=-1):
+                if self._read:
+                    return b""
+                self._read = True
+                return payload
 
         with tempfile.TemporaryDirectory() as td:
             worker = main.Worker(queue.Queue(), threading.Event(), None)
             target = Path(td) / "package.esd"
             with patch.object(main.urllib.request, "urlopen", return_value=FakeResponse()):
-                with self.assertRaisesRegex(RuntimeError, "Конечный URL загрузки"):
+                worker.download_file(
+                    "http://dl.delivery.mp.microsoft.com/filestreamingservice/files/example.esd",
+                    target,
+                    main.hashlib.sha1(payload).hexdigest(),
+                    len(payload),
+                )
+            self.assertEqual(target.read_bytes(), payload)
+
+    def test_uup_downloader_rejects_http_cdn_final_url_without_integrity_metadata(self):
+        class FakeResponse:
+            status = 200
+            headers = {}
+            read_called = False
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def geturl(self):
+                return "http://tlu.dl.delivery.mp.microsoft.com/filestreamingservice/files/example.esd"
+
+            def read(self, _size=-1):
+                self.read_called = True
+                raise AssertionError("HTTP CDN response must be rejected before reading content")
+
+        with tempfile.TemporaryDirectory() as td:
+            worker = main.Worker(queue.Queue(), threading.Event(), None)
+            target = Path(td) / "package.esd"
+            response = FakeResponse()
+            with patch.object(main.urllib.request, "urlopen", return_value=response):
+                with self.assertRaisesRegex(RuntimeError, "HTTP-ответ Microsoft CDN"):
                     worker.download_file(
                         "http://dl.delivery.mp.microsoft.com/filestreamingservice/files/example.esd",
                         target,
                         None,
                         None,
                     )
+            self.assertFalse(response.read_called)
+            self.assertFalse(target.exists())
+
+    def test_uup_downloader_rejects_untrusted_http_redirect_before_reading(self):
+        class FakeResponse:
+            status = 200
+            headers = {}
+            read_called = False
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def geturl(self):
+                return "http://delivery.evil.example/filestreamingservice/files/example.esd"
+
+            def read(self, _size=-1):
+                self.read_called = True
+                raise AssertionError("Untrusted redirect must be rejected before reading content")
+
+        with tempfile.TemporaryDirectory() as td:
+            worker = main.Worker(queue.Queue(), threading.Event(), None)
+            target = Path(td) / "package.esd"
+            response = FakeResponse()
+            with patch.object(main.urllib.request, "urlopen", return_value=response):
+                with self.assertRaisesRegex(RuntimeError, "Конечный URL загрузки"):
+                    worker.download_file(
+                        "http://dl.delivery.mp.microsoft.com/filestreamingservice/files/example.esd",
+                        target,
+                        "a" * 40,
+                        1234,
+                    )
+            self.assertFalse(response.read_called)
             self.assertFalse(target.exists())
 
     def test_managed_cache_manifest_and_tamper_detection(self):
@@ -736,6 +813,61 @@ ServicePack Build : 0
             Path("Microsoft-Windows-Client-LanguagePack-Package_ru-ru~31bf3856ad364e35~amd64~ru-ru~.cab"),
             "x64",
         ))
+
+    def test_uup_client_language_pack_update_mum_is_classified_and_discovered(self):
+        with tempfile.TemporaryDirectory() as td:
+            package_root = Path(td) / "Packages"
+            candidate = package_root / "auto" / "26100_x64" / "01-candidate"
+            esd = candidate / (
+                "Microsoft-Windows-Client-LanguagePack-Package_ru-ru"
+                "~31bf3856ad364e35~amd64~ru-ru~.esd"
+            )
+            esd.parent.mkdir(parents=True)
+            esd.write_bytes(b"verified-test-esd")
+
+            worker = main.Worker(queue.Queue(), threading.Event(), None)
+            worker.cfg = type("Config", (), {"package_root": package_root})()
+
+            def fake_apply_image(args, **kwargs):
+                apply_dir_arg = next(arg for arg in args if str(arg).startswith("/ApplyDir:"))
+                apply_dir = Path(str(apply_dir_arg).split(":", 1)[1])
+                apply_dir.mkdir(parents=True, exist_ok=True)
+                (apply_dir / "update.mum").write_text(
+                    '<?xml version="1.0"?><assembly><assemblyIdentity '
+                    'name="Microsoft-Windows-Client-LanguagePack-Package" '
+                    'processorArchitecture="amd64" language="ru-RU"/>'
+                    '</assembly>',
+                    encoding="utf-8",
+                )
+                (apply_dir / "payload.bin").write_bytes(b"payload")
+                return main.subprocess.CompletedProcess(args, 0, "", "")
+
+            with patch.object(worker, "run_cmd", side_effect=fake_apply_image) as run_cmd:
+                update_mum = main._ll_extract_uup_esd_to_mum(worker, esd)
+
+            self.assertEqual(update_mum.name, "update.mum")
+            self.assertTrue(main._ll_is_lp(update_mum, "x64"))
+            self.assertTrue(main._ll_verified_cache(update_mum))
+            run_cmd.assert_called_once()
+            self.assertIn("/Apply-Image", run_cmd.call_args.args[0])
+            self.assertIn("/Index:1", run_cmd.call_args.args[0])
+
+            packages = worker.packages_for_info({
+                "version": "10.0.26100.1742",
+                "architecture": "x64",
+            })
+            self.assertIn(update_mum, packages)
+            self.assertEqual(
+                worker.locate_ru_lp(
+                    {"version": "10.0.26100.1742", "architecture": "x64"},
+                    packages,
+                ),
+                update_mum,
+            )
+
+            with patch.object(worker, "run_cmd") as cached_run:
+                self.assertEqual(main._ll_extract_uup_esd_to_mum(worker, esd), update_mum)
+                cached_run.assert_not_called()
 
     def test_sxs_manifest_compression_signatures_are_detected(self):
         with tempfile.TemporaryDirectory() as td:

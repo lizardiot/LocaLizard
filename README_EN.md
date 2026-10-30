@@ -1,4 +1,4 @@
-# LocaLizard 0.1.1.1
+# LocaLizard 0.1.1.3
 
 **LocaLizard** is a graphical utility for preparing Windows IoT Enterprise LTSC installation media with Russian as the default language.
 
@@ -6,9 +6,11 @@
 
 - [Latest LocaLizard release](https://github.com/lizardiot/LocaLizard/releases/latest)
 - [All releases](https://github.com/lizardiot/LocaLizard/releases)
-- [LocaLizard.exe for Windows x64 — version 0.1.1.1](https://github.com/lizardiot/LocaLizard/releases/download/0.1.1.1/LocaLizard.exe)
+- [LocaLizard.exe for Windows x64 — version 0.1.1.3](https://github.com/lizardiot/LocaLizard/releases/download/0.1.1.3/LocaLizard.exe)
 
 ## Features
+
+- The base UUP Client Language Pack ESD is extracted with native DISM and installed directly from `update.mum`, avoiding an unnecessary CAB rebuild. HTTP Microsoft Delivery CDN responses are permitted only for the exact CDN hosts/path and only with the SHA-1 and file size supplied by UUP Dump.
 
 - GUI for selecting the source ISO, output ISO, working directory, language sources, and update catalog.
 - Search for stable cumulative updates (LCUs) or a specified KB through Microsoft Update Catalog.
@@ -26,15 +28,17 @@
 
 ## Limitations and environment requirements
 
+- The base ru-RU Client Language Pack supports both CAB and UUP ESD sources. ESD is extracted by DISM and serviced through `update.mum`; local CAB packages and donor ISO packages remain supported.
+
 - Latest-LCU search uses the build family and architecture detected from the selected ISO. If a build has no predefined query profile, the utility searches by numeric OS build and tries fallback Microsoft Update Catalog queries. Automatic download still requires an unambiguous stable update matching the exact build family and architecture. If the Catalog HTML changes or no matching entry is returned, the utility stops rather than guessing; a KB can be entered manually.
-- Client Language Pack discovery checks the local cache, a donor ISO, and up to 32 matching client installation builds after a ru-RU language availability check for the same build family and architecture. Localization of an image index cannot continue if no compatible standalone CAB is available from trusted sources. DISM performs the final applicability check. This covers LTSC build families 10240, 14393, 17763, 19044, and 26100; UUP Dump may not retain entries for every older release, so a compatible donor ISO or local package may be required.
+- Client Language Pack discovery checks the local cache, a donor ISO, and up to 32 matching client installation builds after a ru-RU language availability check for the same build family and architecture. Localization of an image index cannot continue if no compatible standalone Client Language Pack in CAB or UUP ESD form is available from trusted sources. DISM performs the final applicability check. This covers LTSC build families 10240, 14393, 17763, 19044, and 26100; UUP Dump may not retain entries for every older release, so a compatible donor ISO or local package may be required.
 - Extra language capabilities (Basic, Fonts, OCR, Speech, Text-to-Speech, Handwriting) are attempted individually and recorded in the JSON audit. A capability can remain unavailable when compatible files are missing from the selected FOD/Language and Optional Features source and cannot be obtained through the servicing sources used by DISM.
 - Setup/WinPE and WinRE use compatible Russian resources from the selected source and/or the official ADK WinPE Add-on. If the add-on cannot be downloaded or signature-verified, disk space is insufficient, or DISM rejects the CABs, that part of the image is left unchanged; details are written to the log and audit.
 - The interactive Hyper-V test requires Windows with Hyper-V enabled, administrator privileges, and VMConnect. It launches a temporary VM without networking but asks the user to visually confirm the Windows Setup screen: a running VM alone does not prove that Setup appeared. This interactive test is not run in GitHub Actions.
 - Static validation checks the ISO structure and whether images can be read, but cannot guarantee installation on every hardware configuration. Test the ISO in a separate VM or on a test device before deployment. OOBE can affect the preferred UI language of the first user.
 ## Run
 
-1. Download `LocaLizard.exe` from the [0.1.1.1 release](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.1.1).
+1. Download `LocaLizard.exe` from the [0.1.1.3 release](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.1.1).
 2. Run the application. The main window runs without elevation: drag the target ISO into the first drop zone and the Russian donor ISO into the separate zone in the language-components section. Approve the UAC prompt when the application starts an operation that requires administrator privileges.
 3. Select the source Windows ISO, output ISO path, and working directory.
 4. If needed, specify a Russian ISO source, FOD / Language and Optional Features sources, and an update catalog.
@@ -44,7 +48,10 @@ You do not need to install Python or development tools manually. The source ISO 
 
 ## Version history
 
-### [0.1.1.1](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.1.1) — current release
+### [0.1.1.3](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.1.3) — current release
+Fixed Microsoft Delivery CDN downloads when the final URL remains HTTP: the exact Microsoft CDN host/path is accepted only when UUP metadata provides a valid SHA-1 and expected file size. Base Client Language Pack ESD files are now extracted by DISM and installed directly through `update.mum`, without rebuilding a CAB; the extracted manifest is cached and verified. Added regression tests for the HTTP integrity policy and update.mum discovery.
+
+### [0.1.1.1](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.1.1) — previous release
 Fixed UUP Language Pack downloads from Microsoft Delivery CDN. HTTP is permitted only as a narrowly scoped bootstrap URL for the exact Microsoft CDN host and file path; the final URL after redirects must be trusted HTTPS. Diagnostics now distinguish a missing package from a detected package whose download, verification, or ESD conversion failed. Added URL policy and HTTPS-redirect tests.
 
 ### [0.1.1](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.1) — previous release

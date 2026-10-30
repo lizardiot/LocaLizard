@@ -189,11 +189,28 @@ def _ll_download_file(self, url: str, dest: Path, expected_sha1: str | None, exp
         try:
             with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=60) as response:
                 final_url = response.geturl()
-                if not _ll_trusted_url(final_url):
+                final_https = _ll_trusted_url(final_url)
+                final_http_cdn = (
+                    _ll_trusted_package_url(final_url)
+                    and urlparse(final_url).scheme.lower() == "http"
+                )
+                if not (final_https or final_http_cdn):
                     raise RuntimeError(
-                        f"Конечный URL загрузки не является доверенным HTTPS-адресом Microsoft: "
+                        f"Конечный URL загрузки не является доверенным адресом Microsoft CDN: "
                         f"{_ll_url_summary(final_url)}."
                     )
+                if final_http_cdn:
+                    sha1_value = str(expected_sha1 or "").strip().lower()
+                    if (
+                        not re.fullmatch(r"[0-9a-f]{40}", sha1_value)
+                        or expected_size is None
+                        or int(expected_size) <= 0
+                    ):
+                        raise RuntimeError(
+                            "HTTP-ответ Microsoft CDN разрешён только при наличии "
+                            "SHA-1 из UUP Dump (40 шестнадцатеричных символов) "
+                            "и ожидаемого ненулевого размера пакета."
+                        )
                 status = getattr(response, "status", None) or response.getcode()
                 resume = bool(offset and status == 206)
                 if offset and not resume: offset = 0
@@ -222,13 +239,33 @@ def _ll_download_file(self, url: str, dest: Path, expected_sha1: str | None, exp
     raise RuntimeError(f"Не удалось скачать {dest.name}: {last}")
 
 def _ll_packages_for_info(self, info: dict) -> list[Path]:
-    target = f"{self.build_family(info.get('version',''))}_{self.arch_token(info.get('architecture',''))}"
+    build = self.build_family(info.get("version", ""))
+    arch = self.arch_token(info.get("architecture", ""))
+    target = f"{build}_{arch}"
+    target_root = Path(self.cfg.package_root) / "auto" / target
     items = []
     for p in self.find_packages(self.cfg.package_root):
         root = _ll_auto_root(p)
-        if root is not None and (root.name != target or not _ll_verified_cache(p)): continue
+        if root is not None and (root.name != target or not _ll_verified_cache(p)):
+            continue
         items.append(p)
-    return sorted({str(p.resolve()).lower():p for p in items}.values(), key=lambda p:(0 if _ll_auto_root(p) is None else 1,str(p).lower()))
+
+    # Base UUP ESD language packs are retained as an extracted package tree.
+    # Only inspect update.mum at the known candidate/package depth; do not scan
+    # every MUM file in a user-supplied package directory.
+    if target_root.is_dir():
+        for p in target_root.glob("*/*/update.mum"):
+            if _ll_is_lp(p, arch) and _ll_verified_cache(p):
+                items.append(p)
+
+    return sorted(
+        {str(p.resolve()).lower(): p for p in items}.values(),
+        key=lambda p: (
+            0 if _ll_auto_root(p) is None else 1,
+            0 if p.name.lower() == "update.mum" else 1,
+            str(p).lower(),
+        ),
+    )
 
 def _ll_is_lp_name(name: str, architecture: str) -> bool:
     n = Path(str(name)).name.lower()
@@ -242,7 +279,15 @@ def _ll_is_lp_name(name: str, architecture: str) -> bool:
 
 
 def _ll_is_lp(path: Path, architecture: str) -> bool:
-    return Path(path).suffix.lower() == ".cab" and _ll_is_lp_name(Path(path).name, architecture)
+    path = Path(path)
+    suffix = path.suffix.lower()
+    if suffix == ".cab":
+        identity = path.name
+    elif suffix == ".mum" and path.name.lower() == "update.mum":
+        identity = path.parent.name
+    else:
+        return False
+    return _ll_is_lp_name(identity, architecture)
 
 
 def _ll_is_lp_esd(path: Path, architecture: str) -> bool:
@@ -396,6 +441,49 @@ def _ll_expand_uup_esd_to_cab(self, esd_path: Path) -> Path:
         shutil.rmtree(work_root, ignore_errors=True)
 
 
+def _ll_extract_uup_esd_to_mum(self, esd_path: Path) -> Path:
+    """Extract a base UUP Client LP ESD and return its DISM-installable update.mum."""
+    esd_path = Path(esd_path)
+    if not esd_path.is_file() or esd_path.suffix.lower() != ".esd":
+        raise RuntimeError(f"UUP ESD не найден: {esd_path}")
+
+    package_dir = esd_path.parent / esd_path.stem
+    update_mum = package_dir / "update.mum"
+    if update_mum.is_file() and _ll_verified_cache(update_mum):
+        self.log(f"UUP ESD: используется проверенный кэш update.mum: {update_mum}")
+        return update_mum
+
+    if package_dir.exists():
+        shutil.rmtree(package_dir, ignore_errors=True)
+    package_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        self.log(
+            f"UUP ESD: распаковка базового Client Language Pack {esd_path.name} "
+            "через DISM без пересборки CAB."
+        )
+        self.run_cmd(
+            [
+                "dism.exe", "/Apply-Image", f"/ImageFile:{esd_path}",
+                "/Index:1", f"/ApplyDir:{package_dir}", "/CheckIntegrity", "/NoRpFix",
+            ],
+            timeout=7200,
+        )
+        if not update_mum.is_file() or update_mum.stat().st_size == 0:
+            raise RuntimeError(
+                "DISM распаковал Client Language Pack ESD, но update.mum "
+                "не найден в корне пакета. Установка по неполному пакету запрещена."
+            )
+        _ll_record_cache(update_mum, None, None)
+        self.log(
+            f"UUP ESD готов: {esd_path.name}; DISM будет устанавливать "
+            f"{package_dir.name}\\update.mum напрямую."
+        )
+        return update_mum
+    except Exception:
+        shutil.rmtree(package_dir, ignore_errors=True)
+        raise
+
+
 def _ll_auto_download(self, info: dict) -> list[Path]:
     build, arch = self.build_family(info.get("version", "")), self.arch_token(info.get("architecture", ""))
     if not build:
@@ -510,6 +598,8 @@ def _ll_auto_download(self, info: dict) -> list[Path]:
             path.unlink(missing_ok=True)
             self.download_file(url, path, sha or None, size)
         if path.suffix.lower() == ".esd":
+            if _ll_is_lp_esd(path, arch):
+                return _ll_extract_uup_esd_to_mum(self, path)
             return _ll_expand_uup_esd_to_cab(self, path)
         return path
 
@@ -576,7 +666,7 @@ def _ll_auto_download(self, info: dict) -> list[Path]:
             for name, meta in base:
                 try:
                     package_path = obtain_component(name, meta, folder)
-                    if package_path.suffix.lower() != ".cab" or not _ll_is_lp(package_path, arch):
+                    if not _ll_is_lp(package_path, arch):
                         continue
                     base_ready = True
                     break
@@ -758,7 +848,15 @@ def _ll_ensure_oscdimg(self):
 
 def _ll_dism_image(self, media, image_wim, info, package_files, fod_root):
     idx,arch=info["index"],self.arch_token(info.get("architecture",""))
-    candidates=sorted({str(p.resolve()).lower():p for p in package_files if _ll_is_lp(p,arch)}.values(),key=lambda p:(0 if _ll_auto_root(p) is None else 1,p.parent.name.lower(),p.name.lower()))
+    candidates=sorted(
+        {str(p.resolve()).lower():p for p in package_files if _ll_is_lp(p,arch)}.values(),
+        key=lambda p: (
+            0 if _ll_auto_root(p) is None else 1,
+            0 if p.name.lower() == "update.mum" else 1,
+            p.parent.name.lower(),
+            p.name.lower(),
+        ),
+    )
     if not candidates: raise RuntimeError(f"Для индекса {idx} не найден Client Language Pack ru-RU для {arch}.")
     mount=self.work/f"mount_install_{idx}"; selected=None; last=None
     for lp in candidates:
@@ -766,7 +864,9 @@ def _ll_dism_image(self, media, image_wim, info, package_files, fod_root):
         if mount not in self.mounts: self.mounts.append(mount)
         try:
             self.run_cmd(["dism.exe","/Mount-Image",f"/ImageFile:{image_wim}",f"/Index:{idx}",f"/MountDir:{mount}","/CheckIntegrity"])
-            self.log(f"Индекс {idx}: попытка добавить {lp.name}")
+            package_label = lp.parent.name if lp.name.lower() == "update.mum" else lp.name
+            method_label = " через update.mum" if lp.name.lower() == "update.mum" else ""
+            self.log(f"Индекс {idx}: попытка добавить {package_label}{method_label}")
             self.run_cmd(["dism.exe",f"/Image:{mount}","/Add-Package",f"/PackagePath:{lp}","/NoRestart"])
             selected=lp; break
         except Exception as exc:
@@ -778,7 +878,16 @@ def _ll_dism_image(self, media, image_wim, info, package_files, fod_root):
             if self.cancel_event.is_set(): raise RuntimeError("Отмена после завершения текущей операции DISM.") from exc
     if selected is None: raise RuntimeError(f"DISM отклонил все {len(candidates)} кандидатов для индекса {idx}: {last}")
     if not hasattr(self,"language_component_report"): self.language_component_report=[]
-    self.language_component_report.append({"index":idx,"image":image_wim.name,"architecture":arch,"language_pack":selected.name,"language_pack_sha256":_ll_hash(selected),"capabilities":[]})
+    selected_label = selected.parent.name if selected.name.lower() == "update.mum" else selected.name
+    self.language_component_report.append({
+        "index": idx,
+        "image": image_wim.name,
+        "architecture": arch,
+        "language_pack": selected_label,
+        "language_pack_manifest": str(selected) if selected.name.lower() == "update.mum" else None,
+        "language_pack_sha256": _ll_hash(selected),
+        "capabilities": [],
+    })
     self._ll_used_packages=getattr(self,"_ll_used_packages",[])+[str(selected)]
     try:
         for cap in ("Language.Basic~~~ru-RU~0.0.1.0","Language.Fonts~~~ru-RU~0.0.1.0","Language.OCR~~~ru-RU~0.0.1.0","Language.Speech~~~ru-RU~0.0.1.0","Language.TextToSpeech~~~ru-RU~0.0.1.0","Language.Handwriting~~~ru-RU~0.0.1.0"):

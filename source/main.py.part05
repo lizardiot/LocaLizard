@@ -120,8 +120,12 @@
         architecture = self.arch_token(image_info.get("architecture", ""))
         exact = []
         for p in candidates:
-            n = p.name.lower()
-            if p.suffix.lower() != ".cab" or "ru-ru" not in n:
+            n = p.parent.name.lower() if p.name.lower() == "update.mum" else p.name.lower()
+            if p.suffix.lower() not in (".cab", ".mum"):
+                continue
+            if p.suffix.lower() == ".mum" and p.name.lower() != "update.mum":
+                continue
+            if "ru-ru" not in n:
                 continue
             # Accept both explicit client LP names and generic language-pack names used by UUP sets.
             # Do not mistake FOD, LXP, WinPE, recovery, setup or Server CABs for a base LP.
@@ -144,7 +148,14 @@
             if arch_match:
                 exact.append(p)
         # Stable order makes selection deterministic if the catalog contains multiple matching CABs.
-        return sorted(exact, key=lambda p: (0 if "client-language-pack" in p.name.lower() else 1, p.name.lower()))[0] if exact else None
+        return sorted(
+            exact,
+            key=lambda p: (
+                0 if "client-language-pack" in (p.parent.name.lower() if p.name.lower() == "update.mum" else p.name.lower()) else 1,
+                0 if p.name.lower() == "update.mum" else 1,
+                (p.parent.name if p.name.lower() == "update.mum" else p.name).lower(),
+            ),
+        )[0] if exact else None
 
 
     @staticmethod
