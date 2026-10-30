@@ -257,7 +257,7 @@ public sealed class MicrosoftUpdateCatalogClient : IDisposable
                 StringComparer.Ordinal);
     }
 
-    private static IReadOnlyList<CatalogUpdate> ParseSearchResults(string markup)
+    internal static IReadOnlyList<CatalogUpdate> ParseSearchResults(string markup)
     {
         var results = new List<CatalogUpdate>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -285,7 +285,7 @@ public sealed class MicrosoftUpdateCatalogClient : IDisposable
         return results;
     }
 
-    private static IReadOnlyList<CatalogUpdate> FilterResults(IReadOnlyList<CatalogUpdate> rows, string architecture,
+    internal static IReadOnlyList<CatalogUpdate> FilterResults(IReadOnlyList<CatalogUpdate> rows, string architecture,
         string? knowledgeBase, int? targetBuild)
     {
         var stable = rows.Where(row =>
@@ -304,7 +304,7 @@ public sealed class MicrosoftUpdateCatalogClient : IDisposable
         return stable;
     }
 
-    private static IReadOnlyList<CatalogFile> ExtractDownloads(string markup)
+    internal static IReadOnlyList<CatalogFile> ExtractDownloads(string markup)
     {
         var found = new List<CatalogFile>();
         foreach (Match match in Regex.Matches(markup ?? "",
@@ -421,7 +421,7 @@ public sealed class MicrosoftUpdateCatalogClient : IDisposable
         };
     }
 
-    private static string? FileArchitecture(string file)
+    internal static string? FileArchitecture(string file)
     {
         var match = Regex.Match(Path.GetFileName(file), "(?i)(?:^|[-_.])(x64|amd64|arm64|x86)(?:[-_.]|$)");
         if (!match.Success) return null;
@@ -429,7 +429,7 @@ public sealed class MicrosoftUpdateCatalogClient : IDisposable
         return value == "amd64" ? "x64" : value;
     }
 
-    private static bool IsSafeDownloadUrl(Uri uri) =>
+    internal static bool IsSafeDownloadUrl(Uri uri) =>
         uri.IsAbsoluteUri && uri.Scheme == Uri.UriSchemeHttps &&
         AllowedDownloadHosts.Contains(uri.Host) && string.IsNullOrEmpty(uri.UserInfo);
 
