@@ -512,10 +512,11 @@ ServicePack Build : 0
             family = int(search_term)
             if family in (14393, 10240):
                 return main._ll_uup_response_body_builds({"error": "SEARCH_NO_RESULTS"})
+            product = "Windows 11" if family >= 22000 else "Windows 10"
             return main._ll_uup_response_body_builds({
                 "builds": {
-                    "0": {"build": f"10.0.{family}.1", "arch": "amd64"},
-                    "2": {"build": f"10.0.{family}.2", "arch": "amd64"},
+                    "0": {"title": f"{product}, version LTSC ({family}.1)", "build": f"10.0.{family}.1", "arch": "amd64"},
+                    "2": {"title": f"{product}, version LTSC ({family}.2)", "build": f"10.0.{family}.2", "arch": "amd64"},
                 }
             })
 
@@ -524,6 +525,48 @@ ServicePack Build : 0
         self.assertIn("сборка 10240): 0 записей", report)
         self.assertIn("сборка 26100): 2 записей", report)
         self.assertNotIn("ошибка запроса", report)
+
+    def test_uup_dump_client_candidate_filter_rejects_server_and_hci(self):
+        self.assertTrue(main._ll_uup_is_client_build(
+            {"title": "Windows 11, version 24H2 (26100.1742) amd64"}, 26100
+        ))
+        self.assertTrue(main._ll_uup_is_client_build(
+            {"title": "Feature update to Windows 10, version 21H2 (19044.7811) amd64"}, 19044
+        ))
+        for title in (
+            "Update for Microsoft server operating system (26100.33674)",
+            "Windows Server 2025 (26100.33650)",
+            "Security Update for Azure Stack HCI (26100.33438)",
+        ):
+            self.assertFalse(main._ll_uup_is_client_build({"title": title}, 26100))
+        self.assertFalse(main._ll_uup_is_client_build(
+            {"title": "Windows 10, version 21H2 (19044.7811) amd64"}, 26100
+        ))
+
+    def test_uup_build_key_parses_dism_and_uup_versions(self):
+        self.assertEqual(main._ll_uup_build_key("10.0.26100.1742"), (26100, 1742))
+        self.assertEqual(main._ll_uup_build_key("26100.1742"), (26100, 1742))
+        self.assertEqual(main._ll_uup_build_key("10.0.19044"), (19044, 0))
+        self.assertIsNone(main._ll_uup_build_key("not-a-build"))
+
+    def test_uup_dump_diagnostic_counts_only_client_builds(self):
+        def fake_fetch(search_term):
+            family = int(search_term)
+            if family == 26100:
+                return [
+                    {"build": "10.0.26100.33674", "arch": "amd64", "title": "Update for Microsoft server operating system (26100.33674)"},
+                    {"build": "26100.1742", "arch": "amd64", "title": "Windows 11, version 24H2 (26100.1742) amd64"},
+                ]
+            product = "Windows 11" if family >= 22000 else "Windows 10"
+            return [{
+                "build": f"10.0.{family}.1",
+                "arch": "amd64",
+                "title": f"{product}, version LTSC ({family}.1)",
+            }]
+
+        report = main._ll_uup_diagnostic_report(fake_fetch)
+        self.assertIn("сборка 26100): 1 записей", report)
+        self.assertNotIn("сборка 26100): 2 записей", report)
 
     def test_uup_dump_diagnostic_covers_all_iot_enterprise_ltsc_families(self):
         self.assertEqual(
@@ -542,9 +585,10 @@ ServicePack Build : 0
         def fake_fetch(search_term):
             requested.append(search_term)
             family = int(search_term)
+            product = "Windows 11" if family >= 22000 else "Windows 10"
             return [
-                {"build": f"10.0.{family}.1", "arch": "x64"},
-                {"build": "10.0.99999.1", "arch": "x64"},
+                {"title": f"{product}, version LTSC ({family}.1)", "build": f"10.0.{family}.1", "arch": "x64"},
+                {"title": "Windows 11, version unrelated (99999.1)", "build": "10.0.99999.1", "arch": "x64"},
             ]
 
         report = main._ll_uup_diagnostic_report(fake_fetch)

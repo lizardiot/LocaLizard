@@ -178,29 +178,74 @@ def _ll_auto_download(self, info: dict) -> list[Path]:
     target = self.cfg.package_root / "auto" / f"{build}_{arch}"; target.mkdir(parents=True, exist_ok=True)
     current = self.packages_for_info(info)
     if self.locate_ru_lp(info,current): return current
-    terms = [str(build)] + (["19041"] if 19042 <= build <= 19045 else [])
+    target_key = _ll_uup_build_key(info.get("version", ""))
+    terms = []
+    if target_key and target_key[1]:
+        terms.append(f"{target_key[0]}.{target_key[1]}")
+    terms.append(str(build))
+    if 19042 <= build <= 19045:
+        terms.append("19041")
+    terms = list(dict.fromkeys(terms))
+
     candidates, seen = [], set()
     for term in terms:
-        try: body = self.api_json(UUP_API + "/listid.php?" + urllib.parse.urlencode({"search":term,"sortByDate":"1"}))
-        except Exception as exc: self.log(f"Поиск UUP Dump по ветке {term} не удался: {exc}"); continue
+        try:
+            body = self.api_json(UUP_API + "/listid.php?" + urllib.parse.urlencode({"search":term,"sortByDate":"1"}))
+        except Exception as exc:
+            self.log(f"Поиск UUP Dump по ветке {term} не удался: {exc}")
+            continue
         for item in _ll_uup_response_body_builds(body):
             uid = str(item.get("uuid","")).strip()
-            if not uid or uid in seen: continue
+            if not uid or uid in seen:
+                continue
             try:
-                if self.arch_token(str(item.get("arch",""))) != arch: continue
-            except RuntimeError: continue
+                if self.arch_token(str(item.get("arch",""))) != arch:
+                    continue
+            except RuntimeError:
+                continue
             title = str(item.get("title","")).lower()
-            if any(x in title for x in ("insider","canary","dev channel","beta channel","flight","preview")): continue
-            raw = str(item.get("build","")); nums = re.findall(r"\d+",raw)
-            if not nums: continue
-            family = int(nums[2]) if raw.startswith("10.0.") and len(nums)>=3 else int(nums[0])
-            if family not in ({build} | ({19041} if 19042 <= build <= 19045 else set())): continue
-            item["_ll_family"], item["_ll_key"] = family, _ll_version_key(raw); candidates.append(item); seen.add(uid)
-    candidates.sort(key=lambda x:(x["_ll_family"]==build,x["_ll_key"]),reverse=True)
-    if not candidates: raise RuntimeError(f"UUP Dump не нашёл стабильную сборку {build}/{arch}.")
+            if any(x in title for x in ("insider","canary","dev channel","beta channel","flight","preview")):
+                continue
+            family = _ll_uup_item_build_family(item)
+            allowed_families = {build} | ({19041} if 19042 <= build <= 19045 else set())
+            if family not in allowed_families:
+                continue
+            if not _ll_uup_is_client_build(item, family):
+                continue
+            candidate_key = _ll_uup_build_key(item.get("build", ""))
+            if not candidate_key:
+                continue
+            item["_ll_family"] = family
+            item["_ll_key"] = _ll_version_key(item.get("build", ""))
+            item["_ll_exact_build"] = bool(target_key and candidate_key == target_key)
+            item["_ll_revision_distance"] = (
+                abs(candidate_key[1] - target_key[1])
+                if target_key and candidate_key[0] == target_key[0]
+                else 0
+            )
+            candidates.append(item)
+            seen.add(uid)
+
+    candidates.sort(
+        key=lambda x: (
+            x["_ll_exact_build"],
+            -x["_ll_revision_distance"],
+            x["_ll_key"],
+        ),
+        reverse=True,
+    )
+    if not candidates:
+        raise RuntimeError(
+            f"UUP Dump не нашёл клиентскую сборку Windows {build}/{arch}. "
+            "Серверные обновления и Azure Stack HCI исключены; проверьте донорский ISO или локальный Client LP ru-RU."
+        )
+    self.log(
+        f"UUP Dump: отобрано клиентских сборок Windows {build}/{arch}: {len(candidates)}; "
+        f"точное совпадение по ревизии: {sum(1 for item in candidates if item['_ll_exact_build'])}."
+    )
     last = None
     optional_source_found = False
-    for rank, candidate in enumerate(candidates[:5],1):
+    for rank, candidate in enumerate(candidates[:8],1):
         self.check_cancel(); uid = str(candidate["uuid"]); title = str(candidate.get("title",uid))
         folder = target / f"{rank:02d}-{uid}"; folder.mkdir(parents=True,exist_ok=True)
         try:

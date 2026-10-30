@@ -1,4 +1,4 @@
-# LocaLizard 0.1.0.7
+# LocaLizard 0.1.0.8
 
 **LocaLizard** is a graphical utility for preparing Windows IoT Enterprise LTSC installation media with Russian as the default language.
 
@@ -6,7 +6,7 @@
 
 - [Latest LocaLizard release](https://github.com/lizardiot/LocaLizard/releases/latest)
 - [All releases](https://github.com/lizardiot/LocaLizard/releases)
-- [LocaLizard.exe for Windows x64 — version 0.1.0.7](https://github.com/lizardiot/LocaLizard/releases/download/0.1.0.7/LocaLizard.exe)
+- [LocaLizard.exe for Windows x64 — version 0.1.0.8](https://github.com/lizardiot/LocaLizard/releases/download/0.1.0.8/LocaLizard.exe)
 
 ## Features
 
@@ -34,7 +34,7 @@
 - Static validation checks the ISO structure and whether images can be read, but cannot guarantee installation on every hardware configuration. Test the ISO in a separate VM or on a test device before deployment. OOBE can affect the preferred UI language of the first user.
 ## Run
 
-1. Download `LocaLizard.exe` from the [0.1.0.7 release](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.0.7).
+1. Download `LocaLizard.exe` from the [0.1.0.8 release](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.0.8).
 2. Run the application. The main window runs without elevation: drag the target ISO into the first drop zone and the Russian donor ISO into the separate zone in the language-components section. Approve the UAC prompt when the application starts an operation that requires administrator privileges.
 3. Select the source Windows ISO, output ISO path, and working directory.
 4. If needed, specify a Russian ISO source, FOD / Language and Optional Features sources, and an update catalog.
@@ -44,8 +44,8 @@ You do not need to install Python or development tools manually. The source ISO 
 
 ## Version history
 
-### [0.1.0.7](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.0.7) — current release
-UUP Dump checks now normalize both list and sparse-object build results. Missing archival LTSC branches are handled as ordinary empty search results, and unexpected API data no longer crashes automatic language-component discovery.
+### [0.1.0.8](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.0.8) — current release
+Language-component discovery now selects Windows 10/11 client builds, excludes Windows Server and Azure Stack HCI, and prefers the exact ISO revision before other builds from the same family.
 
 ### [0.1.0.3](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.0.3) — previous release
 The UUP Dump check uses `/listid.php` and separately checks all five Windows IoT Enterprise LTSC build families: 10240, 14393, 17763, 19044, and 26100.
