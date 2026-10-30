@@ -40,7 +40,8 @@ public sealed class WindowsImageService(ProcessRunner runner)
 
     public async Task ServiceAsync(
         string imageFile, ImageInfo image, IReadOnlyList<string> packageCandidates,
-        string? fod, UpdatePlan? updates, string work, Action<string>? log, CancellationToken ct)
+        string? fod, UpdatePlan? updates, string work, Action<string>? log, CancellationToken ct,
+        Func<string, Task<LocalizationStep>>? serviceWinRe = null)
     {
         if (image.BuildFamily == 0 || !BuildNumbers.IsSupportedArchitecture(image.NormalizedArchitecture))
             throw new InvalidDataException($"Не удалось определить сборку/архитектуру индекса {image.Index}.");
@@ -124,6 +125,9 @@ public sealed class WindowsImageService(ProcessRunner runner)
             if (!intl.StandardOutput.Contains("ru-ru", StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException($"DISM не подтвердил ru-RU для индекса {image.Index}.");
 
+            LocalizationStep? winReAudit = null;
+            if (serviceWinRe is not null)
+                winReAudit = await serviceWinRe(mount);
             await ApplyUpdatesAsync(mount, updates, "after_language", ct, log);
             await _runner.RunAsync("dism.exe", ["/Unmount-Image", $"/MountDir:{mount}", "/Commit", "/CheckIntegrity"],
                 cancellationToken: ct, timeout: TimeSpan.FromMinutes(60));
@@ -132,7 +136,7 @@ public sealed class WindowsImageService(ProcessRunner runner)
             await using var stream = File.OpenRead(selected);
             var hash = Convert.ToHexString(await SHA256.HashDataAsync(stream, ct)).ToLowerInvariant();
             Audit.Add(new ImageAudit(Path.GetFileName(imageFile), image.Index, image.NormalizedArchitecture,
-                image.Version, Path.GetFileName(selected), hash, true, capabilityResults));
+                image.Version, Path.GetFileName(selected), hash, true, capabilityResults, winReAudit));
             log?.Invoke($"Индекс {image.Index} локализован.");
         }
         catch
