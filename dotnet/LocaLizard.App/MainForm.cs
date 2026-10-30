@@ -29,6 +29,8 @@ public sealed class MainForm : Form
         Width = 1060; Height = 840; MinimumSize = new Size(860, 680);
         StartPosition = FormStartPosition.CenterScreen;
         BuildUi();
+        AttachIsoDrop(source, false);
+        AttachIsoDrop(donor, true);
         Load += (_, _) => LoadSettings();
         FormClosing += (_, _) => SaveSettings();
         AllowDrop = true;
@@ -45,7 +47,7 @@ public sealed class MainForm : Form
 
     private void BuildUi()
     {
-        var root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(12), ColumnCount = 1, RowCount = 6, AutoScroll = true };
+        var root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(12), ColumnCount = 1, RowCount = 5, AutoScroll = true };
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -79,15 +81,26 @@ public sealed class MainForm : Form
         options.Controls.Add(hyperv);
         root.Controls.Add(options);
 
-        root.Controls.Add(new Label
+        var workspace = new SplitContainer
         {
-            AutoSize = true, MaximumSize = new Size(980, 0), ForeColor = Color.DarkSlateGray,
+            Dock = DockStyle.Fill,
+            Orientation = Orientation.Horizontal,
+            SplitterDistance = 74,
+            Panel1MinSize = 48,
+            Panel2MinSize = 140,
+            BorderStyle = BorderStyle.FixedSingle
+        };
+        workspace.Panel1.Controls.Add(new Label
+        {
+            Dock = DockStyle.Fill, AutoSize = false, ForeColor = Color.DarkSlateGray,
+            TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(6),
             Text = "Setup/WinPE и WinRE используют официальные ресурсы Windows ADK / WinPE Add-on или совместимый русский ISO-донор. " +
-                   "Разделение SWM создаёт части до 3800 MiB. Hyper-V проверка отключает сеть; оператор вручную подтверждает экран Windows Setup."
+                   "Разделение SWM создаёт части до 3800 MiB. Hyper-V проверка отключает сеть; оператор вручную подтверждает экран Windows Setup. " +
+                   "Перемещайте разделитель, чтобы изменить высоту журнала."
         });
-
         log.Dock = DockStyle.Fill; log.ReadOnly = true; log.Font = new Font("Consolas", 9);
-        root.Controls.Add(log);
+        workspace.Panel2.Controls.Add(log);
+        root.Controls.Add(workspace);
 
         var footer = new FlowLayoutPanel { Dock = DockStyle.Bottom, AutoSize = true };
         start.Click += async (_, _) => await StartAsync();
@@ -109,7 +122,10 @@ public sealed class MainForm : Form
     {
         panel.RowCount++;
         panel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        panel.Controls.Add(new Label { Text = caption, AutoSize = true, Anchor = AnchorStyles.Left, Padding = new Padding(0, 8, 8, 0) }, 0, row);
+        var captionLabel = new Label { Text = caption, AutoSize = true, Anchor = AnchorStyles.Left, Padding = new Padding(0, 8, 8, 0) };
+        if (field == source) AttachIsoDrop(captionLabel, false);
+        if (field == donor) AttachIsoDrop(captionLabel, true);
+        panel.Controls.Add(captionLabel, 0, row);
         field.Dock = DockStyle.Fill;
         panel.Controls.Add(field, 1, row);
         var button = new Button { Text = "Выбрать…", AutoSize = true };
@@ -132,6 +148,29 @@ public sealed class MainForm : Form
             }
         };
         panel.Controls.Add(button, 2, row);
+    }
+
+    private void AttachIsoDrop(Control target, bool donorTarget)
+    {
+        target.AllowDrop = true;
+        target.DragEnter += (_, e) =>
+        {
+            var paths = e.Data?.GetData(DataFormats.FileDrop) as string[];
+            e.Effect = paths?.Any(path => path.EndsWith(".iso", StringComparison.OrdinalIgnoreCase) && File.Exists(path)) == true
+                ? DragDropEffects.Copy : DragDropEffects.None;
+        };
+        target.DragDrop += (_, e) =>
+        {
+            if (e.Data?.GetData(DataFormats.FileDrop) is not string[] paths) return;
+            var iso = paths.FirstOrDefault(path => path.EndsWith(".iso", StringComparison.OrdinalIgnoreCase) && File.Exists(path));
+            if (iso is null) return;
+            if (donorTarget)
+            {
+                donor.Text = iso;
+                status.Text = "Выбран русский ISO-донор: " + iso;
+            }
+            else SetSource(iso);
+        };
     }
 
     private void SetSource(string value)
