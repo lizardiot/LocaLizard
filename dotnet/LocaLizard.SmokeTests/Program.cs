@@ -102,7 +102,7 @@ using (var uupBuildsDoc = JsonDocument.Parse("""
         "UUP Dump sparse object build results");
     Check(UupDumpClient.CandidateMatches(rows[0], 26100, "x64"),
         "UUP Dump client build selection");
-    Check(!UupDumpClient.CandidateMatches(rows[0], 19044, "x64),
+    Check(!UupDumpClient.CandidateMatches(rows[0], 19044, "x64"),
         "UUP Dump exact build family match");
 }
 using (var uupNoResultsDoc = JsonDocument.Parse("""{"response":{"error":"SEARCH_NO_RESULTS"}}"""))
