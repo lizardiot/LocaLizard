@@ -8,16 +8,23 @@ public sealed class WindowsImageService(ProcessRunner runner)
     private readonly ProcessRunner _runner = runner;
     public List<ImageAudit> Audit { get; } = [];
 
-    public async Task<IReadOnlyList<ImageInfo>> GetImageInfoAsync(string file, CancellationToken ct)
+    public async Task<IReadOnlyList<ImageInfo>> GetImageInfoAsync(string file, CancellationToken ct, string? swmFilePattern = null)
     {
-        var summary = await _runner.RunAsync("dism.exe", ["/Get-WimInfo", $"/WimFile:{file}", "/English"],
+        var summaryArgs = new List<string> { "/Get-WimInfo", $"/WimFile:{file}" };
+        if (!string.IsNullOrWhiteSpace(swmFilePattern)) summaryArgs.Add($"/SWMFile:{swmFilePattern}");
+        summaryArgs.Add("/English");
+        var summary = await _runner.RunAsync("dism.exe", summaryArgs,
             cancellationToken: ct, timeout: TimeSpan.FromMinutes(3));
         var indexes = Regex.Matches(summary.StandardOutput, @"(?im)^\s*Index\s*:\s*(\d+)\s*$")
             .Select(m => int.Parse(m.Groups[1].Value)).Distinct().ToArray();
         var result = new List<ImageInfo>();
         foreach (var index in indexes)
         {
-            var detail = await _runner.RunAsync("dism.exe", ["/Get-WimInfo", $"/WimFile:{file}", $"/Index:{index}", "/English"],
+            var detailArgs = new List<string> { "/Get-WimInfo", $"/WimFile:{file}" };
+            if (!string.IsNullOrWhiteSpace(swmFilePattern)) detailArgs.Add($"/SWMFile:{swmFilePattern}");
+            detailArgs.Add($"/Index:{index}");
+            detailArgs.Add("/English");
+            var detail = await _runner.RunAsync("dism.exe", detailArgs,
                 cancellationToken: ct, timeout: TimeSpan.FromMinutes(3));
             var text = detail.StandardOutput;
             var version = Field(text, "Version") ?? "";
