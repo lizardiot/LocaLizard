@@ -43,7 +43,7 @@ public sealed class UupDumpClient : IDisposable
                 if (!GetLanguages(langsDoc.RootElement).Contains("ru-ru", StringComparer.OrdinalIgnoreCase)) continue;
 
                 using var filesDoc = await GetApiDocumentAsync($"{Api}/get.php?id={Uri.EscapeDataString(id)}&lang=ru-ru", false, ct);
-                var package = GetFiles(filesDoc.RootElement).FirstOrDefault(IsClientLp);
+                var package = GetFiles(filesDoc.RootElement).FirstOrDefault(x => IsClientLp(x, arch));
                 if (package is null) continue;
 
                 var targetFolder = Path.Combine(cache, "auto", $"{family}_{arch}");
@@ -56,7 +56,7 @@ public sealed class UupDumpClient : IDisposable
 
                 if (target.EndsWith(".esd", StringComparison.OrdinalIgnoreCase))
                 {
-                    var extracted = await ExtractUpdateMumAsync(target, targetFolder, package, ct);
+                    var extracted = await ExtractUpdateMumAsync(target, targetFolder, package, runner, ct);
                     log?.Invoke($"Извлечён проверенный Client Language Pack ESD: {title}");
                     return [extracted];
                 }
@@ -302,16 +302,23 @@ public sealed class UupDumpClient : IDisposable
             StringSplitOptions.RemoveEmptyEntries);
         var index = Array.FindIndex(parts, x => x.Equals("auto", StringComparison.OrdinalIgnoreCase));
         if (index < 0 || index + 1 >= parts.Length) return null;
-        return Path.Combine(parts.Take(index + 2).ToArray());
+        var current = new DirectoryInfo(Path.GetDirectoryName(full)!);
+        while (current is not null)
+        {
+            if (current.Parent?.Name.Equals("auto", StringComparison.OrdinalIgnoreCase) == true)
+                return current.FullName;
+            current = current.Parent;
+        }
+        return null;
     }
 
-    private static async Task<string> ExtractUpdateMumAsync(string esd, string folder, UupFile package, CancellationToken ct)
+    private static async Task<string> ExtractUpdateMumAsync(string esd, string folder, UupFile package, ProcessRunner runner, CancellationToken ct)
     {
         var temporary = Path.Combine(folder, "esd_extract_" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(temporary);
         try
         {
-            await new ProcessRunner().RunAsync("dism.exe",
+            await runner.RunAsync("dism.exe",
                 ["/Apply-Image", $"/ImageFile:{esd}", "/Index:1", $"/ApplyDir:{temporary}", "/CheckIntegrity"],
                 cancellationToken: ct, timeout: TimeSpan.FromMinutes(40));
             var mum = Directory.EnumerateFiles(temporary, "update.mum", SearchOption.AllDirectories)
