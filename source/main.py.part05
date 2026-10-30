@@ -40,18 +40,47 @@
         return dist
 
     def image_info(self, image: Path) -> list[dict]:
+        # The summary form of /Get-WimInfo lists indexes, names and sizes only.
+        # Architecture and image version are returned by a separate /Index query.
         cp = self.run_cmd(["dism.exe", "/English", "/Get-WimInfo", f"/WimFile:{image}"], check=True)
-        text = cp.stdout or ""
-        blocks = re.split(r"(?=Index\s*:\s*\d+)", text)
+        summary = cp.stdout or ""
+        blocks = re.split(r"(?im)(?=^\s*Index\s*:\s*\d+\s*$)", summary)
         result = []
+
+        def field(pattern: str, source: str) -> str:
+            match = re.search(rf"(?im)^\s*{pattern}\s*:\s*(.*?)\s*$", source or "")
+            return match.group(1).strip() if match else ""
+
         for block in blocks:
-            mi = re.search(r"Index\s*:\s*(\d+)", block)
-            if not mi: continue
-            name = re.search(r"Name\s*:\s*(.+)", block)
-            desc = re.search(r"Description\s*:\s*(.+)", block)
-            arch = re.search(r"Architecture\s*:\s*(.+)", block)
-            ver = re.search(r"Version\s*:\s*(.+)", block)
-            result.append({"index": int(mi.group(1)), "name": name.group(1).strip() if name else "", "description": desc.group(1).strip() if desc else "", "architecture": arch.group(1).strip() if arch else "", "version": ver.group(1).strip() if ver else ""})
+            index_text = field("Index", block)
+            if not index_text.isdigit():
+                continue
+            index = int(index_text)
+            details_cp = self.run_cmd(
+                ["dism.exe", "/English", "/Get-WimInfo", f"/WimFile:{image}", f"/Index:{index}"],
+                check=True,
+            )
+            details = details_cp.stdout or ""
+
+            name = field("Name", details) or field("Name", block)
+            description = field("Description", details) or field("Description", block)
+            architecture = field("Architecture", details) or field("Architecture", block)
+            version = field("Version", details) or field("Version", block)
+            service_pack_build = field("ServicePack Build", details)
+
+            # DISM reports Version as 10.0.<family> and the revision separately
+            # as ServicePack Build. Join them to retain the actual image build.
+            if re.fullmatch(r"10\.0\.\d+", version):
+                revision = service_pack_build if service_pack_build.isdigit() else "0"
+                version = f"{version}.{revision}"
+
+            result.append({
+                "index": index,
+                "name": name,
+                "description": description,
+                "architecture": architecture,
+                "version": version,
+            })
         return result
 
     def esd_to_wim_if_needed(self, media: Path) -> list[Path]:

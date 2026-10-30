@@ -105,6 +105,48 @@ class HelperTests(unittest.TestCase):
         self.assertIn("КиБ", main.human_bytes(2048))
         self.assertIn("ГиБ", main.human_bytes(1024**3))
 
+    def test_image_info_reads_per_index_details_and_service_pack_revision(self):
+        worker = main.Worker(queue.Queue(), threading.Event(), None)
+        summary = """Index : 1
+Name : Windows 11 IoT Enterprise LTSC Evaluation
+Description : Windows 11 IoT Enterprise LTSC Evaluation
+Size : 18296596630 bytes
+
+Index : 2
+Name : Windows 11 IoT Enterprise LTSC Evaluation ARM64
+Description : Windows 11 IoT Enterprise LTSC Evaluation ARM64
+Size : 18296596630 bytes
+"""
+        x64_details = """Index : 1
+Name : Windows 11 IoT Enterprise LTSC Evaluation
+Architecture : x64
+Version : 10.0.26100
+ServicePack Build : 1742
+"""
+        arm64_details = """Index : 2
+Name : Windows 11 IoT Enterprise LTSC Evaluation ARM64
+Architecture : ARM64
+Version : 10.0.26100
+ServicePack Build : 0
+"""
+        responses = [
+            main.subprocess.CompletedProcess([], 0, summary, None),
+            main.subprocess.CompletedProcess([], 0, x64_details, None),
+            main.subprocess.CompletedProcess([], 0, arm64_details, None),
+        ]
+        with patch.object(worker, "run_cmd", side_effect=responses) as run_cmd:
+            infos = worker.image_info(Path("install.wim"))
+
+        self.assertEqual(len(infos), 2)
+        self.assertEqual(infos[0]["architecture"], "x64")
+        self.assertEqual(infos[0]["version"], "10.0.26100.1742")
+        self.assertEqual(worker.build_family(infos[0]["version"]), 26100)
+        self.assertEqual(infos[1]["architecture"], "ARM64")
+        self.assertEqual(infos[1]["version"], "10.0.26100.0")
+        self.assertEqual(run_cmd.call_count, 3)
+        self.assertIn("/Index:1", run_cmd.call_args_list[1].args[0])
+        self.assertIn("/Index:2", run_cmd.call_args_list[2].args[0])
+
     def test_locate_ru_lp_arch(self):
         with tempfile.TemporaryDirectory() as td:
             p = Path(td) / "Microsoft-Windows-Client-Language-Pack_x64_ru-ru.cab"
