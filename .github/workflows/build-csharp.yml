@@ -1,4 +1,4 @@
-name: Build LocaLizard CSharp preview
+name: Build LocaLizard CSharp
 
 on:
   push:
@@ -29,10 +29,10 @@ jobs:
         run: dotnet run --project dotnet/LocaLizard.WindowsIntegrationTests/LocaLizard.WindowsIntegrationTests.csproj -c Release
       - name: Publish standalone Windows x64 app
         run: dotnet publish dotnet/LocaLizard.App/LocaLizard.App.csproj -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true /p:IncludeNativeLibrariesForSelfExtract=true
-      - name: Upload preview artifact
+      - name: Upload Windows x64 CI artifact
         uses: actions/upload-artifact@v4
         with:
-          name: LocaLizard-CSharp-Windows-x64
+          name: LocaLizard-0.2.2.8-Windows-x64
           path: dotnet/LocaLizard.App/bin/Release/net8.0-windows/win-x64/publish/
           if-no-files-found: error
           retention-days: 30
