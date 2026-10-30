@@ -302,7 +302,7 @@ public sealed class UupDumpClient : IDisposable
             StringSplitOptions.RemoveEmptyEntries);
         var index = Array.FindIndex(parts, x => x.Equals("auto", StringComparison.OrdinalIgnoreCase));
         if (index < 0 || index + 1 >= parts.Length) return null;
-        var current = new DirectoryInfo(Path.GetDirectoryName(full)!);
+        DirectoryInfo? current = new(Path.GetDirectoryName(full)!);
         while (current is not null)
         {
             if (current.Parent?.Name.Equals("auto", StringComparison.OrdinalIgnoreCase) == true)
@@ -336,12 +336,20 @@ public sealed class UupDumpClient : IDisposable
 
     private sealed class CacheManifest
     {
+        [JsonPropertyName("schema_version")]
         public int SchemaVersion { get; set; } = 1;
+
+        [JsonPropertyName("packages")]
         public Dictionary<string, CacheRecord> Packages { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     }
 
-    private sealed record CacheRecord(long Size, string Sha1, string Sha256, string? ApiSha1,
-        string? SourceHost, DateTimeOffset DownloadedAt);
+    private sealed record CacheRecord(
+        [property: JsonPropertyName("size")] long Size,
+        [property: JsonPropertyName("sha1")] string Sha1,
+        [property: JsonPropertyName("sha256")] string Sha256,
+        [property: JsonPropertyName("api_sha1")] string? ApiSha1,
+        [property: JsonPropertyName("source_host")] string? SourceHost,
+        [property: JsonPropertyName("downloaded_at")] DateTimeOffset DownloadedAt);
 
     internal static IEnumerable<JsonElement> GetBuilds(JsonElement root)
     {
