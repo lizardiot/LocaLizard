@@ -268,7 +268,7 @@ public sealed class MainForm : Form
                 AppInfo.Name, MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
 
         cancellation = new CancellationTokenSource();
-        start.Enabled = false; patch.Enabled = false; cancel.Enabled = true; log.Clear();
+        start.Enabled = false; patch.Enabled = false; catalog.Enabled = false; cancel.Enabled = true; log.Clear();
         SaveSettings();
         var service = new IsoBuildService();
         service.Log += AppendLog;
