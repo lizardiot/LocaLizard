@@ -73,7 +73,12 @@ jobs:
           }
           Set-Content -Path "$assets/SHA256.txt" -Value $lines -Encoding ascii
 
-      - name: Ensure release tag is new
+          $changelog = Get-Content -Raw -Encoding UTF8 "CHANGELOG.md"
+          $releaseSection = [regex]::Match($changelog, '(?ms)^## \\[0\\.2\\.2\\.8\\].*?(?=^## \\[|\\z)')
+          if (-not $releaseSection.Success) { throw "CHANGELOG.md has no Russian section for 0.2.2.8." }
+          Set-Content -Path "$assets/CHANGELOG.md" -Value ($releaseSection.Value.Trim() + [Environment]::NewLine) -Encoding UTF8
+
+      - name: Verify release tag without moving it
         id: tag
         uses: actions/github-script@v7
         with:
@@ -84,10 +89,20 @@ jobs:
                 repo: context.repo.repo,
                 ref: "tags/0.2.2.8"
               });
-              core.setFailed("Tag 0.2.2.8 already exists; refusing to overwrite a previous release.");
+              const comparison = await github.rest.repos.compareCommits({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                base: "0.2.2.8",
+                head: context.sha
+              });
+              if (!["ahead", "identical"].includes(comparison.data.status)) {
+                core.setFailed("Current main commit is not a descendant of the existing 0.2.2.8 tag; refusing to alter the release.");
+              } else {
+                core.info("Existing 0.2.2.8 tag is preserved; only the release notes and assets will be refreshed.");
+              }
             } catch (error) {
               if (error.status === 404) {
-                core.info("Tag 0.2.2.8 is available.");
+                core.info("Tag 0.2.2.8 does not exist yet; the release action may create it.");
               } else {
                 throw error;
               }
@@ -102,25 +117,11 @@ jobs:
           name: LocaLizard 0.2.2.8
           draft: false
           prerelease: false
+          overwrite_files: true
           files: |
             release-assets/LocaLizard.exe
             release-assets/LocaLizard-0.2.2.8-win-x64.zip
             release-assets/SHA256.txt
-          body: |
-            ## LocaLizard 0.2.2.8 — C# / .NET 8
-
-            The primary Windows application is now implemented in C# / .NET 8 Windows Forms. Historical Python sources, previous Git tags, and earlier GitHub Releases remain preserved.
-
-            ### Included
-            - Windows Forms UI, settings migration, drag-and-drop, logging, cancellation and UAC resume.
-            - DISM WIM/ESD inventory and servicing, Russian Client Language Pack discovery, validation and managed cache integrity.
-            - UUP Dump API diagnostics and retry/resume downloads from trusted Microsoft CDN endpoints.
-            - Microsoft Update Catalog, ordered update manifests, FOD/L&O, ADK/WinPE and Setup/WinPE/WinRE localization.
-            - Split-WIM support, patch-existing-WIM, ISO creation, static verification and JSON audit.
-            - Optional Hyper-V boot test with network disabled and operator confirmation.
-
-            ### Validation
-            Windows CI builds the solution, runs C# regression tests, exercises DISM Capture/Append/Get-WimInfo/Mount/Commit/Apply against a synthetic two-index WIM, and publishes the standalone x64 application.
-
-            **Important:** this synthetic WIM round-trip does not replace servicing real Windows IoT Enterprise LTSC ISO/WIM images. Applicability of individual language/update packages, ADK/WinPE installation, final bootable ISO creation on target media, and visual Hyper-V Setup confirmation must be verified with the specific licensed source images and Windows environment.
+            release-assets/CHANGELOG.md
+          body_path: release-assets/CHANGELOG.md
 
