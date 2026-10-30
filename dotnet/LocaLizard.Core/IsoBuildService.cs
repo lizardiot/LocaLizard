@@ -117,7 +117,7 @@ public sealed class IsoBuildService
                     var downloaded = await _uup.DownloadRussianLanguagePackAsync(item.Info, packageRoot, _runner,
                         message => Log?.Invoke(message), ct);
                     packages.AddRange(downloaded);
-                    candidates = FindMatchingPackages(packages, item.Info);
+                    candidates = await FindVerifiedMatchingPackagesAsync(packages, item.Info, ct);
                 }
                 if (candidates.Count == 0)
                     throw new FileNotFoundException($"Нет подходящего Client Language Pack для индекса {item.Info.Index}.");
@@ -247,7 +247,7 @@ public sealed class IsoBuildService
         {
             ct.ThrowIfCancellationRequested();
             var item = imagePlan[i];
-            var candidates = FindMatchingPackages(packages, item.Info);
+            var candidates = await FindVerifiedMatchingPackagesAsync(packages, item.Info, ct);
             if (candidates.Count == 0)
             {
                 Status?.Invoke($"Ищу Client Language Pack ru-RU для индекса {item.Info.Index}…");
