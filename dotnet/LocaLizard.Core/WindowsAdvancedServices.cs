@@ -489,13 +489,13 @@ public sealed class SetupLocalizationService(ProcessRunner runner, WindowsImageS
                 localized.Add($"index{index}:{string.Join(",", required.Select(Path.GetFileName))}");
                 log?.Invoke($"boot.wim index {index}: добавлено RU CAB — {required.Count}.");
             }
-            catch
+            catch (Exception ex)
             {
                 if (mounted)
                     await _runner.RunAsync("dism.exe", ["/Unmount-Image", $"/MountDir:{mount}", "/Discard"],
                         cancellationToken: CancellationToken.None, throwOnError: false, timeout: TimeSpan.FromMinutes(20));
-                if (index == 2) throw;
-                log?.Invoke("WinPE index 1 пропущен после ошибки; Setup index 2 остаётся обработанным.");
+                if (ex is OperationCanceledException || index == 2) throw;
+                log?.Invoke("WinPE index 1 пропущен после ошибки; Setup index 2 остаётся обработанным: " + ex.Message);
             }
             finally { try { if (Directory.Exists(mount)) Directory.Delete(mount, true); } catch { } }
         }
