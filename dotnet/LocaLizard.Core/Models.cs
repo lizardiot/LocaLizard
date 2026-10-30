@@ -3,7 +3,7 @@ namespace LocaLizard.Core;
 public static class AppInfo
 {
     public const string Name = "LocaLizard";
-    public const string Version = "0.2.0-csharp-preview";
+    public const string Version = "0.2.2.8";
 }
 
 public sealed record RunOptions
