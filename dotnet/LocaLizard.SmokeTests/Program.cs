@@ -128,10 +128,12 @@ try
     // precede exactly one target LCU, and paths/types/duplicates must be rejected.
     var checkpointPath = Path.Combine(folder, "checkpoint.cab");
     await File.WriteAllTextAsync(checkpointPath, "checkpoint payload");
-    var checkpointHash = Convert.ToHexString(await System.Security.Cryptography.SHA256.HashDataAsync(
-        File.OpenRead(checkpointPath))).ToLowerInvariant();
-    var lcuHash = Convert.ToHexString(await System.Security.Cryptography.SHA256.HashDataAsync(
-        File.OpenRead(payload))).ToLowerInvariant();
+    string checkpointHash;
+    await using (var checkpointStream = File.OpenRead(checkpointPath))
+        checkpointHash = Convert.ToHexString(await System.Security.Cryptography.SHA256.HashDataAsync(checkpointStream)).ToLowerInvariant();
+    string lcuHash;
+    await using (var lcuStream = File.OpenRead(payload))
+        lcuHash = Convert.ToHexString(await System.Security.Cryptography.SHA256.HashDataAsync(lcuStream)).ToLowerInvariant();
     async Task<bool> RejectManifestAsync(object value)
     {
         await File.WriteAllTextAsync(Path.Combine(folder, "updates.json"), JsonSerializer.Serialize(value));
