@@ -25,6 +25,7 @@ public sealed class MainForm : Form
     private readonly CheckBox hyperv = new() { Text = "Проверить ISO в Hyper-V (120 секунд)", AutoSize = true };
     private readonly Button patch = new() { Text = "Обработать существующий WIM…", AutoSize = true };
     private readonly Button catalog = new() { Text = "Microsoft Update Catalog…", AutoSize = true };
+    private readonly Button uupCheck = new() { Text = "Проверить UUP Dump", AutoSize = true };
     private CancellationTokenSource? cancellation;
     private readonly ElevatedLaunchRequest? launchRequest;
 
@@ -113,8 +114,9 @@ public sealed class MainForm : Form
         start.Click += async (_, _) => await StartAsync();
         patch.Click += async (_, _) => await PatchExistingWimAsync();
         catalog.Click += async (_, _) => await SearchCatalogAsync();
+        uupCheck.Click += async (_, _) => await CheckUupDumpAsync();
         cancel.Click += (_, _) => cancellation?.Cancel();
-        footer.Controls.Add(start); footer.Controls.Add(patch); footer.Controls.Add(catalog); footer.Controls.Add(cancel);
+        footer.Controls.Add(start); footer.Controls.Add(patch); footer.Controls.Add(catalog); footer.Controls.Add(uupCheck); footer.Controls.Add(cancel);
         status.Padding = new Padding(10, 8, 0, 0);
         footer.Controls.Add(status);
         root.Controls.Add(footer);
@@ -212,7 +214,7 @@ public sealed class MainForm : Form
         }
 
         cancellation = new CancellationTokenSource();
-        start.Enabled = false; patch.Enabled = false; catalog.Enabled = false; cancel.Enabled = true; log.Clear();
+        start.Enabled = false; patch.Enabled = false; catalog.Enabled = false; uupCheck.Enabled = false; cancel.Enabled = true; log.Clear();
         SaveSettings();
         var service = new IsoBuildService();
         service.ConfirmHyperVSetup = ConfirmHyperVSetupAsync;
@@ -238,7 +240,7 @@ public sealed class MainForm : Form
         finally
         {
             cancellation.Dispose(); cancellation = null;
-            start.Enabled = true; patch.Enabled = true; catalog.Enabled = true; cancel.Enabled = false;
+            start.Enabled = true; patch.Enabled = true; catalog.Enabled = true; uupCheck.Enabled = true; cancel.Enabled = false;
         }
     }
 
@@ -375,6 +377,39 @@ public sealed class MainForm : Form
         {
             cancellation.Dispose(); cancellation = null;
             start.Enabled = true; patch.Enabled = true; catalog.Enabled = true; cancel.Enabled = false;
+        }
+    }
+
+    private async Task CheckUupDumpAsync()
+    {
+        if (cancellation is not null) return;
+        cancellation = new CancellationTokenSource();
+        start.Enabled = false; patch.Enabled = false; catalog.Enabled = false; uupCheck.Enabled = false; cancel.Enabled = true;
+        status.Text = "Проверяю доступность UUP Dump для LTSC…";
+        log.Clear();
+        try
+        {
+            using var client = new UupDumpClient();
+            var report = await client.DiagnoseAsync(cancellation.Token);
+            AppendLog(report);
+            status.Text = "Диагностика UUP Dump завершена.";
+            MessageBox.Show(this, report, "Диагностика UUP Dump", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        catch (OperationCanceledException)
+        {
+            status.Text = "Диагностика UUP Dump отменена.";
+            AppendLog("Диагностика UUP Dump отменена.");
+        }
+        catch (Exception ex)
+        {
+            status.Text = "Ошибка диагностики UUP Dump.";
+            AppendLog("UUP Dump diagnostic error: " + ex);
+            MessageBox.Show(this, ex.Message, AppInfo.Name, MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        finally
+        {
+            cancellation.Dispose(); cancellation = null;
+            start.Enabled = true; patch.Enabled = true; catalog.Enabled = true; uupCheck.Enabled = true; cancel.Enabled = false;
         }
     }
 
