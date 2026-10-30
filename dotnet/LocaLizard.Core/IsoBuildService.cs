@@ -228,6 +228,37 @@ public sealed class IsoBuildService
             return;
         }
 
+        var mediaSources = Path.Combine(work, "media", "sources");
+        var donorRu = Path.Combine(donorSources, "ru-ru");
+        var targetRu = Path.Combine(mediaSources, "ru-ru");
+        if (Directory.Exists(donorRu) && (!Directory.Exists(targetRu) || !Directory.EnumerateFileSystemEntries(targetRu).Any()))
+        {
+            Directory.CreateDirectory(targetRu);
+            foreach (var item in Directory.EnumerateFiles(donorRu, "*", SearchOption.AllDirectories))
+            {
+                var relative = Path.GetRelativePath(donorRu, item);
+                var copyTo = Path.Combine(targetRu, relative);
+                Directory.CreateDirectory(Path.GetDirectoryName(copyTo)!);
+                File.Copy(item, copyTo, true);
+            }
+            Log?.Invoke("Совместимые localized Setup resources скопированы в sources\\ru-ru.");
+        }
+        var setupDestination = Path.Combine(work, "donor_setup_packages");
+        Directory.CreateDirectory(setupDestination);
+        foreach (var file in Directory.EnumerateFiles(donorRoot, "*.cab", SearchOption.AllDirectories))
+        {
+            var lowName = Path.GetFileName(file).ToLowerInvariant();
+            var lowPath = file.ToLowerInvariant();
+            if ((lowName == "lp.cab" || lowName.Contains("winpe") || lowName.Contains("setup")) &&
+                lowPath.Contains("ru-ru", StringComparison.Ordinal))
+            {
+                var setupCopy = Path.Combine(setupDestination, Path.GetFileName(file));
+                if (!File.Exists(setupCopy)) File.Copy(file, setupCopy);
+            }
+        }
+        _donorSetupPackages.AddRange(Directory.EnumerateFiles(setupDestination, "*.cab")
+            .Distinct(StringComparer.OrdinalIgnoreCase));
+
         var destination = Path.Combine(work, "donor_packages");
         Directory.CreateDirectory(destination);
         foreach (var file in Directory.EnumerateFiles(donorRoot, "*.cab", SearchOption.AllDirectories))
