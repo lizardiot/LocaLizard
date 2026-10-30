@@ -1,41 +1,55 @@
-# LocaLizard — перенос на C#
+# LocaLizard — C# / .NET 8
 
-Здесь размещена новая реализация на .NET 8 / Windows Forms рядом с историческим Python-приложением.
+Ветка C# содержит порт Windows-приложения LocaLizard. Исторический Python-проект и опубликованные версии сохранены отдельно; до окончания Windows-интеграционных проверок он остаётся резервной эталонной реализацией.
 
-## Сохранение релизов
+## Сохранение предыдущих выпусков
 
-- Работа ведётся в отдельной ветке rewrite/csharp.
-- Исходные файлы source/main.py.part01 … source/main.py.part16 и прежний workflow сборки оставлены без изменений.
-- Существующие Git-теги и опубликованные GitHub Releases не изменяются и не пересоздаются.
-- C# preview имеет отдельную строку версии. Новый workflow только собирает приложение и загружает CI artifact; он не создаёт, не редактирует и не удаляет релизы или теги.
-- Исторические номера версий нельзя переиспользовать для C# сборок.
+- Изменения C# выполняются в ветке `rewrite/csharp`.
+- Исходные `source/main.py.part01` … `source/main.py.part16`, `test_helpers.py` и прежний Python workflow не заменяются.
+- Существующие Git-теги, GitHub Releases и их assets не изменяются и не пересоздаются.
+- Для C# предусмотрена отдельная нумерация и отдельный Windows build workflow.
+- C# build workflow собирает, тестирует и загружает артефакт Actions. Публикация GitHub Release должна выполняться отдельным контролируемым release workflow после проверки целевого коммита.
 
 ## Сборка
 
-Требуется .NET 8 SDK на Windows:
+Требуется .NET 8 SDK и Windows:
 
-    dotnet build dotnet/LocaLizard.sln -c Release
-    dotnet run --project dotnet/LocaLizard.SmokeTests/LocaLizard.SmokeTests.csproj -c Release
-    dotnet publish dotnet/LocaLizard.App/LocaLizard.App.csproj -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true
+```powershell
+dotnet build dotnet/LocaLizard.sln -c Release
+dotnet run --project dotnet/LocaLizard.SmokeTests/LocaLizard.SmokeTests.csproj -c Release
+dotnet publish dotnet/LocaLizard.App/LocaLizard.App.csproj -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true
+```
 
-Подготовка ISO использует штатные Windows-инструменты DISM, PowerShell, Robocopy и oscdimg из Windows ADK Deployment Tools.
+Приложение использует штатные Windows-инструменты DISM, PowerShell, Robocopy, Mount-DiskImage и `oscdimg.exe` из Windows ADK Deployment Tools. Установка ADK требует прав администратора, официального установщика Microsoft и проверки его Authenticode-подписи.
 
-## Уже перенесено в C# preview
+## Перенесённая функциональность
 
-- Графический интерфейс с выбором целевого ISO, ISO-донора, выходного файла, папок кэша, FOD и обновлений.
-- Копирование исходного ISO в рабочую папку без изменения исходного файла.
-- Инвентаризация WIM-индексов через DISM; экспорт ESD в WIM.
-- Поиск Client Language Pack ru-RU через UUP Dump, проверка архитектуры/семейства сборки/языка, загрузка только с доверенных Microsoft CDN, проверка размера и SHA-1.
-- Извлечение UUP ESD через DISM с установкой через update.mum.
-- Добавление базового LP с повторным подбором кандидата только при отказе DISM на Add-Package.
-- Настройка ru-RU через корректные параметры DISM; System Preferred UI Language — необязательный шаг.
-- Необязательные FOD Basic, OCR, Text-to-Speech и Handwriting только при явном выборе источника.
-- Валидация updates.json: схема, семейство сборки, архитектура, безопасные имена файлов, отсутствие дубликатов, SHA-256 и порядок checkpoint/target LCU.
-- Сборка загрузочного ISO через oscdimg, повторное подключение и статическая проверка WIM-индексов.
-- JSON-аудит локализации.
+- Windows Forms GUI для выбора целевого ISO, русского ISO-донора, выходного ISO, рабочих каталогов, FOD и манифеста обновлений.
+- Отдельные drag-and-drop зоны для целевого и донорского ISO; запуск основного окна без повышения прав, запрос UAC только перед DISM/servicing-операцией и восстановление выбранного действия в повышенном процессе.
+- Разделитель с изменяемой высотой журнала; сохранение и миграция пользовательских параметров в `%LOCALAPPDATA%\\LocaLizard\\settings.json` с совместимыми именами ключей старой Python-версии.
+- Инвентаризация WIM/ESD-индексов через DISM, получение build family/architecture, экспорт ESD в WIM и проверка результата.
+- Поиск Client Language Pack ru-RU через UUP Dump, проверка клиентского SKU/языка/архитектуры/семейства сборки, безопасные разрешённые CDN-пути Microsoft, проверка размеров и SHA-1, извлечение UUP ESD через DISM и установка по `update.mum`.
+- Импорт совместимых пакетов из русского ISO-донора, кэш языковых пакетов и установка базового Client Language Pack с повторным выбором только при отказе DISM на `/Add-Package`.
+- Офлайн-настройка локали ru-RU и необязательные Language Features Basic, OCR, Text-to-Speech и Handwriting из выбранного FOD/L&O-источника.
+- Проверка и применение цепочки обновлений `updates.json`: безопасные имена файлов, целевое семейство сборки и архитектура, SHA-256, отсутствие повторов и упорядочивание checkpoint/LCU/WinRE/SafeOS.
+- Поиск LCU по KB или семейству сборки в Microsoft Update Catalog, фильтрация стабильных Windows 10/11 пакетов по KB/build/architecture, разбор DownloadDialog, HTTPS-политика Catalog/CDN, SHA-1 при наличии серверных метаданных, локальный SHA-256 и создание `updates.json`, `catalog-source.json`, `SHA256.txt`.
+- Установка официальных Windows ADK Deployment Tools и WinPE Add-on с проверкой подписи Microsoft; поиск и запуск `oscdimg.exe`.
+- Локализация Windows Setup (`boot.wim` indexes 2 и 1), применение RU CAB, настройка языка Setup и генерация `lang.ini`; локализация вложенного WinRE при наличии совместимого WinPE_OCs ru-RU ресурса.
+- Объединение входного split-WIM `.swm`, необязательное разбиение `install.wim` на части SWM по 3800 MiB, проверка непрерывности и читаемости индексов.
+- Режим patch-existing WIM: исходный файл сохраняется; обслуживание идёт на рабочей копии, а новый файл публикуется лишь после повторной проверки числа индексов и записи JSON-аудита.
+- Создание ISO, повторное монтирование и статическая проверка `boot.wim` и `install.wim/install*.swm`; JSON-аудит источников, обслуживания, языковых пакетов и проверки.
+- Необязательный Hyper-V/VMConnect тест: временная VM Gen 2 без сетевого адаптера, подключение ISO, ожидание запуска и запрос оператору подтвердить экран Windows Setup; временная VM и файлы очищаются.
 
-## Что ещё не достигло паритета с Python
+## Валидация и известные ограничения
 
-В первом C# preview пока не перенесены локализация Windows Setup/WinPE и WinRE, автоматическая установка ADK, разбиение результата на SWM, режим обработки существующего WIM, интерактивный Hyper-V/VMConnect тест, настройки приложения и полный набор регрессионных тестов. Все эти сценарии остаются в исходной Python-версии. Удалять её можно только после интеграционных проверок C# на Windows с тестовыми ISO.
+CI на Windows выполняет сборку .NET 8 solution, smoke/regression проверки, публикацию self-contained win-x64 и загрузку артефакта. Детерминированные проверки покрывают разбор build/architecture, trust policy URL, парсинг и фильтрацию Catalog, метаданные Catalog CDN, settings key migration, SHA-256 манифеста обновлений и порядок split-SWM.
 
-Smoke tests проверяют разбор сборок и архитектур, политику доверенных URL и контроль SHA-256 для updates.json. Полный цикл DISM/ISO требует Windows и тестовых образов.
+**Это пока не означает, что все сценарии прошли интеграционную проверку на реальных образах.** DISM-монтирование/обслуживание, применимость конкретных CAB/MSU к различным IoT Enterprise LTSC выпускам, реальная установка ADK/WinPE Add-on, сборка загрузочного ISO и интерактивный Hyper-V test требуют отдельного запуска на Windows с тестовыми ISO/WIM. GitHub Actions compile/smoke workflow не выполняет этот полный end-to-end цикл.
+
+Полный legacy-набор из `test_helpers.py` содержит дополнительные проверки downloader/cache, UUP Dump, Catalog fallback, ADK installer diagnostics, ISO provider errors и UAC resume-параметров; эти проверки ещё не все имеют эквивалентный C# unit test. До завершения этих сценариев и проверки ISO в VM не следует удалять или объявлять Python-версию заменённой.
+
+## Сценарии, которые требуют ручного подтверждения
+
+- Hyper-V status подтверждает запуск VM, но отображение экрана Setup должен подтвердить оператор в VMConnect.
+- Отсутствие совместимых источников RU Client LP/FOD/WinPE CAB не маскируется: соответствующая часть операции отмечается в журнале и аудите.
+- Статическая проверка читаемости WIM и структуры ISO не гарантирует успешную установку на всех аппаратных конфигурациях.
