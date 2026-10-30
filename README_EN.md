@@ -1,14 +1,14 @@
-# LocaLizard 0.1.1.4
+# LocaLizard 0.2.2.8
 
 **LocaLizard** is a graphical utility for preparing Windows IoT Enterprise LTSC installation media with Russian as the default language.
 
-> **C# migration:** an initial .NET 8 implementation is available in [dotnet/README.md](dotnet/README.md). Published releases and the Python build remain unchanged while C# feature parity is completed.
+> **Version 0.2.2.8:** the primary application has been migrated to C# / .NET 8 Windows Forms. Historical Python sources and all releases published before this version are retained; previous tags and their assets were not modified. See [dotnet/README.md](dotnet/README.md) for the C# feature set and validation scope.
 
 ## Download
 
 - [Latest LocaLizard release](https://github.com/lizardiot/LocaLizard/releases/latest)
 - [All releases](https://github.com/lizardiot/LocaLizard/releases)
-- [LocaLizard.exe for Windows x64 — version 0.1.1.4](https://github.com/lizardiot/LocaLizard/releases/download/0.1.1.4/LocaLizard.exe)
+- [LocaLizard.exe for Windows x64 — version 0.2.2.8](https://github.com/lizardiot/LocaLizard/releases/download/0.2.2.8/LocaLizard.exe)
 
 ## Features
 
@@ -50,7 +50,10 @@ You do not need to install Python or development tools manually. The source ISO 
 
 ## Version history
 
-### [0.1.1.4](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.1.4) — current release
+### [0.2.2.8](https://github.com/lizardiot/LocaLizard/releases/tag/0.2.2.8) — current release
+The primary Windows application has been migrated to C# / .NET 8 Windows Forms. The port covers ISO/WIM servicing, UUP Dump Client Language Pack discovery and verification, managed cache integrity, resumable downloads, Microsoft Update Catalog, ordered update manifests, ADK/WinPE, Setup/WinPE/WinRE localization, SWM, patch-existing-WIM, audit, UAC, drag-and-drop, and UUP diagnostics. Regression tests and a Windows DISM integration test for a two-index WIM were added. CI builds and publishes the standalone Windows x64 app. Applying language CAB/MSU packages to specific IoT LTSC images, building a real user ISO, and visually checking Hyper-V boot remain target-environment validation steps; CI does not claim those steps have been performed.
+
+### [0.1.1.4](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.1.4) — previous release
 Fixed the invalid DISM system-locale switch (/Set-SysLocale replaces /Set-SystemLocale) and separated base Client Language Pack candidate selection from later servicing, so another LP is tried only when /Add-Package rejects the current one. Optional Russian FODs are limited to Basic, OCR, Text-to-Speech, and Handwriting and are attempted only with a selected source. Optional FOD failures no longer roll back a successfully added base package. Added regression tests. Full Windows Setup resource localization still requires a compatible Russian donor ISO containing sources/ru-ru.
 
 ### [0.1.1.3](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.1.3) — previous release
