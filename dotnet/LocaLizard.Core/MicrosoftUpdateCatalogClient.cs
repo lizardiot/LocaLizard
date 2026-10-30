@@ -307,7 +307,8 @@ public sealed class MicrosoftUpdateCatalogClient : IDisposable
     internal static IReadOnlyList<CatalogFile> ExtractDownloads(string markup)
     {
         var found = new List<CatalogFile>();
-        foreach (Match match in Regex.Matches(markup ?? "",
+        var safeMarkup = markup ?? string.Empty;
+        foreach (Match match in Regex.Matches(safeMarkup,
                      "\\[(?<idx>\\d+)\\]\\.url\\s*=\\s*['\"](?<url>https?://[^'\"]+)['\"]",
                      RegexOptions.IgnoreCase))
         {
@@ -318,7 +319,7 @@ public sealed class MicrosoftUpdateCatalogClient : IDisposable
             if (uri.Scheme == Uri.UriSchemeHttp && AllowedDownloadHosts.Contains(host))
                 uri = new UriBuilder(uri) { Scheme = Uri.UriSchemeHttps, Port = -1 }.Uri;
             if (!IsSafeDownloadUrl(uri)) continue;
-            var fileMatch = Regex.Match(markup,
+            var fileMatch = Regex.Match(safeMarkup,
                 "\\[" + Regex.Escape(index) + "\\]\\.fileName\\s*=\\s*['\"]([^'\"]+)['\"]", RegexOptions.IgnoreCase);
             var hashMatch = Regex.Match(markup,
                 "\\[" + Regex.Escape(index) + "\\]\\.digest\\s*=\\s*['\"]([^'\"]+)['\"]", RegexOptions.IgnoreCase);
