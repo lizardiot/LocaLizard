@@ -146,16 +146,47 @@ public sealed class UupDumpClient : IDisposable
         if (package.Url is null || !SecurityPolicy.IsTrustedPackageUrl(package.Url))
             throw new InvalidDataException("URL языкового пакета не прошёл проверку домена.");
         var httpCdn = SecurityPolicy.IsExactMicrosoftCdnHttp(package.Url);
-        if (httpCdn && (package.Sha1?.Length != 40 || package.Size is null or <= 0))
+        if (httpCdn && (!Regex.IsMatch(package.Sha1 ?? "", "^[0-9a-fA-F]{40}$") || package.Size is null or <= 0))
             throw new InvalidDataException("HTTP Microsoft CDN разрешён только при наличии SHA-1 и размера из UUP Dump.");
 
-        var current = package.Url;
+        Exception? last = null;
+        for (var attempt = 0; attempt < 4; attempt++)
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                await DownloadAttemptAsync(package, target, httpCdn, ct);
+                return;
+            }
+            catch (Exception ex) when (IsRetryable(ex, ct) && attempt < 3)
+            {
+                last = ex;
+                var delay = TimeSpan.FromMilliseconds(Math.Min(8000, 1500 * Math.Pow(2, attempt)));
+                await Task.Delay(delay, ct);
+            }
+            catch (Exception ex) when (IsRetryable(ex, ct))
+            {
+                last = ex;
+                break;
+            }
+        }
+        throw new IOException($"Не удалось загрузить {Path.GetFileName(target)} после повторных попыток.", last);
+    }
+
+    private async Task DownloadAttemptAsync(UupFile package, string target, bool initialHttpCdn, CancellationToken ct)
+    {
+        var temp = target + ".download";
+        var offset = File.Exists(temp) ? new FileInfo(temp).Length : 0;
+        var current = package.Url!;
         HttpResponseMessage? response = null;
         try
         {
             for (var redirects = 0; redirects <= 8; redirects++)
             {
-                response = await _http.GetAsync(current, HttpCompletionOption.ResponseHeadersRead, ct);
+                using var request = new HttpRequestMessage(HttpMethod.Get, current);
+                request.Headers.AcceptEncoding.ParseAdd("identity");
+                if (offset > 0) request.Headers.Range = new System.Net.Http.Headers.RangeHeaderValue(offset, null);
+                response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
                 if ((int)response.StatusCode is >= 300 and <= 399)
                 {
                     var location = response.Headers.Location;
@@ -165,7 +196,7 @@ public sealed class UupDumpClient : IDisposable
                     current = location.IsAbsoluteUri ? location : new Uri(current, location);
                     if (!SecurityPolicy.IsTrustedPackageUrl(current))
                         throw new InvalidDataException($"Заблокировано перенаправление CDN на {current.Host}.");
-                    if (current.Scheme == Uri.UriSchemeHttp && (!httpCdn || !SecurityPolicy.IsExactMicrosoftCdnHttp(current)))
+                    if (current.Scheme == Uri.UriSchemeHttp && (!initialHttpCdn || !SecurityPolicy.IsExactMicrosoftCdnHttp(current)))
                         throw new InvalidDataException("Недопустимое HTTP-перенаправление.");
                     continue;
                 }
@@ -174,41 +205,66 @@ public sealed class UupDumpClient : IDisposable
             }
             if (response is null || !SecurityPolicy.IsTrustedPackageUrl(current))
                 throw new InvalidDataException("Слишком много перенаправлений или недоверенный финальный URL.");
+            if (current.Scheme == Uri.UriSchemeHttp && !initialHttpCdn)
+                throw new InvalidDataException("Финальный HTTP URL разрешён только для точного CDN пути Microsoft с SHA-1 и размером.");
 
-            var temp = target + ".download";
-            using var sha = IncrementalHash.CreateHash(HashAlgorithmName.SHA1);
-            long count = 0;
-            try
+            var append = offset > 0 && response.StatusCode == HttpStatusCode.PartialContent &&
+                         response.Content.Headers.ContentRange?.From == offset;
+            if (offset > 0 && response.StatusCode == HttpStatusCode.PartialContent && !append)
             {
-                await using var input = await response.Content.ReadAsStreamAsync(ct);
-                await using var output = new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.None, 1024 * 1024, true);
+                try { File.Delete(temp); } catch { }
+                throw new InvalidDataException("CDN вернул неверный Content-Range для продолжения загрузки.");
+            }
+            if (offset > 0 && !append)
+            {
+                try { File.Delete(temp); } catch { }
+            }
+
+            await using (var input = await response.Content.ReadAsStreamAsync(ct))
+            await using (var output = new FileStream(temp, append ? FileMode.OpenOrCreate : FileMode.Create,
+                FileAccess.Write, FileShare.None, 1024 * 1024, true))
+            {
+                if (append) output.Position = output.Length;
                 var buffer = new byte[1024 * 1024];
                 int read;
                 while ((read = await input.ReadAsync(buffer, ct)) > 0)
-                {
                     await output.WriteAsync(buffer.AsMemory(0, read), ct);
-                    sha.AppendData(buffer, 0, read);
-                    count += read;
-                }
+                await output.FlushAsync(ct);
             }
-            catch { try { File.Delete(temp); } catch { } throw; }
 
-            var actual = Convert.ToHexString(sha.GetHashAndReset()).ToLowerInvariant();
-            if (count == 0 || package.Size is > 0 && count != package.Size)
+            var info = new FileInfo(temp);
+            if (info.Length == 0 || package.Size is > 0 && info.Length != package.Size)
             {
                 File.Delete(temp);
                 throw new InvalidDataException("Размер загрузки не совпадает с метаданными UUP Dump.");
             }
-            if (!string.IsNullOrWhiteSpace(package.Sha1) &&
-                !CryptographicOperations.FixedTimeEquals(Convert.FromHexString(actual), Convert.FromHexString(package.Sha1)))
+            string actualSha1;
+            await using (var stream = File.OpenRead(temp))
+                actualSha1 = Convert.ToHexString(await SHA1.HashDataAsync(stream, ct)).ToLowerInvariant();
+            if (!string.IsNullOrWhiteSpace(package.Sha1))
             {
-                File.Delete(temp);
-                throw new InvalidDataException("SHA-1 загрузки не совпадает с UUP Dump.");
+                if (!Regex.IsMatch(package.Sha1, "^[0-9a-fA-F]{40}$") ||
+                    !CryptographicOperations.FixedTimeEquals(Convert.FromHexString(actualSha1), Convert.FromHexString(package.Sha1)))
+                {
+                    File.Delete(temp);
+                    throw new InvalidDataException("SHA-1 загрузки не совпадает с UUP Dump.");
+                }
             }
             File.Move(temp, target, true);
             await RecordCacheFileAsync(target, package, current, ct);
         }
         finally { response?.Dispose(); }
+    }
+
+    private static bool IsRetryable(Exception ex, CancellationToken ct)
+    {
+        if (ct.IsCancellationRequested) return false;
+        if (ex is OperationCanceledException) return true; // HttpClient timeout, not caller cancellation
+        if (ex is HttpRequestException http)
+            return http.StatusCode is null or HttpStatusCode.RequestTimeout or
+                HttpStatusCode.RequestedRangeNotSatisfiable or (HttpStatusCode)429 ||
+                (int?)http.StatusCode >= 500;
+        return ex is IOException or TimeoutException;
     }
 
     private static async Task<bool> ExistingFileValidAsync(string path, UupFile package, CancellationToken ct)
