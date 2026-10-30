@@ -200,6 +200,13 @@ public sealed class UupDumpClient : IDisposable
                         throw new InvalidDataException("Недопустимое HTTP-перенаправление.");
                     continue;
                 }
+                if (response.StatusCode == HttpStatusCode.RequestedRangeNotSatisfiable)
+                {
+                    response.Dispose();
+                    response = null;
+                    try { File.Delete(temp); } catch { }
+                    throw new IOException("CDN отклонил диапазон продолжения; повторяю загрузку с начала.");
+                }
                 response.EnsureSuccessStatusCode();
                 break;
             }
@@ -261,9 +268,10 @@ public sealed class UupDumpClient : IDisposable
         if (ct.IsCancellationRequested) return false;
         if (ex is OperationCanceledException) return true; // HttpClient timeout, not caller cancellation
         if (ex is HttpRequestException http)
-            return http.StatusCode is null or HttpStatusCode.RequestTimeout or
-                HttpStatusCode.RequestedRangeNotSatisfiable or (HttpStatusCode)429 ||
-                (int?)http.StatusCode >= 500;
+        {
+            var status = (int?)http.StatusCode;
+            return status is null || status == 408 || status == 416 || status == 429 || status >= 500;
+        }
         return ex is IOException or TimeoutException;
     }
 
