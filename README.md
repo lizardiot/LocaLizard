@@ -1,4 +1,4 @@
-# LocaLizard 0.1.0.2
+# LocaLizard 0.1.0.3
 
 **LocaLizard** — графическая утилита для подготовки установочного ISO Windows IoT Enterprise LTSC с русским языком по умолчанию.
 
@@ -6,7 +6,7 @@
 
 - [Последний релиз LocaLizard](https://github.com/lizardiot/LocaLizard/releases/latest)
 - [Все релизы](https://github.com/lizardiot/LocaLizard/releases)
-- [LocaLizard.exe для Windows x64 — версия 0.1.0.2](https://github.com/lizardiot/LocaLizard/releases/download/0.1.0.2/LocaLizard.exe)
+- [LocaLizard.exe для Windows x64 — версия 0.1.0.3](https://github.com/lizardiot/LocaLizard/releases/download/0.1.0.3/LocaLizard.exe)
 
 ## Возможности
 
@@ -33,7 +33,7 @@
 - Статическая проверка проверяет структуру ISO и читаемость образов, но не гарантирует установку на каждой конфигурации оборудования. Перед развёртыванием проверьте ISO в отдельной VM или на тестовом устройстве. OOBE может повлиять на предпочитаемый язык интерфейса первого пользователя.
 ## Запуск
 
-1. Скачайте `LocaLizard.exe` из [релиза 0.1.0.2](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.0.2).
+1. Скачайте `LocaLizard.exe` из [релиза 0.1.0.3](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.0.3).
 2. Запустите программу. Главное окно работает без повышения прав: исходный ISO можно перетащить в первую область, а донорский ISO с русским языком — в отдельную область раздела языковых компонентов. Подтвердите запрос UAC, когда программа начнёт операцию, требующую прав администратора.
 3. Выберите исходный Windows ISO, путь для выходного ISO и рабочую папку.
 4. При необходимости задайте русский ISO-источник, FOD/L&O и каталог обновлений.
@@ -43,7 +43,10 @@ Python и инструменты разработки устанавливать
 
 ## История версий
 
-### [0.1.0.2](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.0.2) — текущий выпуск
+### [0.1.0.3](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.0.3) — текущий выпуск
+Проверка UUP Dump теперь использует `/listid.php`, считывает список `response.builds` и отдельно показывает ошибки формата/ответа API. Диагностический запрос ищет сборки Windows 11 в целом; совместимость языковых пакетов для ISO по-прежнему определяется отдельно.
+
+### [0.1.0.2](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.0.2) — предыдущий выпуск
 Главное окно стало адаптивным: при уменьшении высоты элементы и текст не обрезаются, а доступны прокруткой; колонки и длинные подписи подстраиваются под ширину окна. Кнопки действий размещены в несколько строк, минимальный размер окна уменьшен.
 
 ### [0.1.0.1](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.0.1) — предыдущий выпуск

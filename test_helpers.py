@@ -400,6 +400,28 @@ class HelperTests(unittest.TestCase):
         self.assertEqual(payload["split_wim"], True)
         self.assertEqual(payload["vm_test"], False)
 
+    def test_uup_dump_diagnostic_uses_build_list_endpoint(self):
+        url = main._ll_uup_listid_url("Windows 11")
+        parsed = main.urllib.parse.urlparse(url)
+        self.assertEqual(parsed.scheme, "https")
+        self.assertEqual(parsed.netloc, "api.uupdump.net")
+        self.assertEqual(parsed.path, "/listid.php")
+        self.assertEqual(
+            main.urllib.parse.parse_qs(parsed.query),
+            {"search": ["Windows 11"], "sortByDate": ["1"]},
+        )
+
+    def test_uup_dump_build_response_is_validated(self):
+        expected = [{"title": "Windows 11, version 24H2", "build": "26100"}]
+        self.assertEqual(
+            main._ll_uup_response_builds({"response": {"builds": expected}}),
+            expected,
+        )
+        with self.assertRaisesRegex(RuntimeError, "response.builds"):
+            main._ll_uup_response_builds({"response": {}})
+        with self.assertRaisesRegex(RuntimeError, "API"):
+            main._ll_uup_response_builds({"response": {"error": "bad request"}})
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
