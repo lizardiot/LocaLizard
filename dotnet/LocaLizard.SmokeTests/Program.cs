@@ -192,6 +192,38 @@ try
     catch (InvalidDataException) { tamperRejected = true; }
     Check(tamperRejected, "reject modified update payload");
 
+    var autoCache = Path.Combine(folder, "cache", "auto", "26100_x64");
+    Directory.CreateDirectory(autoCache);
+    var cachedPackage = Path.Combine(autoCache, "client-language-pack_ru-ru_x64.cab");
+    await File.WriteAllTextAsync(cachedPackage, "verified cache content");
+    var cachedInfo = new FileInfo(cachedPackage);
+    string cachedSha256;
+    await using (var cachedStream = File.OpenRead(cachedPackage))
+        cachedSha256 = Convert.ToHexString(await System.Security.Cryptography.SHA256.HashDataAsync(cachedStream)).ToLowerInvariant();
+    string cachedSha1;
+    await using (var cachedStream = File.OpenRead(cachedPackage))
+        cachedSha1 = Convert.ToHexString(await System.Security.Cryptography.SHA1.HashDataAsync(cachedStream)).ToLowerInvariant();
+    var cacheManifest = new
+    {
+        schema_version = 1,
+        packages = new Dictionary<string, object>
+        {
+            ["client-language-pack_ru-ru_x64.cab"] = new
+            {
+                file = "client-language-pack_ru-ru_x64.cab", size = cachedInfo.Length,
+                sha1 = cachedSha1, sha256 = cachedSha256, api_sha1 = cachedSha1,
+                source_host = "download.microsoft.com", downloaded_at = DateTimeOffset.UtcNow
+            }
+        }
+    };
+    await File.WriteAllTextAsync(Path.Combine(autoCache, "package_manifest.json"),
+        JsonSerializer.Serialize(cacheManifest));
+    Check(await UupDumpClient.VerifyManagedCacheFileAsync(cachedPackage, CancellationToken.None),
+        "verify legacy-compatible managed package cache manifest");
+    await File.WriteAllTextAsync(cachedPackage, "tampered cache content");
+    Check(!await UupDumpClient.VerifyManagedCacheFileAsync(cachedPackage, CancellationToken.None),
+        "reject tampered managed cache package");
+
     // Exercise the legacy manifest contract beyond the happy path: checkpoints must
     // precede exactly one target LCU, and paths/types/duplicates must be rejected.
     var checkpointPath = Path.Combine(folder, "checkpoint.cab");
