@@ -38,7 +38,7 @@
 - Static validation checks the ISO structure and whether images can be read, but cannot guarantee installation on every hardware configuration. Test the ISO in a separate VM or on a test device before deployment. OOBE can affect the preferred UI language of the first user.
 ## Run
 
-1. Download `LocaLizard.exe` from the [0.1.1.3 release](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.1.1).
+1. Download `LocaLizard.exe` from the [0.1.1.3 release](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.1.3).
 2. Run the application. The main window runs without elevation: drag the target ISO into the first drop zone and the Russian donor ISO into the separate zone in the language-components section. Approve the UAC prompt when the application starts an operation that requires administrator privileges.
 3. Select the source Windows ISO, output ISO path, and working directory.
 4. If needed, specify a Russian ISO source, FOD / Language and Optional Features sources, and an update catalog.
