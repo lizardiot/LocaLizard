@@ -110,7 +110,7 @@ public sealed class IsoBuildService
             foreach (var item in imagePlan)
             {
                 ct.ThrowIfCancellationRequested();
-                var candidates = FindMatchingPackages(packages, item.Info);
+                var candidates = await FindVerifiedMatchingPackagesAsync(packages, item.Info, ct);
                 if (candidates.Count == 0)
                 {
                     Status?.Invoke($"Ищу Client Language Pack ru-RU для {item.Info.BuildFamily}/{item.Info.NormalizedArchitecture}…");
@@ -432,6 +432,20 @@ public sealed class IsoBuildService
         finally { await DismountIsoAsync(output); }
     }
 
+    private async Task<List<string>> FindVerifiedMatchingPackagesAsync(IEnumerable<string> all, ImageInfo image, CancellationToken ct)
+    {
+        var verified = new List<string>();
+        foreach (var candidate in FindMatchingPackages(all, image))
+        {
+            ct.ThrowIfCancellationRequested();
+            if (await UupDumpClient.VerifyManagedCacheFileAsync(candidate, ct))
+                verified.Add(candidate);
+            else
+                Log?.Invoke($"Автоматический кэш пакета повреждён или не подтверждён манифестом: {Path.GetFileName(candidate)}.");
+        }
+        return verified;
+    }
+
     private static List<string> FindPackages(string root) =>
         Directory.Exists(root)
             ? Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
@@ -440,24 +454,8 @@ public sealed class IsoBuildService
             : [];
 
     private static List<string> FindMatchingPackages(IEnumerable<string> all, ImageInfo image) =>
-        all.Where(p =>
-        {
-            var name = Path.GetFileName(p).ToLowerInvariant();
-            if (name == "update.mum")
-                return (Path.GetDirectoryName(p) ?? "").Contains("client-languagepack", StringComparison.OrdinalIgnoreCase);
-            if (!name.EndsWith(".cab") || !name.Contains("ru-ru") ||
-                new[] { "server", "winpe", "setup", "recovery", "languagefeatures", "local-experience-pack" }.Any(name.Contains))
-                return false;
-            if (!new[] { "client-language-pack", "client-languagepack", "clientlanguagepack", "language-pack", "languagepack" }.Any(name.Contains))
-                return false;
-            return image.NormalizedArchitecture switch
-            {
-                "x64" => name.Contains("x64") || name.Contains("amd64") || name.Contains("x86_64"),
-                "arm64" => name.Contains("arm64"),
-                "x86" => name.Contains("x86") && !name.Contains("x86_64"),
-                _ => false
-            };
-        }).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        all.Where(p => WindowsImageService.IsClientLp(p, image.NormalizedArchitecture))
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
     private static void ValidateMedia(string media)
     {
