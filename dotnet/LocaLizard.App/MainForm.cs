@@ -191,13 +191,12 @@ public sealed class MainForm : Form
     private async Task StartAsync(RunOptions? requestedOptions = null)
     {
         if (cancellation is not null) return;
-        if (string.IsNullOrWhiteSpace(source.Text) || string.IsNullOrWhiteSpace(output.Text))
+        var options = requestedOptions ?? CurrentOptions();
+        if (string.IsNullOrWhiteSpace(options.SourceIso) || string.IsNullOrWhiteSpace(options.OutputIso))
         {
             MessageBox.Show(this, "Укажите входной и выходной ISO.", AppInfo.Name, MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
-
-        var options = requestedOptions ?? CurrentOptions();
         if (requestedOptions is null &&
             MessageBox.Show(this, "Исходный ISO не изменяется. Для DISM и монтирования ISO нужны повышенные права. Продолжить?",
                 AppInfo.Name, MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
@@ -518,7 +517,7 @@ public sealed class MainForm : Form
             ?? throw new IOException("Не удалось определить букву ISO.");
         try
         {
-            var sources = Path.Combine(drive + "\\\\", "sources");
+            var sources = Path.Combine(drive + Path.DirectorySeparatorChar, "sources");
             var imageService = new WindowsImageService(runner);
             var wim = Directory.EnumerateFiles(sources, "install*.wim").FirstOrDefault()
                 ?? Directory.EnumerateFiles(sources, "install*.esd").FirstOrDefault();
