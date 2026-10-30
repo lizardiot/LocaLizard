@@ -16,6 +16,9 @@ public sealed record RunOptions
     public string? FodDirectory { get; init; }
     public string? UpdatesDirectory { get; init; }
     public bool KeepWorkFiles { get; init; } = true;
+    public bool ProcessSetup { get; init; } = true;
+    public bool SplitWim { get; init; }
+    public bool RunHyperVTest { get; init; }
 }
 
 public sealed record ImageInfo(int Index, string Name, string Architecture, string Version)
