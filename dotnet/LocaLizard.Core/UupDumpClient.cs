@@ -267,7 +267,7 @@ public sealed class UupDumpClient : IDisposable
     {
         if (!root.TryGetProperty("response", out var response) || response.ValueKind != JsonValueKind.Object)
             throw new InvalidDataException("Ответ UUP Dump не содержит response.");
-        if (response.TryGetProperty("error", out var error) && error.GetString() == "SEARCH_NO_RESULTS") return [];
+        if (response.TryGetProperty("error", out var error) && error.ValueKind == JsonValueKind.String && error.GetString() == "SEARCH_NO_RESULTS") return [];
         if (!response.TryGetProperty("langList", out var value))
             throw new InvalidDataException("UUP Dump response.langList отсутствует.");
         var items = value.ValueKind switch
