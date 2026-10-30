@@ -156,7 +156,7 @@ public sealed class MainForm : Form
                 AppInfo.Name, MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
 
         cancellation = new CancellationTokenSource();
-        start.Enabled = false; patch.Enabled = false; cancel.Enabled = true; log.Clear();
+        start.Enabled = false; patch.Enabled = false; catalog.Enabled = false; cancel.Enabled = true; log.Clear();
         SaveSettings();
         var service = new IsoBuildService();
         service.ConfirmHyperVSetup = ConfirmHyperVSetupAsync;
@@ -182,7 +182,7 @@ public sealed class MainForm : Form
         finally
         {
             cancellation.Dispose(); cancellation = null;
-            start.Enabled = true; patch.Enabled = true; cancel.Enabled = false;
+            start.Enabled = true; patch.Enabled = true; catalog.Enabled = true; cancel.Enabled = false;
         }
     }
 
@@ -409,7 +409,7 @@ public sealed class MainForm : Form
             ?? throw new IOException("Не удалось определить букву ISO.");
         try
         {
-            var sources = Path.Combine(drive + "\\\\", "sources");
+            var sources = Path.Combine(drive + "\\", "sources");
             var imageService = new WindowsImageService(runner);
             var wim = Directory.EnumerateFiles(sources, "install*.wim").FirstOrDefault()
                 ?? Directory.EnumerateFiles(sources, "install*.esd").FirstOrDefault();
