@@ -325,7 +325,7 @@ public sealed class MicrosoftUpdateCatalogClient : IDisposable
             var sizeMatch = Regex.Match(markup,
                 "\\[" + Regex.Escape(index) + "\\]\\.(?:size|fileSize)\\s*=\\s*['\"]?(\\d+)", RegexOptions.IgnoreCase);
             var fileName = fileMatch.Success ? WebUtility.HtmlDecode(fileMatch.Groups[1].Value).Trim()
-                : Path.GetFileName(uri.AbsolutePath);
+                : Path.GetFileName(uri.AbsolutePath) ?? "";
             fileName = Path.GetFileName(fileName.Replace('\\', '/'));
             var extension = Path.GetExtension(fileName);
             if (string.IsNullOrWhiteSpace(fileName) ||
