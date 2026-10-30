@@ -90,7 +90,7 @@ public sealed class IsoBuildService
 
             var packages = FindPackages(packageRoot);
             var updatePlan = string.IsNullOrWhiteSpace(options.UpdatesDirectory)
-                ? null : await UpdateManifestValidator.LoadAsync(options.UpdatesDirectory, cancellationToken: ct);
+                ? null : await UpdateManifestValidator.LoadAsync(options.UpdatesDirectory, ct: ct);
             var completed = 0;
             foreach (var item in imagePlan)
             {
