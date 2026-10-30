@@ -25,6 +25,8 @@ jobs:
         run: dotnet build dotnet/LocaLizard.sln -c Release
       - name: Run C# smoke tests
         run: dotnet run --project dotnet/LocaLizard.SmokeTests/LocaLizard.SmokeTests.csproj -c Release
+      - name: Run Windows DISM WIM integration tests
+        run: dotnet run --project dotnet/LocaLizard.WindowsIntegrationTests/LocaLizard.WindowsIntegrationTests.csproj -c Release
       - name: Publish standalone Windows x64 app
         run: dotnet publish dotnet/LocaLizard.App/LocaLizard.App.csproj -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true /p:IncludeNativeLibrariesForSelfExtract=true
       - name: Upload preview artifact
