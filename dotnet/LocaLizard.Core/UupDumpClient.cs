@@ -424,13 +424,10 @@ public sealed class UupDumpClient : IDisposable
                !new[] { "server", "azure stack", "hci", "insider", "canary", "dev channel", "beta channel", "cumulative update", "servicing stack", "dynamic update" }.Any(title.Contains);
     }
 
-    internal static bool IsClientLp(UupFile file)
-    {
-        var n = file.Name.ToLowerInvariant();
-        return n.Contains("ru-ru") && (n.EndsWith(".cab") || n.EndsWith(".esd")) &&
-               !new[] { "server", "winpe", "setup", "recovery", "languagefeatures", "local-experience-pack" }.Any(n.Contains) &&
-               new[] { "client-language-pack", "client-languagepack", "clientlanguagepack", "language-pack", "languagepack" }.Any(n.Contains);
-    }
+    internal static bool IsClientLp(UupFile file, string architecture) =>
+        (file.Name.EndsWith(".cab", StringComparison.OrdinalIgnoreCase) ||
+         file.Name.EndsWith(".esd", StringComparison.OrdinalIgnoreCase)) &&
+        WindowsImageService.IsClientLpName(file.Name, architecture);
 
     private static string Text(JsonElement element, string property) =>
         element.TryGetProperty(property, out var item) && item.ValueKind == JsonValueKind.String ? item.GetString() ?? "" : "";
