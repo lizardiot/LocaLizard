@@ -86,6 +86,66 @@ updateFiles[0].fileName = 'windows11.0-kb5123456-x64.msu';
 Check(MicrosoftUpdateCatalogClient.ExtractDownloads(evilCatalogHtml).Count == 0,
     "Catalog rejects untrusted download hosts");
 
+using (var uupBuildsDoc = JsonDocument.Parse("""
+{
+  "response": {
+    "builds": {
+      "0": { "uuid": "first", "title": "Windows 11, version 24H2", "build": "10.0.26100.1", "arch": "amd64" },
+      "2": { "uuid": "third", "title": "Windows 11, version 24H2", "build": "10.0.26100.2", "arch": "amd64" }
+    }
+  }
+}
+"""))
+{
+    var rows = UupDumpClient.GetBuilds(uupBuildsDoc.RootElement).ToArray();
+    Check(rows.Length == 2 && rows[1].GetProperty("uuid").GetString() == "third",
+        "UUP Dump sparse object build results");
+    Check(UupDumpClient.CandidateMatches(rows[0], 26100, "x64"),
+        "UUP Dump client build selection");
+    Check(!UupDumpClient.CandidateMatches(rows[0], 19044, "x64),
+        "UUP Dump exact build family match");
+}
+using (var uupNoResultsDoc = JsonDocument.Parse("""{"response":{"error":"SEARCH_NO_RESULTS"}}"""))
+    Check(!UupDumpClient.GetBuilds(uupNoResultsDoc.RootElement).Any(),
+        "UUP Dump SEARCH_NO_RESULTS is treated as an empty result");
+using (var uupBadBuildDoc = JsonDocument.Parse("""{"response":{"builds":{"0":"26100"}}}"""))
+    Throws<InvalidDataException>(() => UupDumpClient.GetBuilds(uupBadBuildDoc.RootElement).ToArray(),
+        "UUP Dump rejects malformed sparse build entries");
+using (var uupLangDoc = JsonDocument.Parse("""{"response":{"langList":{"0":"ru-RU","1":"en-US"}}}"""))
+    Check(UupDumpClient.GetLanguages(uupLangDoc.RootElement).Contains("ru-ru"),
+        "UUP Dump parses language object entries");
+using (var uupBadLangDoc = JsonDocument.Parse("""{"response":{"languages":["ru-RU"]}}"""))
+    Throws<InvalidDataException>(() => UupDumpClient.GetLanguages(uupBadLangDoc.RootElement),
+        "UUP Dump requires langList");
+using (var uupFilesDoc = JsonDocument.Parse("""
+{
+  "response": {
+    "files": {
+      "Microsoft-Windows-Client-LanguagePack-Package_ru-ru_x64.cab": {
+        "url": "https://download.microsoft.com/client-language-pack.cab",
+        "sha1": "0123456789012345678901234567890123456789",
+        "size": 1024
+      },
+      "bad-entry.cab": "unexpected-string"
+    }
+  }
+}
+"""))
+{
+    var files = UupDumpClient.GetFiles(uupFilesDoc.RootElement);
+    Check(files.Count == 1 && files[0].Name.StartsWith("Microsoft-Windows-Client", StringComparison.Ordinal),
+        "UUP Dump ignores malformed string file metadata");
+    Check(UupDumpClient.IsClientLp(files[0]), "UUP Dump recognizes Client Language Pack CAB");
+}
+var uupEsd = new UupDumpClient.UupFile(
+    "Microsoft-Windows-Client-LanguagePack-Package_ru-ru~31bf3856ad364e35~amd64~ru-ru~.esd",
+    new Uri("https://download.microsoft.com/client-language-pack.esd"), new string('a', 40), 2048);
+Check(UupDumpClient.IsClientLp(uupEsd), "UUP Dump recognizes Client Language Pack ESD");
+var uupServer = JsonDocument.Parse("""{"title":"Update for Microsoft server operating system (26100.33674)","build":"10.0.26100.33674","arch":"amd64"}""");
+Check(!UupDumpClient.CandidateMatches(uupServer.RootElement, 26100, "x64"),
+    "UUP Dump rejects server packages");
+uupServer.Dispose();
+
 var settings = JsonSerializer.Serialize(new AppSettings { SourceIso = "C:\\input.iso", SplitWim = true });
 Check(settings.Contains("source_iso", StringComparison.Ordinal) && settings.Contains("split_wim", StringComparison.Ordinal),
     "Python settings keys retained during migration");
