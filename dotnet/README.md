@@ -20,6 +20,8 @@ dotnet run --project dotnet/LocaLizard.SmokeTests/LocaLizard.SmokeTests.csproj -
 dotnet publish dotnet/LocaLizard.App/LocaLizard.App.csproj -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true
 ```
 
+Значок приложения хранится в `assets/LocaLizard.ico`: MSBuild встраивает его в EXE, а главное окно использует тот же значок при запуске.
+
 Приложение использует штатные Windows-инструменты DISM, PowerShell, Robocopy, Mount-DiskImage и `oscdimg.exe` из Windows ADK Deployment Tools. Установка ADK требует прав администратора, официального установщика Microsoft и проверки его Authenticode-подписи.
 
 ## Перенесённая функциональность
