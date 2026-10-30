@@ -1,3 +1,4 @@
+using System.Net;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -23,9 +24,7 @@ public sealed class UupDumpClient : IDisposable
         if (family == 0 || !BuildNumbers.IsSupportedArchitecture(arch))
             throw new InvalidOperationException($"Сборка/архитектура образа не распознаны: {image.Version}/{image.Architecture}");
 
-        using var listResponse = await _http.GetAsync($"{Api}/listid.php?search={family}&sortByDate=1", ct);
-        listResponse.EnsureSuccessStatusCode();
-        using var listDoc = JsonDocument.Parse(await listResponse.Content.ReadAsStreamAsync(ct));
+        using var listDoc = await GetApiDocumentAsync($"{Api}/listid.php?search={family}&sortByDate=1", true, ct);
         var builds = GetBuilds(listDoc.RootElement)
             .Where(b => CandidateMatches(b, family, arch))
             .Take(32).ToArray();
@@ -39,14 +38,10 @@ public sealed class UupDumpClient : IDisposable
             var title = Text(build, "title");
             try
             {
-                using var langsResponse = await _http.GetAsync($"{Api}/listlangs.php?id={Uri.EscapeDataString(id)}", ct);
-                langsResponse.EnsureSuccessStatusCode();
-                using var langsDoc = JsonDocument.Parse(await langsResponse.Content.ReadAsStreamAsync(ct));
+                using var langsDoc = await GetApiDocumentAsync($"{Api}/listlangs.php?id={Uri.EscapeDataString(id)}", true, ct);
                 if (!GetLanguages(langsDoc.RootElement).Contains("ru-ru", StringComparer.OrdinalIgnoreCase)) continue;
 
-                using var filesResponse = await _http.GetAsync($"{Api}/get.php?id={Uri.EscapeDataString(id)}&lang=ru-ru", ct);
-                filesResponse.EnsureSuccessStatusCode();
-                using var filesDoc = JsonDocument.Parse(await filesResponse.Content.ReadAsStreamAsync(ct));
+                using var filesDoc = await GetApiDocumentAsync($"{Api}/get.php?id={Uri.EscapeDataString(id)}&lang=ru-ru", false, ct);
                 var package = GetFiles(filesDoc.RootElement).FirstOrDefault(IsClientLp);
                 if (package is null) continue;
 
@@ -74,6 +69,76 @@ public sealed class UupDumpClient : IDisposable
         }
         throw new InvalidOperationException("Не удалось получить совместимый Client Language Pack ru-RU из UUP Dump.");
     }
+
+    private async Task<JsonDocument> GetApiDocumentAsync(string url, bool searchNoResultsIsEmpty, CancellationToken ct)
+    {
+        using var response = await _http.GetAsync(url, ct);
+        var payload = await response.Content.ReadAsStringAsync(ct);
+        if (!response.IsSuccessStatusCode)
+        {
+            if (!(searchNoResultsIsEmpty && response.StatusCode == HttpStatusCode.BadRequest && IsSearchNoResults(payload)))
+                response.EnsureSuccessStatusCode();
+        }
+        return JsonDocument.Parse(payload);
+    }
+
+    private static bool IsSearchNoResults(string payload)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(payload);
+            return document.RootElement.TryGetProperty("response", out var response) &&
+                   response.ValueKind == JsonValueKind.Object &&
+                   response.TryGetProperty("error", out var error) &&
+                   error.ValueKind == JsonValueKind.String &&
+                   string.Equals(error.GetString(), "SEARCH_NO_RESULTS", StringComparison.Ordinal);
+        }
+        catch (JsonException) { return false; }
+    }
+
+    public async Task<string> DiagnoseAsync(CancellationToken ct)
+    {
+        var families = new (string Name, int Build)[]
+        {
+            ("Windows 11 IoT Enterprise LTSC 2024", 26100),
+            ("Windows 10 IoT Enterprise LTSC 2021", 19044),
+            ("Windows 10 IoT Enterprise LTSC 2019", 17763),
+            ("Windows 10 IoT Enterprise LTSC 2016", 14393),
+            ("Windows 10 IoT Enterprise LTSC 2015", 10240)
+        };
+        var report = new List<string> { "Проверка доступности клиентских сборок UUP Dump:" };
+        foreach (var family in families)
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                using var document = await GetApiDocumentAsync(
+                    $"{Api}/listid.php?search={family.Build}&sortByDate=1", true, ct);
+                var builds = GetBuilds(document.RootElement)
+                    .Where(x => CandidateMatchesAnyArchitecture(x, family.Build))
+                    .ToArray();
+                var architectures = builds.Select(x => NormalizeArchitecture(Text(x, "arch")))
+                    .Where(BuildNumbers.IsSupportedArchitecture)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(x => x, StringComparer.OrdinalIgnoreCase);
+                report.Add($"{family.Name} (сборка {family.Build}): {builds.Length} записей; архитектуры: " +
+                           (string.Join(", ", architectures) is { Length: > 0 } value ? value : "нет"));
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex) { report.Add($"{family.Name} (сборка {family.Build}): ошибка запроса — {ex.Message}"); }
+        }
+        return string.Join(Environment.NewLine, report);
+    }
+
+    private static bool CandidateMatchesAnyArchitecture(JsonElement build, int family) =>
+        new[] { "x64", "x86", "arm64" }.Any(arch => CandidateMatches(build, family, arch));
+
+    private static string NormalizeArchitecture(string architecture) => architecture.ToLowerInvariant() switch
+    {
+        "amd64" or "x86_64" => "x64",
+        "aarch64" => "arm64",
+        var value => value
+    };
 
     private async Task DownloadAsync(UupFile package, string target, CancellationToken ct)
     {
@@ -175,26 +240,36 @@ public sealed class UupDumpClient : IDisposable
         finally { try { Directory.Delete(temporary, true); } catch { } }
     }
 
-    private static IEnumerable<JsonElement> GetBuilds(JsonElement root)
+    internal static IEnumerable<JsonElement> GetBuilds(JsonElement root)
     {
         if (!root.TryGetProperty("response", out var response) || response.ValueKind != JsonValueKind.Object)
             throw new InvalidDataException("Ответ UUP Dump не содержит response.");
         if (response.TryGetProperty("error", out var error) && error.ValueKind == JsonValueKind.String &&
-            error.GetString() is { Length: > 0 } message && message != "SEARCH_NO_RESULTS")
-            throw new InvalidDataException("UUP Dump: " + message);
-        if (!response.TryGetProperty("builds", out var builds)) return [];
-        return builds.ValueKind switch
+            error.GetString() is { Length: > 0 } message)
+        {
+            if (message == "SEARCH_NO_RESULTS") return [];
+            throw new InvalidDataException("UUP Dump API: " + message);
+        }
+        if (!response.TryGetProperty("builds", out var builds))
+            throw new InvalidDataException("UUP Dump response.builds отсутствует.");
+        var rows = builds.ValueKind switch
         {
             JsonValueKind.Array => builds.EnumerateArray().ToArray(),
             JsonValueKind.Object => builds.EnumerateObject().Select(p => p.Value).ToArray(),
             _ => throw new InvalidDataException("response.builds имеет неизвестный формат.")
         };
+        if (rows.Any(x => x.ValueKind != JsonValueKind.Object))
+            throw new InvalidDataException("UUP Dump response.builds содержит некорректные элементы.");
+        return rows;
     }
 
-    private static IReadOnlyList<string> GetLanguages(JsonElement root)
+    internal static IReadOnlyList<string> GetLanguages(JsonElement root)
     {
-        if (!root.TryGetProperty("response", out var response) ||
-            !response.TryGetProperty("langList", out var value)) return [];
+        if (!root.TryGetProperty("response", out var response) || response.ValueKind != JsonValueKind.Object)
+            throw new InvalidDataException("Ответ UUP Dump не содержит response.");
+        if (response.TryGetProperty("error", out var error) && error.GetString() == "SEARCH_NO_RESULTS") return [];
+        if (!response.TryGetProperty("langList", out var value))
+            throw new InvalidDataException("UUP Dump response.langList отсутствует.");
         var items = value.ValueKind switch
         {
             JsonValueKind.Array => value.EnumerateArray().ToArray(),
@@ -205,7 +280,7 @@ public sealed class UupDumpClient : IDisposable
             .Select(x => x.GetString()!.Trim().ToLowerInvariant()).ToArray();
     }
 
-    private static IReadOnlyList<UupFile> GetFiles(JsonElement root)
+    internal static IReadOnlyList<UupFile> GetFiles(JsonElement root)
     {
         if (!root.TryGetProperty("response", out var response) ||
             !response.TryGetProperty("files", out var files) || files.ValueKind != JsonValueKind.Object)
@@ -216,7 +291,7 @@ public sealed class UupDumpClient : IDisposable
             .ToArray();
     }
 
-    private static bool CandidateMatches(JsonElement build, int family, string arch)
+    internal static bool CandidateMatches(JsonElement build, int family, string arch)
     {
         var title = Text(build, "title").ToLowerInvariant();
         var foundArch = Text(build, "arch").ToLowerInvariant() switch
@@ -238,7 +313,7 @@ public sealed class UupDumpClient : IDisposable
                !new[] { "server", "azure stack", "hci", "insider", "canary", "dev channel", "beta channel", "cumulative update", "servicing stack", "dynamic update" }.Any(title.Contains);
     }
 
-    private static bool IsClientLp(UupFile file)
+    internal static bool IsClientLp(UupFile file)
     {
         var n = file.Name.ToLowerInvariant();
         return n.Contains("ru-ru") && (n.EndsWith(".cab") || n.EndsWith(".esd")) &&
@@ -256,5 +331,5 @@ public sealed class UupDumpClient : IDisposable
         Uri.TryCreate(Text(element, property), UriKind.Absolute, out var uri) ? uri : null;
 
     public void Dispose() => _http.Dispose();
-    private sealed record UupFile(string Name, Uri? Url, string? Sha1, long? Size);
+    internal sealed record UupFile(string Name, Uri? Url, string? Sha1, long? Size);
 }
