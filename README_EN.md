@@ -1,4 +1,4 @@
-# LocaLizard 0.1.0.3
+# LocaLizard 0.1.0.4
 
 **LocaLizard** is a graphical utility for preparing Windows IoT Enterprise LTSC installation media with Russian as the default language.
 
@@ -6,7 +6,7 @@
 
 - [Latest LocaLizard release](https://github.com/lizardiot/LocaLizard/releases/latest)
 - [All releases](https://github.com/lizardiot/LocaLizard/releases)
-- [LocaLizard.exe for Windows x64 — version 0.1.0.3](https://github.com/lizardiot/LocaLizard/releases/download/0.1.0.3/LocaLizard.exe)
+- [LocaLizard.exe for Windows x64 — version 0.1.0.4](https://github.com/lizardiot/LocaLizard/releases/download/0.1.0.4/LocaLizard.exe)
 
 ## Features
 
@@ -15,6 +15,7 @@
 - Filters Preview/Insider/Canary, Windows Server, and architecture mismatches before download; the user reviews and confirms the selected entry.
 - Downloads from trusted Microsoft Update HTTPS domains, verifies the available Catalog SHA-1, and calculates SHA-256. Each prepared update set includes `updates.json`, `catalog-source.json`, and `SHA256.txt`.
 - Finds a compatible Client Language Pack ru-RU in a matching Russian ISO, the managed cache, or through the UUP Dump API.
+- Detects the image build family and architecture independently of the Windows 10/11 label; covers LTSC 2015, 2016, 2019, 2021, and 2024. Language-pack discovery uses the ISO's exact build, a compatible donor ISO, cache, and available UUP Dump entries.
 - Configures the Russian locale through DISM and installs available Language Features from FOD / Language and Optional Features sources.
 - When compatible resources are available, processes Windows Setup `boot.wim` index 2, WinPE index 1, and nested WinRE.
 - Supports WIM/ESD and input split-WIM `.swm` files; optionally splits the output WIM into SWM parts for FAT32 and processes an existing WIM into a new file.
@@ -26,14 +27,14 @@
 ## Limitations and environment requirements
 
 - Latest-LCU search uses the build family and architecture detected from the selected ISO. If a build has no predefined query profile, the utility searches by numeric OS build and tries fallback Microsoft Update Catalog queries. Automatic download still requires an unambiguous stable update matching the exact build family and architecture. If the Catalog HTML changes or no matching entry is returned, the utility stops rather than guessing; a KB can be entered manually.
-- Client Language Pack discovery checks the local cache, a donor ISO, and up to five recent stable UUP Dump entries for the same build family and architecture. Localization of an image index cannot continue if no compatible standalone CAB is available from trusted sources. DISM performs the final applicability check.
+- Client Language Pack discovery checks the local cache, a donor ISO, and up to five recent stable UUP Dump entries for the same build family and architecture. Localization of an image index cannot continue if no compatible standalone CAB is available from trusted sources. DISM performs the final applicability check. This covers LTSC build families 10240, 14393, 17763, 19044, and 26100; UUP Dump may not retain entries for every older release, so a compatible donor ISO or local package may be required.
 - Extra language capabilities (Basic, Fonts, OCR, Speech, Text-to-Speech, Handwriting) are attempted individually and recorded in the JSON audit. A capability can remain unavailable when compatible files are missing from the selected FOD/Language and Optional Features source and cannot be obtained through the servicing sources used by DISM.
 - Setup/WinPE and WinRE use compatible Russian resources from the selected source and/or the official ADK WinPE Add-on. If the add-on cannot be downloaded or signature-verified, disk space is insufficient, or DISM rejects the CABs, that part of the image is left unchanged; details are written to the log and audit.
 - The interactive Hyper-V test requires Windows with Hyper-V enabled, administrator privileges, and VMConnect. It launches a temporary VM without networking but asks the user to visually confirm the Windows Setup screen: a running VM alone does not prove that Setup appeared. This interactive test is not run in GitHub Actions.
 - Static validation checks the ISO structure and whether images can be read, but cannot guarantee installation on every hardware configuration. Test the ISO in a separate VM or on a test device before deployment. OOBE can affect the preferred UI language of the first user.
 ## Run
 
-1. Download `LocaLizard.exe` from the [0.1.0.3 release](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.0.3).
+1. Download `LocaLizard.exe` from the [0.1.0.4 release](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.0.4).
 2. Run the application. The main window runs without elevation: drag the target ISO into the first drop zone and the Russian donor ISO into the separate zone in the language-components section. Approve the UAC prompt when the application starts an operation that requires administrator privileges.
 3. Select the source Windows ISO, output ISO path, and working directory.
 4. If needed, specify a Russian ISO source, FOD / Language and Optional Features sources, and an update catalog.
@@ -43,8 +44,11 @@ You do not need to install Python or development tools manually. The source ISO 
 
 ## Version history
 
-### [0.1.0.3](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.0.3) — current release
-The UUP Dump check now uses `/listid.php`, reads the `response.builds` list, and reports malformed/API-error responses separately. Its diagnostic query searches Windows 11 builds broadly; compatibility of language packages with a specific ISO is still checked independently.
+### [0.1.0.4](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.0.4) — current release
+UUP Dump diagnostics now checks Windows IoT Enterprise LTSC 2015/2016/2019/2021/2024 by their build families (10240/14393/17763/19044/26100). Language-pack discovery still uses the ISO's actual build and architecture; donor ISOs and local packages remain available for older releases absent from UUP Dump.
+
+### [0.1.0.3](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.0.3) — previous release
+The UUP Dump check uses `/listid.php` and separately checks all five Windows IoT Enterprise LTSC build families: 10240, 14393, 17763, 19044, and 26100.
 
 ### [0.1.0.2](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.0.2) — previous release
 The main window is now responsive: when its height is reduced, controls and text remain accessible through scrolling instead of being clipped. Columns and long labels adapt to the available width, action buttons flow into multiple rows, and the minimum window size is smaller.

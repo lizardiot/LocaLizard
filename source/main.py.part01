@@ -36,7 +36,7 @@ except Exception:
     BaseTk = tk.Tk
 
 APP_NAME = "LocaLizard"
-APP_VERSION = "0.1.0.3"
+APP_VERSION = "0.1.0.4"
 UUP_API = "https://api.uupdump.net"
 UUP_SITE = "https://uupdump.net/"
 def _ll_uup_listid_url(search_term: str) -> str:
@@ -45,19 +45,87 @@ def _ll_uup_listid_url(search_term: str) -> str:
     return UUP_API + "/listid.php?" + urllib.parse.urlencode(params)
 
 
-def _ll_uup_response_builds(data) -> list:
-    """Extract a validated build list from a UUP Dump JSON API response."""
-    if not isinstance(data, dict):
-        raise RuntimeError("UUP Dump вернул JSON не в виде объекта.")
-    response = data.get("response")
+def _ll_uup_response_body_builds(response) -> list:
+    """Validate the response object returned by UUP Dump listid.php."""
     if not isinstance(response, dict):
-        raise RuntimeError("В ответе UUP Dump отсутствует объект response.")
+        raise RuntimeError("UUP Dump вернул response не в виде объекта.")
     if response.get("error"):
         raise RuntimeError(f"Ошибка UUP Dump API: {response['error']}")
     builds = response.get("builds")
     if not isinstance(builds, list):
         raise RuntimeError("В ответе UUP Dump отсутствует список response.builds.")
     return builds
+
+
+def _ll_uup_response_builds(data) -> list:
+    """Extract a validated build list from a complete UUP Dump JSON response."""
+    if not isinstance(data, dict):
+        raise RuntimeError("UUP Dump вернул JSON не в виде объекта.")
+    return _ll_uup_response_body_builds(data.get("response"))
+
+
+# Microsoft IoT Enterprise LTSC releases and their OS build families.
+_LL_UUP_IOT_LTSC_FAMILIES = (
+    ("Windows 11 IoT Enterprise LTSC 2024", 26100),
+    ("Windows 10 IoT Enterprise LTSC 2021", 19044),
+    ("Windows 10 IoT Enterprise LTSC 2019", 17763),
+    ("Windows 10 IoT Enterprise LTSC 2016", 14393),
+    ("Windows 10 IoT Enterprise LTSC 2015", 10240),
+)
+
+
+def _ll_uup_item_build_family(item) -> int | None:
+    if not isinstance(item, dict):
+        return None
+    raw = str(item.get("build", "")).strip()
+    numbers = re.findall(r"[0-9]+", raw)
+    if not numbers:
+        return None
+    if raw.startswith("10.0.") and len(numbers) >= 3:
+        return int(numbers[2])
+    return int(numbers[0])
+
+
+def _ll_uup_diagnostic_report(fetch_builds) -> str:
+    """Query each known IoT Enterprise LTSC build family independently."""
+    lines = ["Проверка семейств Windows IoT Enterprise LTSC в UUP Dump:"]
+    successful_queries = 0
+    errors = []
+    for release_name, family in _LL_UUP_IOT_LTSC_FAMILIES:
+        try:
+            builds = fetch_builds(str(family))
+            if not isinstance(builds, list):
+                raise RuntimeError("UUP Dump вернул неожиданный формат списка сборок.")
+            matching = [
+                item for item in builds
+                if _ll_uup_item_build_family(item) == family
+            ]
+            architectures = sorted({
+                str(item.get("arch", "")).strip()
+                for item in matching
+                if isinstance(item, dict) and str(item.get("arch", "")).strip()
+            })
+            line = f"- {release_name} (сборка {family}): {len(matching)} записей"
+            if architectures:
+                line += f"; архитектуры: {', '.join(architectures)}"
+            elif not matching:
+                line += "; в каталоге UUP Dump записи этой сборки не найдены"
+            lines.append(line)
+            successful_queries += 1
+        except Exception as exc:
+            lines.append(f"- {release_name} (сборка {family}): ошибка запроса — {exc}")
+            errors.append(f"{family}: {exc}")
+    if successful_queries == 0:
+        raise RuntimeError("Не удалось получить данные ни для одного семейства LTSC. " + " | ".join(errors))
+    if errors:
+        lines.append("Некоторые запросы не выполнены; остальные результаты получены успешно.")
+    lines.extend([
+        "",
+        "UUP Dump содержит не все исторические выпуски. Нулевой результат для старой ветки не означает, "
+        "что ISO не поддерживается: используйте совместимый донорский ISO или локальный пакет, если этой ветки нет в UUP.",
+        "Совместимость Client Language Pack и FOD с выбранным образом окончательно проверяется DISM."
+    ])
+    return "\n".join(lines)
 
 
 # Official Microsoft ADK bootstrap (Deployment Tools only; downloaded on demand).

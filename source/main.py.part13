@@ -530,9 +530,12 @@ def _ll_check_sources(self):
     def background():
         lines=[_ll_local_plan(self),"","Проверка доступности UUP Dump..."]
         try:
-            data=Worker.api_json(UUP_API+"/listid.php?"+urllib.parse.urlencode({"search":"26100","sortByDate":"1"}))
-            lines.append(f"UUP Dump отвечает; записей сборок: {len(data.get('builds',[]))}.")
-        except Exception as exc: lines.append(f"UUP Dump недоступен/ограничивает запрос: {exc}. Проверьте кэш или ISO-источник.")
+            def fetch_builds(search_term):
+                body=Worker.api_json(_ll_uup_listid_url(search_term))
+                return _ll_uup_response_body_builds(body)
+            lines.append(_ll_uup_diagnostic_report(fetch_builds))
+        except Exception as exc:
+            lines.append(f"UUP Dump недоступен/ограничивает запрос: {exc}. Проверьте кэш или ISO-источник.")
         self.events.put(("uup","\n".join(lines)))
     threading.Thread(target=background,daemon=True,name="LocaLizardSourceCheck").start()
 

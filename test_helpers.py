@@ -422,6 +422,38 @@ class HelperTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "API"):
             main._ll_uup_response_builds({"response": {"error": "bad request"}})
 
+    def test_uup_dump_diagnostic_covers_all_iot_enterprise_ltsc_families(self):
+        self.assertEqual(
+            main._LL_UUP_IOT_LTSC_FAMILIES,
+            (
+                ("Windows 11 IoT Enterprise LTSC 2024", 26100),
+                ("Windows 10 IoT Enterprise LTSC 2021", 19044),
+                ("Windows 10 IoT Enterprise LTSC 2019", 17763),
+                ("Windows 10 IoT Enterprise LTSC 2016", 14393),
+                ("Windows 10 IoT Enterprise LTSC 2015", 10240),
+            ),
+        )
+
+    def test_uup_dump_diagnostic_queries_each_build_family_and_filters_exact_match(self):
+        requested = []
+        def fake_fetch(search_term):
+            requested.append(search_term)
+            family = int(search_term)
+            return [
+                {"build": f"10.0.{family}.1", "arch": "x64"},
+                {"build": "10.0.99999.1", "arch": "x64"},
+            ]
+
+        report = main._ll_uup_diagnostic_report(fake_fetch)
+        self.assertEqual(requested, ["26100", "19044", "17763", "14393", "10240"])
+        self.assertIn("Windows 11 IoT Enterprise LTSC 2024 (сборка 26100): 1 записей", report)
+        self.assertIn("Windows 10 IoT Enterprise LTSC 2021 (сборка 19044): 1 записей", report)
+        self.assertIn("Windows 10 IoT Enterprise LTSC 2019 (сборка 17763): 1 записей", report)
+        self.assertIn("Windows 10 IoT Enterprise LTSC 2016 (сборка 14393): 1 записей", report)
+        self.assertIn("Windows 10 IoT Enterprise LTSC 2015 (сборка 10240): 1 записей", report)
+        self.assertIn("архитектуры: x64", report)
+
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
