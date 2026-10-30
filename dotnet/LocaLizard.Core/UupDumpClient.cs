@@ -73,14 +73,24 @@ public sealed class UupDumpClient : IDisposable
 
     private async Task<JsonDocument> GetApiDocumentAsync(string url, bool searchNoResultsIsEmpty, CancellationToken ct)
     {
-        using var response = await _http.GetAsync(url, ct);
-        var payload = await response.Content.ReadAsStringAsync(ct);
-        if (!response.IsSuccessStatusCode)
+        for (var attempt = 0; attempt < 4; attempt++)
         {
-            if (!(searchNoResultsIsEmpty && response.StatusCode == HttpStatusCode.BadRequest && IsSearchNoResults(payload)))
-                response.EnsureSuccessStatusCode();
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                using var response = await _http.GetAsync(url, ct);
+                var payload = await response.Content.ReadAsStringAsync(ct);
+                if (!response.IsSuccessStatusCode &&
+                    !(searchNoResultsIsEmpty && response.StatusCode == HttpStatusCode.BadRequest && IsSearchNoResults(payload)))
+                    response.EnsureSuccessStatusCode();
+                return JsonDocument.Parse(payload);
+            }
+            catch (Exception ex) when (IsRetryable(ex, ct) && attempt < 3)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(Math.Min(8000, 1500 * Math.Pow(2, attempt))), ct);
+            }
         }
-        return JsonDocument.Parse(payload);
+        throw new IOException("UUP Dump API не ответил после четырёх попыток.");
     }
 
     private static bool IsSearchNoResults(string payload)
@@ -265,7 +275,7 @@ public sealed class UupDumpClient : IDisposable
 
     private static bool IsRetryable(Exception ex, CancellationToken ct)
     {
-        if (ct.IsCancellationRequested) return false;
+        if (ct.IsCancellationRequested || ex is InvalidDataException) return false;
         if (ex is OperationCanceledException) return true; // HttpClient timeout, not caller cancellation
         if (ex is HttpRequestException http)
         {
