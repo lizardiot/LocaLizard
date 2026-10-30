@@ -74,27 +74,6 @@
         p = filedialog.askdirectory(title="Корень Language and Optional Features / FOD ISO")
         if p: self.fod_var.set(p)
 
-def _ll_uup_listid_url(search_term: str) -> str:
-    """Build the documented UUP Dump build-list endpoint URL."""
-    params = {"search": str(search_term or ""), "sortByDate": "1"}
-    return UUP_API + "/listid.php?" + urllib.parse.urlencode(params)
-
-
-def _ll_uup_response_builds(data) -> list:
-    """Extract a validated build list from a UUP Dump JSON API response."""
-    if not isinstance(data, dict):
-        raise RuntimeError("UUP Dump вернул JSON не в виде объекта.")
-    response = data.get("response")
-    if not isinstance(response, dict):
-        raise RuntimeError("В ответе UUP Dump отсутствует объект response.")
-    if response.get("error"):
-        raise RuntimeError(f"Ошибка UUP Dump API: {response['error']}")
-    builds = response.get("builds")
-    if not isinstance(builds, list):
-        raise RuntimeError("В ответе UUP Dump отсутствует список response.builds.")
-    return builds
-
-
     def check_uup(self):
         self.status_var.set("Проверяю UUP Dump API…")
         def run():

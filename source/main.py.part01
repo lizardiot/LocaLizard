@@ -39,6 +39,27 @@ APP_NAME = "LocaLizard"
 APP_VERSION = "0.1.0.3"
 UUP_API = "https://api.uupdump.net"
 UUP_SITE = "https://uupdump.net/"
+def _ll_uup_listid_url(search_term: str) -> str:
+    """Build the documented UUP Dump build-list endpoint URL."""
+    params = {"search": str(search_term or ""), "sortByDate": "1"}
+    return UUP_API + "/listid.php?" + urllib.parse.urlencode(params)
+
+
+def _ll_uup_response_builds(data) -> list:
+    """Extract a validated build list from a UUP Dump JSON API response."""
+    if not isinstance(data, dict):
+        raise RuntimeError("UUP Dump вернул JSON не в виде объекта.")
+    response = data.get("response")
+    if not isinstance(response, dict):
+        raise RuntimeError("В ответе UUP Dump отсутствует объект response.")
+    if response.get("error"):
+        raise RuntimeError(f"Ошибка UUP Dump API: {response['error']}")
+    builds = response.get("builds")
+    if not isinstance(builds, list):
+        raise RuntimeError("В ответе UUP Dump отсутствует список response.builds.")
+    return builds
+
+
 # Official Microsoft ADK bootstrap (Deployment Tools only; downloaded on demand).
 ADK_SETUP_URL = "https://go.microsoft.com/fwlink/?linkid=2289980"
 ADK_WINPE_SETUP_URL = "https://go.microsoft.com/fwlink/?linkid=2289981"
