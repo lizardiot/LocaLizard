@@ -1,12 +1,14 @@
-# LocaLizard 0.1.1.4
+# LocaLizard 0.2.2.8
 
 **LocaLizard** — графическая утилита для подготовки установочного ISO Windows IoT Enterprise LTSC с русским языком по умолчанию.
+
+> **Версия 0.2.2.8:** основное приложение перенесено на C# / .NET 8 (Windows Forms). Исторические Python-исходники и опубликованные до этого выпуска релизы сохранены; предыдущие теги и их файлы не изменялись. Состав C#-версии и условия проверки описаны в [dotnet/README.md](dotnet/README.md).
 
 ## Скачать
 
 - [Последний релиз LocaLizard](https://github.com/lizardiot/LocaLizard/releases/latest)
 - [Все релизы](https://github.com/lizardiot/LocaLizard/releases)
-- [LocaLizard.exe для Windows x64 — версия 0.1.1.4](https://github.com/lizardiot/LocaLizard/releases/download/0.1.1.4/LocaLizard.exe)
+- [LocaLizard.exe для Windows x64 — версия 0.2.2.8](https://github.com/lizardiot/LocaLizard/releases/download/0.2.2.8/LocaLizard.exe)
 
 ## Возможности
 
@@ -38,7 +40,7 @@
 - Статическая проверка проверяет структуру ISO и читаемость образов, но не гарантирует установку на каждой конфигурации оборудования. Перед развёртыванием проверьте ISO в отдельной VM или на тестовом устройстве. OOBE может повлиять на предпочитаемый язык интерфейса первого пользователя.
 ## Запуск
 
-1. Скачайте `LocaLizard.exe` из [релиза 0.1.1.4](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.1.3).
+1. Скачайте `LocaLizard.exe` из [релиза 0.2.2.8](https://github.com/lizardiot/LocaLizard/releases/tag/0.2.2.8).
 2. Запустите программу. Главное окно работает без повышения прав: исходный ISO можно перетащить в первую область, а донорский ISO с русским языком — в отдельную область раздела языковых компонентов. Подтвердите запрос UAC, когда программа начнёт операцию, требующую прав администратора.
 3. Выберите исходный Windows ISO, путь для выходного ISO и рабочую папку.
 4. При необходимости задайте русский ISO-источник, FOD/L&O и каталог обновлений.
@@ -48,7 +50,10 @@ Python и инструменты разработки устанавливать
 
 ## История версий
 
-### [0.1.1.4](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.1.4) — текущий выпуск
+### [0.2.2.8](https://github.com/lizardiot/LocaLizard/releases/tag/0.2.2.8) — текущий выпуск
+Основное приложение перенесено на C# / .NET 8 Windows Forms. Перенесены сценарии подготовки ISO и обслуживания WIM, автоматический поиск и проверка Client Language Pack через UUP Dump, проверка целостности управляемого кэша, возобновляемая загрузка с повторами, Microsoft Update Catalog, манифесты цепочек обновлений, ADK/WinPE, Setup/WinPE/WinRE, SWM, patch-existing-WIM, аудит, UAC, drag-and-drop и диагностика UUP Dump. Добавлены регрессионные тесты и Windows DISM-интеграционный тест для двухиндексного WIM. CI проверяет сборку, тесты и автономный Windows x64 EXE. Проверка применимости языковых CAB/MSU на конкретных образах IoT LTSC, полная сборка ISO на пользовательском носителе и визуальная проверка Hyper-V остаются обязательными проверками на целевой Windows-среде; они не имитируются результатами CI.
+
+### [0.1.1.4](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.1.4) — предыдущий выпуск
 Исправлен параметр DISM для системной локали (/Set-SysLocale вместо несуществующего /Set-SystemLocale), а также разделена проверка базового Client Language Pack и последующая настройка образа: альтернативный пакет проверяется только при отказе /Add-Package. Необязательные FOD ограничены возможностями Basic, OCR, Text-to-Speech и Handwriting и запускаются только с указанным источником. Ошибки FOD больше не откатывают успешно добавленный базовый пакет; добавлены регрессионные тесты. Для полной локализации Setup по-прежнему требуется совместимый донорский ISO с каталогом sources/ru-ru.
 
 ### [0.1.1.3](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.1.3) — предыдущий выпуск

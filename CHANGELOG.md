@@ -1,3 +1,17 @@
+## [0.2.2.8] — 2026-10-31
+
+### Перенос на C# / .NET 8
+- Основное графическое приложение перенесено на WinForms/.NET 8; настройки пользователя сохраняются в %LOCALAPPDATA%\LocaLizard\settings.json.
+- Перенесены обработка ISO и WIM/ESD, DISM inventory/servicing, локализация ru-RU Client Language Pack и локали, интеграция FOD/L&O, обработка Setup/WinPE/WinRE, создание ISO и JSON-аудит.
+- Добавлены UUP Dump API-диагностика для пяти семейств IoT Enterprise LTSC, безопасная загрузка с повторными попытками и возобновлением, проверка SHA-1/размера и управляемый кэш с SHA-256-манифестом.
+- Перенесены Microsoft Update Catalog, updates.json, фильтрация архитектуры/сборки, checkpoint/LCU ordering, входные и выходные SWM, patch-existing-WIM, ADK/WinPE Add-on и опциональная проверка загрузки в Hyper-V.
+- Сохранены исторические Python-исходники и все прежние Git-теги, GitHub Releases и release assets.
+
+### Проверки и границы
+- Windows CI: успешная сборка .NET 8, регрессионные smoke tests, DISM Capture/Append/Get-WimInfo/Mount/Commit/Apply для синтетического двухиндексного WIM и публикация self-contained win-x64 приложения.
+- Интеграционный тест проверяет DISM операции с WIM, но не подменяет полный прогон установки языковых CAB/MSU на реальных Windows IoT Enterprise LTSC ISO.
+- Применимость пакетов для конкретного ISO, установка ADK/WinPE Add-on, создание реального загрузочного ISO и визуальная проверка Setup через Hyper-V должны выполняться на целевой Windows-среде с подходящими исходниками.
+
 ## [0.1.1.4] — 2026-10-30
 
 ### Исправлено
