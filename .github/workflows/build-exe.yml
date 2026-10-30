@@ -37,7 +37,7 @@ jobs:
         run: |
           $url = "https://github.com/hfiref0x/SXSEXP/releases/download/v1.4.4/sxsexp64_v1.4.4.2603.zip"
           $archive = Join-Path $env:RUNNER_TEMP "sxsexp64.zip"
-          $expected = "0353a20be073af18de016300e37ee5f4e814d2d719a4e3b5fc49a511df1ef"
+          $expected = "0353a20be073af18de016300e37ee5f4e814d2d719a4e3b5fc49a511861df1ef"
           Invoke-WebRequest -Uri $url -OutFile $archive
           $actual = (Get-FileHash -Path $archive -Algorithm SHA256).Hash.ToLowerInvariant()
           if ($actual -ne $expected) { throw "SXSEXP archive SHA-256 mismatch: $actual" }

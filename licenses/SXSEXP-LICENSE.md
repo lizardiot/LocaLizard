@@ -2,7 +2,7 @@ SXSEXP
 Copyright (c) 2016 - 2026 SXSEXP Project
 Upstream: https://github.com/hfiref0x/SXSEXP
 Bundled release: v1.4.4 (sxsexp64_v1.4.4.2603.zip)
-Archive SHA-256: 0353a20be073af18de016300e37ee5f4e814d2d719a4e3b5fc49a511df1ef
+Archive SHA-256: 0353a20be073af18de016300e37ee5f4e814d2d719a4e3b5fc49a511861df1ef
 
 MIT License
 
