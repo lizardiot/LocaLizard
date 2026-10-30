@@ -1,6 +1,7 @@
 using System.Net;
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 
 namespace LocaLizard.Core;
@@ -55,7 +56,7 @@ public sealed class UupDumpClient : IDisposable
 
                 if (target.EndsWith(".esd", StringComparison.OrdinalIgnoreCase))
                 {
-                    var extracted = await ExtractUpdateMumAsync(target, targetFolder, runner, ct);
+                    var extracted = await ExtractUpdateMumAsync(target, targetFolder, package, ct);
                     log?.Invoke($"Извлечён проверенный Client Language Pack ESD: {title}");
                     return [extracted];
                 }
@@ -205,6 +206,7 @@ public sealed class UupDumpClient : IDisposable
                 throw new InvalidDataException("SHA-1 загрузки не совпадает с UUP Dump.");
             }
             File.Move(temp, target, true);
+            await RecordCacheFileAsync(target, package, current, ct);
         }
         finally { response?.Dispose(); }
     }
@@ -213,19 +215,103 @@ public sealed class UupDumpClient : IDisposable
     {
         var info = new FileInfo(path);
         if (!info.Exists || info.Length == 0 || package.Size is > 0 && info.Length != package.Size) return false;
+        if (!await VerifyManagedCacheFileAsync(path, ct)) return false;
         if (string.IsNullOrWhiteSpace(package.Sha1)) return true;
         await using var stream = File.OpenRead(path);
         var actual = Convert.ToHexString(await SHA1.HashDataAsync(stream, ct)).ToLowerInvariant();
         return actual.Equals(package.Sha1, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static async Task<string> ExtractUpdateMumAsync(string esd, string folder, ProcessRunner runner, CancellationToken ct)
+    internal static async Task<bool> VerifyManagedCacheFileAsync(string path, CancellationToken ct)
+    {
+        var cacheRoot = GetManagedCacheRoot(path);
+        if (cacheRoot is null) return File.Exists(path);
+        var manifestPath = Path.Combine(cacheRoot, "package_manifest.json");
+        if (!File.Exists(manifestPath) || !File.Exists(path)) return false;
+        try
+        {
+            var manifest = JsonSerializer.Deserialize<CacheManifest>(
+                await File.ReadAllTextAsync(manifestPath, ct),
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            var relative = Path.GetRelativePath(cacheRoot, Path.GetFullPath(path)).Replace('\\', '/');
+            if (manifest is null || manifest.SchemaVersion != 1 ||
+                !manifest.Packages.TryGetValue(relative, out var record)) return false;
+            var info = new FileInfo(path);
+            if (info.Length != record.Size || record.Size <= 0) return false;
+            await using var stream = File.OpenRead(path);
+            var actual = Convert.ToHexString(await SHA256.HashDataAsync(stream, ct)).ToLowerInvariant();
+            return actual.Equals(record.Sha256, StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or ArgumentException)
+        { return false; }
+    }
+
+    private static async Task RecordCacheFileAsync(string path, UupFile package, Uri source, CancellationToken ct)
+    {
+        var cacheRoot = GetManagedCacheRoot(path);
+        if (cacheRoot is null) return;
+        var info = new FileInfo(path);
+        await using var stream = File.OpenRead(path);
+        var sha256 = Convert.ToHexString(await SHA256.HashDataAsync(stream, ct)).ToLowerInvariant();
+        await using var shaStream = File.OpenRead(path);
+        var sha1 = Convert.ToHexString(await SHA1.HashDataAsync(shaStream, ct)).ToLowerInvariant();
+        await SaveCacheRecordAsync(cacheRoot, path, new CacheRecord(info.Length, sha1, sha256,
+            package.Sha1, source.Host, DateTimeOffset.UtcNow), ct);
+    }
+
+    private static async Task RecordExtractedDirectoryAsync(string directory, string cacheRoot, UupFile package, CancellationToken ct)
+    {
+        foreach (var file in Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories))
+        {
+            ct.ThrowIfCancellationRequested();
+            var info = new FileInfo(file);
+            await using var stream = File.OpenRead(file);
+            var sha256 = Convert.ToHexString(await SHA256.HashDataAsync(stream, ct)).ToLowerInvariant();
+            await using var shaStream = File.OpenRead(file);
+            var sha1 = Convert.ToHexString(await SHA1.HashDataAsync(shaStream, ct)).ToLowerInvariant();
+            await SaveCacheRecordAsync(cacheRoot, file, new CacheRecord(info.Length, sha1, sha256,
+                package.Sha1, package.Url?.Host, DateTimeOffset.UtcNow), ct);
+        }
+    }
+
+    private static async Task SaveCacheRecordAsync(string cacheRoot, string path, CacheRecord record, CancellationToken ct)
+    {
+        var manifestPath = Path.Combine(cacheRoot, "package_manifest.json");
+        CacheManifest manifest;
+        try
+        {
+            manifest = File.Exists(manifestPath)
+                ? JsonSerializer.Deserialize<CacheManifest>(await File.ReadAllTextAsync(manifestPath, ct),
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true }) ?? new CacheManifest()
+                : new CacheManifest();
+        }
+        catch (JsonException) { manifest = new CacheManifest(); }
+        var relative = Path.GetRelativePath(cacheRoot, Path.GetFullPath(path)).Replace('\\', '/');
+        manifest.SchemaVersion = 1;
+        manifest.Packages[relative] = record;
+        var temporary = manifestPath + ".tmp";
+        await File.WriteAllTextAsync(temporary,
+            JsonSerializer.Serialize(manifest, new JsonSerializerOptions { WriteIndented = true }), ct);
+        File.Move(temporary, manifestPath, true);
+    }
+
+    private static string? GetManagedCacheRoot(string path)
+    {
+        var full = Path.GetFullPath(path);
+        var parts = full.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
+            StringSplitOptions.RemoveEmptyEntries);
+        var index = Array.FindIndex(parts, x => x.Equals("auto", StringComparison.OrdinalIgnoreCase));
+        if (index < 0 || index + 1 >= parts.Length) return null;
+        return Path.Combine(parts.Take(index + 2).ToArray());
+    }
+
+    private static async Task<string> ExtractUpdateMumAsync(string esd, string folder, UupFile package, CancellationToken ct)
     {
         var temporary = Path.Combine(folder, "esd_extract_" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(temporary);
         try
         {
-            await runner.RunAsync("dism.exe",
+            await new ProcessRunner().RunAsync("dism.exe",
                 ["/Apply-Image", $"/ImageFile:{esd}", "/Index:1", $"/ApplyDir:{temporary}", "/CheckIntegrity"],
                 cancellationToken: ct, timeout: TimeSpan.FromMinutes(40));
             var mum = Directory.EnumerateFiles(temporary, "update.mum", SearchOption.AllDirectories)
@@ -235,10 +321,20 @@ public sealed class UupDumpClient : IDisposable
             var finalDirectory = Path.Combine(folder, Path.GetFileNameWithoutExtension(esd) + "_extracted");
             if (Directory.Exists(finalDirectory)) Directory.Delete(finalDirectory, true);
             Directory.Move(packageDirectory, finalDirectory);
+            await RecordExtractedDirectoryAsync(finalDirectory, folder, package, ct);
             return Path.Combine(finalDirectory, "update.mum");
         }
         finally { try { Directory.Delete(temporary, true); } catch { } }
     }
+
+    private sealed class CacheManifest
+    {
+        public int SchemaVersion { get; set; } = 1;
+        public Dictionary<string, CacheRecord> Packages { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private sealed record CacheRecord(long Size, string Sha1, string Sha256, string? ApiSha1,
+        string? SourceHost, DateTimeOffset DownloadedAt);
 
     internal static IEnumerable<JsonElement> GetBuilds(JsonElement root)
     {
