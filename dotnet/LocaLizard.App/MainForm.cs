@@ -512,7 +512,7 @@ public sealed class MainForm : Form
         var mounted = await runner.RunAsync("powershell.exe",
             ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script],
             timeout: TimeSpan.FromMinutes(3));
-        var drive = mounted.StandardOutput.Split(['\\r', '\\n'], StringSplitOptions.RemoveEmptyEntries)
+        var drive = mounted.StandardOutput.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
             .Select(x => x.Trim()).LastOrDefault(x => x.Length >= 2 && char.IsLetter(x[0]) && x[1] == ':')
             ?? throw new IOException("Не удалось определить букву ISO.");
         try
