@@ -14,19 +14,16 @@
 - [All releases](https://github.com/lizardiot/LocaLizard/releases)
 - [LocaLizard.exe for Windows x64 — version 0.2.7.5](https://github.com/lizardiot/LocaLizard/releases/download/0.2.7.5/LocaLizard.exe)
 
-## Version 0.2.7.5 features
-
-- Preflight validation of ISO images, editions, indexes, architecture, build family, sources, updates and disk space.
-- Windows IoT Enterprise LTSC lifecycle warnings without blocking archival ISO processing.
-- Offline INF driver integration and DISM application of a user-provided unattend.xml.
-- Full Setup/WinPE/WinRE localization is required by default; partial output requires explicit opt-in.
-- Temporary ISO creation, read-back validation, SHA-256 and publication only after checks succeed.
-- Build-stage journal and JSON profile import/export.
-
 ## Features
 
 - The base UUP Client Language Pack ESD is extracted with native DISM and installed directly from `update.mum`, avoiding an unnecessary CAB rebuild. HTTP Microsoft Delivery CDN responses are permitted only for the exact CDN hosts/path and only with the SHA-1 and file size supplied by UUP Dump.
 
+- Before servicing, the application preflights the ISO, editions, indexes, architecture, build family, update sources and available disk space.
+- Windows IoT Enterprise LTSC end-of-support warnings are displayed without blocking work with archival ISO images.
+- INF drivers can be integrated into offline `install.wim` indexes, and a selected `unattend.xml` can be applied through DISM.
+- Full Setup/WinPE/WinRE localization is required by default; partially localized output is available only with explicit opt-in.
+- The output ISO is first created as a temporary file, read back and checked with SHA-256; it is published under its final name only after validation succeeds.
+- Build stages are recorded in `build-state.json`, and build settings can be exported to and imported from JSON profiles.
 - GUI for selecting the source ISO, output ISO, working directory, language sources, and update catalog.
 - Search for stable cumulative updates (LCUs) or a specified KB through Microsoft Update Catalog.
 - Filters Preview/Insider/Canary, Windows Server, and architecture mismatches before download; the user reviews and confirms the selected entry.
