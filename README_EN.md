@@ -1,4 +1,4 @@
-# LocaLizard 0.2.2.8
+# LocaLizard 0.2.7.5
 
 <p align="center">
   <img src="assets/LocaLizard-logo.jpg" alt="LocaLizard logo" width="520">
@@ -6,13 +6,22 @@
 
 **LocaLizard** is a graphical utility for preparing Windows IoT Enterprise LTSC installation media with Russian as the default language.
 
-> **Version 0.2.2.8:** the primary application has been migrated to C# / .NET 8 Windows Forms. Historical Python sources and all releases published before this version are retained; previous tags and their assets were not modified. See [dotnet/README.md](dotnet/README.md) for the C# feature set and validation scope.
+> **Version 0.2.7.5:** the primary application targets C# / .NET 10 LTS Windows Forms. Historical Python sources and all releases published before this version are retained; previous tags and their assets were not modified. See [dotnet/README.md](dotnet/README.md) for the C# feature set and validation scope.
 
 ## Download
 
 - [Latest LocaLizard release](https://github.com/lizardiot/LocaLizard/releases/latest)
 - [All releases](https://github.com/lizardiot/LocaLizard/releases)
-- [LocaLizard.exe for Windows x64 — version 0.2.2.8](https://github.com/lizardiot/LocaLizard/releases/download/0.2.2.8/LocaLizard.exe)
+- [LocaLizard.exe for Windows x64 — version 0.2.7.5](https://github.com/lizardiot/LocaLizard/releases/download/0.2.7.5/LocaLizard.exe)
+
+## Version 0.2.7.5 features
+
+- Preflight validation of ISO images, editions, indexes, architecture, build family, sources, updates and disk space.
+- Windows IoT Enterprise LTSC lifecycle warnings without blocking archival ISO processing.
+- Offline INF driver integration and DISM application of a user-provided unattend.xml.
+- Full Setup/WinPE/WinRE localization is required by default; partial output requires explicit opt-in.
+- Temporary ISO creation, read-back validation, SHA-256 and publication only after checks succeed.
+- Build-stage journal and JSON profile import/export.
 
 ## Features
 
@@ -54,7 +63,7 @@ You do not need to install Python or development tools manually. The source ISO 
 
 ## Version history
 
-### [0.2.2.8](https://github.com/lizardiot/LocaLizard/releases/tag/0.2.2.8) — current release
+### [0.2.7.5](https://github.com/lizardiot/LocaLizard/releases/tag/0.2.7.5) — current release
 The primary Windows application has been migrated to C# / .NET 8 Windows Forms. The port covers ISO/WIM servicing, UUP Dump Client Language Pack discovery and verification, managed cache integrity, resumable downloads, Microsoft Update Catalog, ordered update manifests, ADK/WinPE, Setup/WinPE/WinRE localization, SWM, patch-existing-WIM, audit, UAC, drag-and-drop, and UUP diagnostics. Regression tests and a Windows DISM integration test for a two-index WIM were added. CI builds and publishes the standalone Windows x64 app. Applying language CAB/MSU packages to specific IoT LTSC images, building a real user ISO, and visually checking Hyper-V boot remain target-environment validation steps; CI does not claim those steps have been performed.
 
 ### [0.1.1.4](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.1.4) — previous release

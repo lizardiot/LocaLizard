@@ -3,7 +3,7 @@ namespace LocaLizard.Core;
 public static class AppInfo
 {
     public const string Name = "LocaLizard";
-    public const string Version = "0.2.2.8";
+    public static string Version => typeof(AppInfo).Assembly.GetName().Version?.ToString(4) ?? "0.0.0.0";
 }
 
 public sealed record RunOptions
@@ -19,6 +19,9 @@ public sealed record RunOptions
     public bool ProcessSetup { get; init; } = true;
     public bool SplitWim { get; init; }
     public bool RunHyperVTest { get; init; }
+    public string? DriverDirectory { get; init; }
+    public string? UnattendFile { get; init; }
+    public bool AllowPartialLocalization { get; init; }
 }
 
 public sealed record ImageInfo(int Index, string Name, string Architecture, string Version)

@@ -15,6 +15,8 @@ public sealed class MainForm : Form
     private readonly TextBox packages = new();
     private readonly TextBox fod = new();
     private readonly TextBox updates = new();
+    private readonly TextBox drivers = new();
+    private readonly TextBox unattend = new();
     private readonly RichTextBox log = new();
     private readonly Label status = new() { AutoSize = true };
     private readonly Button start = new() { Text = "Проверить условия и создать ISO", AutoSize = true };
@@ -23,6 +25,10 @@ public sealed class MainForm : Form
     private readonly CheckBox setup = new() { Text = "Локализовать Setup / WinPE", Checked = true, AutoSize = true };
     private readonly CheckBox split = new() { Text = "Разбить install.wim на SWM (FAT32)", AutoSize = true };
     private readonly CheckBox hyperv = new() { Text = "Проверить ISO в Hyper-V (120 секунд)", AutoSize = true };
+    private readonly CheckBox allowPartial = new() { Text = "Разрешить частичную локализацию", AutoSize = true };
+    private readonly Button preflight = new() { Text = "Предварительная проверка…", AutoSize = true };
+    private readonly Button exportProfile = new() { Text = "Сохранить профиль…", AutoSize = true };
+    private readonly Button importProfile = new() { Text = "Загрузить профиль…", AutoSize = true };
     private readonly Button patch = new() { Text = "Обработать существующий WIM…", AutoSize = true };
     private readonly Button catalog = new() { Text = "Microsoft Update Catalog…", AutoSize = true };
     private readonly Button uupCheck = new() { Text = "Проверить UUP Dump", AutoSize = true };
@@ -81,6 +87,9 @@ public sealed class MainForm : Form
         AddPath(paths, 4, "Кэш языковых пакетов:", packages, true, false);
         AddPath(paths, 5, "FOD / Language and Optional Features:", fod, true, false);
         AddPath(paths, 6, "Каталог обновлений (updates.json):", updates, true, false);
+        AddPath(paths, 7, "Каталог INF-драйверов для install.wim:", drivers, true, false);
+        AddPath(paths, 8, "Файл автоматической установки (unattend.xml):", unattend, false, false,
+            "Unattend XML (*.xml)|*.xml|Все файлы (*.*)|*.*");
         root.Controls.Add(paths);
 
         var options = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(0, 8, 0, 8) };
@@ -88,6 +97,7 @@ public sealed class MainForm : Form
         options.Controls.Add(setup);
         options.Controls.Add(split);
         options.Controls.Add(hyperv);
+        options.Controls.Add(allowPartial);
         root.Controls.Add(options);
 
         var workspace = new SplitContainer
@@ -116,7 +126,11 @@ public sealed class MainForm : Form
         patch.Click += async (_, _) => await PatchExistingWimAsync();
         catalog.Click += async (_, _) => await SearchCatalogAsync();
         uupCheck.Click += async (_, _) => await CheckUupDumpAsync();
+        preflight.Click += async (_, _) => await RunPreflightAsync();
+        exportProfile.Click += (_, _) => ExportProfile();
+        importProfile.Click += (_, _) => ImportProfile();
         cancel.Click += (_, _) => cancellation?.Cancel();
+        footer.Controls.Add(preflight); footer.Controls.Add(exportProfile); footer.Controls.Add(importProfile);
         footer.Controls.Add(start); footer.Controls.Add(patch); footer.Controls.Add(catalog); footer.Controls.Add(uupCheck); footer.Controls.Add(cancel);
         status.Padding = new Padding(10, 8, 0, 0);
         footer.Controls.Add(status);
@@ -128,7 +142,7 @@ public sealed class MainForm : Form
         status.Text = "Готово к настройке.";
     }
 
-    private void AddPath(TableLayoutPanel panel, int row, string caption, TextBox field, bool folder, bool save)
+    private void AddPath(TableLayoutPanel panel, int row, string caption, TextBox field, bool folder, bool save, string? openFilter = null)
     {
         panel.RowCount++;
         panel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -153,7 +167,7 @@ public sealed class MainForm : Form
             }
             else
             {
-                using var dialog = new OpenFileDialog { Filter = "ISO images (*.iso)|*.iso|All files (*.*)|*.*" };
+                using var dialog = new OpenFileDialog { Filter = openFilter ?? "ISO images (*.iso)|*.iso|All files (*.*)|*.*" };
                 if (dialog.ShowDialog(this) == DialogResult.OK) field.Text = dialog.FileName;
             }
         };
@@ -215,14 +229,25 @@ public sealed class MainForm : Form
         }
 
         cancellation = new CancellationTokenSource();
-        start.Enabled = false; patch.Enabled = false; catalog.Enabled = false; uupCheck.Enabled = false; cancel.Enabled = true; log.Clear();
+        start.Enabled = false; patch.Enabled = false; catalog.Enabled = false; uupCheck.Enabled = false; preflight.Enabled = false; cancel.Enabled = true; log.Clear();
         SaveSettings();
+        try
+        {
+        var preflightReport = await Task.Run(() => BuildPreflightService.AnalyzeAsync(options, cancellation.Token));
+        AppendLog(preflightReport.ToDisplayString());
+        if (!preflightReport.CanProceed)
+            throw new InvalidOperationException("Предварительная проверка обнаружила критические ошибки. Исправьте их и повторите запуск.");
+        if (MessageBox.Show(this, preflightReport.ToDisplayString() + Environment.NewLine + Environment.NewLine +
+            "Продолжить создание ISO?", AppInfo.Name, MessageBoxButtons.YesNo,
+            preflightReport.HasWarnings ? MessageBoxIcon.Warning : MessageBoxIcon.Question) != DialogResult.Yes)
+        {
+            status.Text = "Сборка отменена после предварительной проверки.";
+            return;
+        }
         var service = new IsoBuildService();
         service.ConfirmHyperVSetup = ConfirmHyperVSetupAsync;
         service.Log += AppendLog;
         service.Status += message => { if (!IsDisposed) BeginInvoke((Action)(() => status.Text = message)); };
-        try
-        {
             var result = await Task.Run(() => service.RunAsync(options, cancellation.Token));
             AppendLog("Создан ISO: " + result);
             MessageBox.Show(this, "ISO успешно создан:" + Environment.NewLine + result, AppInfo.Name, MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -241,7 +266,7 @@ public sealed class MainForm : Form
         finally
         {
             cancellation.Dispose(); cancellation = null;
-            start.Enabled = true; patch.Enabled = true; catalog.Enabled = true; uupCheck.Enabled = true; cancel.Enabled = false;
+            start.Enabled = true; patch.Enabled = true; catalog.Enabled = true; uupCheck.Enabled = true; preflight.Enabled = true; cancel.Enabled = false;
         }
     }
 
@@ -257,7 +282,10 @@ public sealed class MainForm : Form
         KeepWorkFiles = keep.Checked,
         ProcessSetup = setup.Checked,
         SplitWim = split.Checked,
-        RunHyperVTest = hyperv.Checked
+        RunHyperVTest = hyperv.Checked,
+        DriverDirectory = string.IsNullOrWhiteSpace(drivers.Text) ? null : drivers.Text.Trim(),
+        UnattendFile = string.IsNullOrWhiteSpace(unattend.Text) ? null : unattend.Text.Trim(),
+        AllowPartialLocalization = allowPartial.Checked
     };
 
     private void LoadSettings()
@@ -270,10 +298,13 @@ public sealed class MainForm : Form
         if (!string.IsNullOrWhiteSpace(saved.PackageRoot)) packages.Text = saved.PackageRoot;
         if (!string.IsNullOrWhiteSpace(saved.FodSource)) fod.Text = saved.FodSource;
         if (!string.IsNullOrWhiteSpace(saved.UpdatesRoot)) updates.Text = saved.UpdatesRoot;
+        if (!string.IsNullOrWhiteSpace(saved.DriverDirectory)) drivers.Text = saved.DriverDirectory;
+        if (!string.IsNullOrWhiteSpace(saved.UnattendFile)) unattend.Text = saved.UnattendFile;
         keep.Checked = saved.KeepWorkFiles;
         setup.Checked = saved.ProcessSetup;
         split.Checked = saved.SplitWim;
         hyperv.Checked = saved.RunHyperVTest;
+        allowPartial.Checked = saved.AllowPartialLocalization;
     }
 
     private void SaveSettings()
@@ -292,7 +323,10 @@ public sealed class MainForm : Form
                 KeepWorkFiles = keep.Checked,
                 ProcessSetup = setup.Checked,
                 SplitWim = split.Checked,
-                RunHyperVTest = hyperv.Checked
+                RunHyperVTest = hyperv.Checked,
+                DriverDirectory = drivers.Text.Trim(),
+                UnattendFile = unattend.Text.Trim(),
+                AllowPartialLocalization = allowPartial.Checked
             });
         }
         catch (Exception ex) { AppendLog("Не удалось сохранить настройки: " + ex.Message); }
@@ -630,11 +664,118 @@ public sealed class MainForm : Form
         return form.ShowDialog(this) == DialogResult.OK ? input.Text : null;
     }
 
+    private void ExportProfile()
+    {
+        using var dialog = new SaveFileDialog
+        {
+            Filter = "LocaLizard profile (*.json)|*.json",
+            DefaultExt = "json",
+            FileName = "LocaLizard-profile.json",
+            Title = "Сохранить профиль сборки"
+        };
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        try
+        {
+            var json = JsonSerializer.Serialize(CurrentOptions(), new JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(dialog.FileName, json);
+            status.Text = "Профиль сохранён: " + dialog.FileName;
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, "Не удалось сохранить профиль: " + ex.Message, AppInfo.Name,
+                MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
+    private void ImportProfile()
+    {
+        using var dialog = new OpenFileDialog
+        {
+            Filter = "LocaLizard profile (*.json)|*.json|JSON files (*.json)|*.json",
+            Title = "Загрузить профиль сборки"
+        };
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        try
+        {
+            var options = JsonSerializer.Deserialize<RunOptions>(File.ReadAllText(dialog.FileName))
+                ?? throw new InvalidDataException("Профиль пуст или имеет неверный формат.");
+            source.Text = options.SourceIso;
+            donor.Text = options.DonorIso ?? "";
+            output.Text = options.OutputIso;
+            work.Text = options.WorkDirectory;
+            packages.Text = options.PackageDirectory;
+            fod.Text = options.FodDirectory ?? "";
+            updates.Text = options.UpdatesDirectory ?? "";
+            drivers.Text = options.DriverDirectory ?? "";
+            unattend.Text = options.UnattendFile ?? "";
+            keep.Checked = options.KeepWorkFiles;
+            setup.Checked = options.ProcessSetup;
+            split.Checked = options.SplitWim;
+            hyperv.Checked = options.RunHyperVTest;
+            allowPartial.Checked = options.AllowPartialLocalization;
+            SaveSettings();
+            status.Text = "Профиль загружен: " + dialog.FileName;
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, "Не удалось загрузить профиль: " + ex.Message, AppInfo.Name,
+                MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
+    private async Task RunPreflightAsync(RunOptions? requestedOptions = null)
+    {
+        if (cancellation is not null) return;
+        var options = requestedOptions ?? CurrentOptions();
+        if (!IsAdministrator())
+        {
+            SaveSettings();
+            if (TryLaunchElevated(new ElevatedLaunchRequest("preflight", options)))
+            {
+                status.Text = "Проверка передана повышенному экземпляру LocaLizard.";
+                Close();
+            }
+            return;
+        }
+
+        cancellation = new CancellationTokenSource();
+        preflight.Enabled = false; start.Enabled = false; patch.Enabled = false;
+        catalog.Enabled = false; uupCheck.Enabled = false; cancel.Enabled = true;
+        try
+        {
+            status.Text = "Проверяю ISO, источники, совместимость и свободное место…";
+            var report = await Task.Run(() => BuildPreflightService.AnalyzeAsync(options, cancellation.Token));
+            AppendLog(report.ToDisplayString());
+            status.Text = report.CanProceed ? "Предварительная проверка завершена." : "Найдены критические ошибки.";
+            MessageBox.Show(this, report.ToDisplayString(), AppInfo.Name, MessageBoxButtons.OK,
+                report.CanProceed ? (report.HasWarnings ? MessageBoxIcon.Warning : MessageBoxIcon.Information) : MessageBoxIcon.Error);
+        }
+        catch (OperationCanceledException)
+        {
+            status.Text = "Предварительная проверка отменена.";
+        }
+        catch (Exception ex)
+        {
+            status.Text = "Ошибка предварительной проверки.";
+            AppendLog("Preflight error: " + ex);
+            MessageBox.Show(this, ex.Message, AppInfo.Name, MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        finally
+        {
+            cancellation.Dispose(); cancellation = null;
+            preflight.Enabled = true; start.Enabled = true; patch.Enabled = true;
+            catalog.Enabled = true; uupCheck.Enabled = true; cancel.Enabled = false;
+        }
+    }
+
     private async Task ResumeElevatedRequestAsync()
     {
         if (launchRequest is null) return;
         switch (launchRequest.Mode)
         {
+            case "preflight":
+                await RunPreflightAsync(launchRequest.Options);
+                break;
             case "build":
                 await StartAsync(launchRequest.Options);
                 break;

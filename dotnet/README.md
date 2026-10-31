@@ -1,18 +1,27 @@
-# LocaLizard — C# / .NET 8
+# LocaLizard — C# / .NET 10
 
-Ветка C# содержит основной выпуск LocaLizard 0.2.2.8 на Windows Forms / .NET 8. Исторический Python-проект сохранён как исходный reference и recovery path; все опубликованные до 0.2.2.8 версии, теги и файлы релизов оставлены без изменений.
+Ветка C# содержит основной выпуск LocaLizard 0.2.7.5 на Windows Forms / .NET 10. Исторический Python-проект сохранён как исходный reference и recovery path; все опубликованные до 0.2.7.5 версии, теги и файлы релизов оставлены без изменений.
 
 ## Сохранение предыдущих выпусков
 
 - Изменения C# выполняются в ветке `rewrite/csharp`.
 - Исходные `source/main.py.part01` … `source/main.py.part16`, `test_helpers.py` и прежний Python workflow не заменяются.
 - Существующие Git-теги, GitHub Releases и их assets не изменяются и не пересоздаются.
-- C# имеет версию 0.2.2.8; Windows build workflow собирает приложение, запускает регрессионные и DISM WIM integration tests.
+- C# имеет версию 0.2.7.5; Windows build workflow собирает приложение, запускает регрессионные и DISM WIM integration tests.
 - Релиз C# публикуется отдельным workflow и не переписывает Python-теги или прежние GitHub Releases.
+
+## Возможности 0.2.7.5
+
+- Предварительная диагностика ISO/WIM/ESD, build family, архитектуры, донорского ISO, манифеста обновлений и свободного места.
+- Поддержка .NET 10 LTS; единственный источник версии — `dotnet/Directory.Build.props`.
+- Интеграция INF-драйверов в offline install.wim и применение пользовательского unattend.xml через DISM.
+- Полная локализация является режимом по умолчанию; частичная локализация требует явного согласия.
+- Временное создание ISO, read-back проверка, SHA-256 и публикация после успешной проверки.
+- Журнал `build-state.json` фиксирует завершённые этапы и ошибки для безопасной диагностики. Он не обещает слепое возобновление DISM, если нельзя подтвердить целостность рабочих WIM.
 
 ## Сборка
 
-Требуется .NET 8 SDK и Windows:
+Требуется .NET 10 SDK и Windows:
 
 ```powershell
 dotnet build dotnet/LocaLizard.sln -c Release
@@ -44,7 +53,7 @@ dotnet publish dotnet/LocaLizard.App/LocaLizard.App.csproj -c Release -r win-x64
 
 ## Валидация и известные ограничения
 
-CI на Windows выполняет сборку .NET 8 solution, smoke/regression проверки, отдельный DISM WIM integration test и публикацию self-contained win-x64. WIM integration test создаёт синтетический двухиндексный образ через DISM Capture/Append, проверяет Get-WimInfo, монтирует/изменяет/фиксирует первый индекс, повторно применяет оба индекса и проверяет сохранность содержимого. Smoke tests покрывают build/architecture, trust policy URL, Catalog parse/filter/download metadata, UUP Dump sparse responses and no-results, Client LP CAB/ESD/MUM classifier and architecture checks, managed cache manifest + tamper detection, update manifest order/path/hash and SWM sequence.
+CI на Windows выполняет сборку .NET 10 solution, smoke/regression проверки, отдельный DISM WIM integration test и публикацию self-contained win-x64. WIM integration test создаёт синтетический двухиндексный образ через DISM Capture/Append, проверяет Get-WimInfo, монтирует/изменяет/фиксирует первый индекс, повторно применяет оба индекса и проверяет сохранность содержимого. Smoke tests покрывают build/architecture, trust policy URL, Catalog parse/filter/download metadata, UUP Dump sparse responses and no-results, Client LP CAB/ESD/MUM classifier and architecture checks, managed cache manifest + tamper detection, update manifest order/path/hash and SWM sequence.
 
 **Проверенный DISM round-trip на синтетическом WIM не означает, что уже проверена локализация реальных ISO.** Применимость конкретных CAB/MSU к выпускам IoT Enterprise LTSC, установка ADK/WinPE Add-on, загрузка/обслуживание Setup/WinPE/WinRE, сборка реального загрузочного ISO и интерактивный Hyper-V test требуют отдельных прогонов с лицензированными целевыми ISO/WIM и совместимыми источниками. CI не скачивает и не обслуживает пользовательские Windows ISO и не делает визуальное подтверждение VMConnect.
 

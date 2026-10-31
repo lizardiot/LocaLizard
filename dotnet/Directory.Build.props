@@ -1,0 +1,9 @@
+<Project>
+  <PropertyGroup>
+    <LocaLizardVersion>0.2.7.5</LocaLizardVersion>
+    <Version>$(LocaLizardVersion)</Version>
+    <AssemblyVersion>$(LocaLizardVersion)</AssemblyVersion>
+    <FileVersion>$(LocaLizardVersion)</FileVersion>
+    <InformationalVersion>$(LocaLizardVersion)</InformationalVersion>
+  </PropertyGroup>
+</Project>

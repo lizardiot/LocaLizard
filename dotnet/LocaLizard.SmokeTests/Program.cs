@@ -6,6 +6,17 @@ static void Check(bool condition, string message)
     if (!condition) throw new Exception("FAILED: " + message);
 }
 
+var lifecycleAtEnd = WindowsLifecycle.GetInfo(14393, new DateOnly(2026, 10, 13));
+var lifecycleAfterEnd = WindowsLifecycle.GetInfo(14393, new DateOnly(2026, 10, 14));
+Check(lifecycleAtEnd is { IsSupported: true }, "IoT Enterprise 2016 is supported through 2026-10-13");
+Check(lifecycleAfterEnd is { IsSupported: false }, "IoT Enterprise 2016 is end-of-support from 2026-10-14");
+Check(WindowsLifecycle.GetInfo(10240, new DateOnly(2026, 10, 31)) is { IsSupported: false },
+    "IoT Enterprise LTSB 2015 lifecycle has ended");
+Check(WindowsLifecycle.GetInfo(26100, new DateOnly(2026, 10, 31)) is { IsSupported: true },
+    "IoT Enterprise LTSC 2024 remains supported");
+Check(WindowsLifecycle.GetInfo(99999) is null, "unknown build has no guessed lifecycle");
+Check(AppInfo.Version == "0.2.7.5", "AppInfo version comes from centralized assembly metadata");
+
 static void Throws<T>(Action action, string message) where T : Exception
 {
     try { action(); }

@@ -16,11 +16,11 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Checkout source
-        uses: actions/checkout@v4
-      - name: Set up .NET 8
-        uses: actions/setup-dotnet@v4
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+      - name: Set up .NET 10.0.403
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
         with:
-          dotnet-version: 8.0.x
+          dotnet-version: 10.0.403
       - name: Build solution
         run: dotnet build dotnet/LocaLizard.sln -c Release
       - name: Run C# smoke tests
@@ -30,9 +30,9 @@ jobs:
       - name: Publish standalone Windows x64 app
         run: dotnet publish dotnet/LocaLizard.App/LocaLizard.App.csproj -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true /p:IncludeNativeLibrariesForSelfExtract=true
       - name: Upload Windows x64 CI artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         with:
-          name: LocaLizard-0.2.2.8-Windows-x64
-          path: dotnet/LocaLizard.App/bin/Release/net8.0-windows/win-x64/publish/
+          name: LocaLizard-0.2.7.5-Windows-x64
+          path: dotnet/LocaLizard.App/bin/Release/net10.0-windows/win-x64/publish/
           if-no-files-found: error
           retention-days: 30

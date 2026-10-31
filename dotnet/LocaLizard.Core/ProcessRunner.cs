@@ -39,8 +39,8 @@ public sealed class ProcessRunner
 
         var stdout = new StringBuilder();
         var stderr = new StringBuilder();
-        var outTask = PumpAsync(process.StandardOutput, stdout, cancellationToken);
-        var errTask = PumpAsync(process.StandardError, stderr, cancellationToken);
+        var outTask = PumpAsync(process.StandardOutput, stdout);
+        var errTask = PumpAsync(process.StandardError, stderr);
         using var timeoutCts = timeout is null ? null : new CancellationTokenSource(timeout.Value);
         using var linked = timeoutCts is null
             ? CancellationTokenSource.CreateLinkedTokenSource(cancellationToken)
@@ -53,6 +53,8 @@ public sealed class ProcessRunner
         catch (OperationCanceledException)
         {
             try { if (!process.HasExited) process.Kill(true); } catch { }
+            try { await process.WaitForExitAsync(CancellationToken.None); } catch { }
+            try { await Task.WhenAll(outTask, errTask); } catch { }
             if (timeoutCts?.IsCancellationRequested == true && !cancellationToken.IsCancellationRequested)
                 throw new TimeoutException($"Истекло время ожидания команды {executable}.");
             throw;
@@ -64,9 +66,9 @@ public sealed class ProcessRunner
         return result;
     }
 
-    private async Task PumpAsync(StreamReader reader, StringBuilder destination, CancellationToken ct)
+    private async Task PumpAsync(StreamReader reader, StringBuilder destination)
     {
-        while (await reader.ReadLineAsync(ct) is { } line)
+        while (await reader.ReadLineAsync() is { } line)
         {
             destination.AppendLine(line);
             OutputLine?.Invoke(line);

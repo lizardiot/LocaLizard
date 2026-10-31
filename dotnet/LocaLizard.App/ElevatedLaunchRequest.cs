@@ -26,7 +26,7 @@ internal static class Program
                 var payload = Convert.FromBase64String(args[1]);
                 request = JsonSerializer.Deserialize<ElevatedLaunchRequest>(payload)
                     ?? throw new InvalidDataException("Не удалось восстановить параметры повышенного запуска.");
-                if (request.Mode is not ("build" or "patch" or "catalog"))
+                if (request.Mode is not ("build" or "patch" or "catalog" or "preflight"))
                     throw new InvalidDataException("Неизвестная операция повышенного запуска.");
             }
             Application.Run(new MainForm(request));

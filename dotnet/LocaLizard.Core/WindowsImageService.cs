@@ -41,12 +41,18 @@ public sealed class WindowsImageService(ProcessRunner runner)
     public async Task ServiceAsync(
         string imageFile, ImageInfo image, IReadOnlyList<string> packageCandidates,
         string? fod, UpdatePlan? updates, string work, Action<string>? log, CancellationToken ct,
-        Func<string, Task<LocalizationStep>>? serviceWinRe = null)
+        Func<string, Task<LocalizationStep>>? serviceWinRe = null,
+        string? driverDirectory = null, string? unattendFile = null, bool allowPartialLocalization = false)
     {
         if (image.BuildFamily == 0 || !BuildNumbers.IsSupportedArchitecture(image.NormalizedArchitecture))
             throw new InvalidDataException($"Не удалось определить сборку/архитектуру индекса {image.Index}.");
         if (updates is not null && (updates.TargetBuildFamily != image.BuildFamily || updates.Architecture != image.NormalizedArchitecture))
             throw new InvalidDataException("Набор обновлений не соответствует сборке/архитектуре индекса.");
+
+        if (!string.IsNullOrWhiteSpace(driverDirectory) && !Directory.Exists(driverDirectory))
+            throw new DirectoryNotFoundException("Каталог INF-драйверов не найден.");
+        if (!string.IsNullOrWhiteSpace(unattendFile) && !File.Exists(unattendFile))
+            throw new FileNotFoundException("Файл unattend.xml не найден.", unattendFile);
 
         var candidates = packageCandidates.Where(p => IsClientLp(p, image.NormalizedArchitecture))
             .OrderBy(p => Path.GetFileName(p).Equals("update.mum", StringComparison.OrdinalIgnoreCase) ? 0 : 1).ToArray();
@@ -66,6 +72,13 @@ public sealed class WindowsImageService(ProcessRunner runner)
                 await _runner.RunAsync("dism.exe", ["/Mount-Image", $"/ImageFile:{imageFile}", $"/Index:{image.Index}", $"/MountDir:{mount}", "/CheckIntegrity"],
                     cancellationToken: ct, timeout: TimeSpan.FromMinutes(25));
                 mounted = true;
+                if (!string.IsNullOrWhiteSpace(driverDirectory))
+                {
+                    log?.Invoke($"Индекс {image.Index}: интегрирую INF-драйверы из {driverDirectory}.");
+                    await _runner.RunAsync("dism.exe",
+                        [$"/Image:{mount}", "/Add-Driver", $"/Driver:{Path.GetFullPath(driverDirectory)}", "/Recurse"],
+                        cancellationToken: ct, timeout: TimeSpan.FromMinutes(60));
+                }
                 await ApplyUpdatesAsync(mount, updates, "before_language", ct, log);
                 log?.Invoke($"Индекс {image.Index}: добавляю базовый языковой пакет {Path.GetFileName(candidate)}.");
                 try
@@ -127,7 +140,18 @@ public sealed class WindowsImageService(ProcessRunner runner)
 
             LocalizationStep? winReAudit = null;
             if (serviceWinRe is not null)
+            {
                 winReAudit = await serviceWinRe(mount);
+                if (!allowPartialLocalization && winReAudit.Status is not ("localized" or "not_present"))
+                    throw new InvalidOperationException($"WinRE не локализован полностью: {winReAudit.Status}. {winReAudit.Error}");
+            }
+            if (!string.IsNullOrWhiteSpace(unattendFile))
+            {
+                log?.Invoke($"Индекс {image.Index}: применяю unattend.xml.");
+                await _runner.RunAsync("dism.exe",
+                    [$"/Image:{mount}", $"/Apply-Unattend:{Path.GetFullPath(unattendFile)}"],
+                    cancellationToken: ct, timeout: TimeSpan.FromMinutes(15));
+            }
             await ApplyUpdatesAsync(mount, updates, "after_language", ct, log);
             await _runner.RunAsync("dism.exe", ["/Unmount-Image", $"/MountDir:{mount}", "/Commit", "/CheckIntegrity"],
                 cancellationToken: ct, timeout: TimeSpan.FromMinutes(60));

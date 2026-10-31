@@ -321,9 +321,9 @@ public sealed class MicrosoftUpdateCatalogClient : IDisposable
             if (!IsSafeDownloadUrl(uri)) continue;
             var fileMatch = Regex.Match(safeMarkup,
                 "\\[" + Regex.Escape(index) + "\\]\\.fileName\\s*=\\s*['\"]([^'\"]+)['\"]", RegexOptions.IgnoreCase);
-            var hashMatch = Regex.Match(markup,
+            var hashMatch = Regex.Match(safeMarkup,
                 "\\[" + Regex.Escape(index) + "\\]\\.digest\\s*=\\s*['\"]([^'\"]+)['\"]", RegexOptions.IgnoreCase);
-            var sizeMatch = Regex.Match(markup,
+            var sizeMatch = Regex.Match(safeMarkup,
                 "\\[" + Regex.Escape(index) + "\\]\\.(?:size|fileSize)\\s*=\\s*['\"]?(\\d+)", RegexOptions.IgnoreCase);
             var fileName = fileMatch.Success ? WebUtility.HtmlDecode(fileMatch.Groups[1].Value).Trim()
                 : Path.GetFileName(uri.AbsolutePath) ?? "";

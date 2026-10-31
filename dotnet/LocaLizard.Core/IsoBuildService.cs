@@ -46,13 +46,19 @@ public sealed class IsoBuildService
         if (free < required)
             throw new IOException($"Недостаточно места: свободно {free:N0}, ориентировочно требуется {required:N0} байт.");
 
-        var work = Path.Combine(workRoot, "LocaLizard_" + DateTime.Now.ToString("yyyyMMdd_HHmmss"));
+        var outputDirectory = Path.GetDirectoryName(output)!;
+        var partialOutput = Path.Combine(outputDirectory, $".{Path.GetFileNameWithoutExtension(output)}.{Guid.NewGuid():N}.partial.iso");
+        var work = Path.Combine(workRoot, "LocaLizard_" + DateTime.Now.ToString("yyyyMMdd_HHmmss") + "_" + Guid.NewGuid().ToString("N")[..8]);
         var media = Path.Combine(work, "media");
         Directory.CreateDirectory(media);
+        var journal = new BuildJournal(Path.Combine(work, "build-state.json"), source, output);
         var sourceMounted = false;
         var donorMounted = false;
         try
         {
+            await journal.RecordAsync("started", "in_progress", "Проверка параметров завершена; рабочая копия создаётся.", ct);
+            var sourceHash = await ComputeSha256Async(source, ct);
+            await journal.RecordAsync("source_verified", "completed", "SHA-256: " + sourceHash, ct);
             Status?.Invoke("Подключаю исходный ISO…");
             var sourceRoot = await MountIsoAsync(source, ct);
             sourceMounted = true;
@@ -62,6 +68,7 @@ public sealed class IsoBuildService
             if (copy.ExitCode >= 8) throw new IOException($"Robocopy завершился с кодом {copy.ExitCode}.");
             await DismountIsoAsync(source);
             sourceMounted = false;
+            await journal.RecordAsync("source_copied", "completed", "ISO скопирован в рабочую папку; Robocopy exit code=" + copy.ExitCode, ct);
 
             var sources = Path.Combine(media, "sources");
             var boot = Path.Combine(sources, "boot.wim");
@@ -85,6 +92,8 @@ public sealed class IsoBuildService
                 installImages.Add(wim);
             }
 
+            await journal.RecordAsync("install_images_normalized", "completed",
+                $"WIM-образов: {installImages.Count}; ESD преобразованы; SWM обработаны.", ct);
             var imagePlan = new List<(string File, ImageInfo Info)>();
             foreach (var file in installImages)
                 foreach (var info in await _images.GetImageInfoAsync(file, ct))
@@ -100,6 +109,7 @@ public sealed class IsoBuildService
                 donorMounted = true;
                 await ImportDonorPackagesAsync(donorRoot, imagePlan, packageRoot, work, ct);
                 await DismountIsoAsync(donor);
+                await journal.RecordAsync("donor_checked", "completed", "Проверка и импорт пакетов ISO-донора завершены.", ct);
                 donorMounted = false;
             }
 
@@ -126,8 +136,11 @@ public sealed class IsoBuildService
                 await _images.ServiceAsync(item.File, item.Info, candidates, options.FodDirectory,
                     updatePlan, work, message => Log?.Invoke(message), ct,
                     mount => _winre.LocalizeAsync(mount, item.Info.NormalizedArchitecture, options.FodDirectory,
-                        updatePlan, ct, message => Log?.Invoke(message)));
+                        updatePlan, ct, message => Log?.Invoke(message)),
+                    options.DriverDirectory, options.UnattendFile, options.AllowPartialLocalization);
                 completed++;
+                await journal.RecordAsync("install_index_" + item.Info.Index, "completed",
+                    $"{Path.GetFileName(item.File)}; build={item.Info.BuildFamily}; arch={item.Info.NormalizedArchitecture}", ct);
                 Status?.Invoke($"Обработано индексов: {completed}/{imagePlan.Count}");
             }
 
@@ -143,10 +156,16 @@ public sealed class IsoBuildService
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     setupAudit = new LocalizationStep("failed", Error: ex.Message);
-                    Log?.Invoke("Setup/WinPE не локализованы; сборка ISO будет продолжена: " + ex.Message);
+                    if (!options.AllowPartialLocalization)
+                        throw new InvalidOperationException("Полная локализация Setup/WinPE не выполнена. Включите режим частичной локализации только если принимаете неполный результат.", ex);
+                    Log?.Invoke("Setup/WinPE не локализованы; разрешён частичный результат: " + ex.Message);
                 }
+                if (!options.AllowPartialLocalization && setupAudit.Status != "localized")
+                    throw new InvalidOperationException($"Полная локализация Setup/WinPE не подтверждена: {setupAudit.Status}. {setupAudit.Error}");
             }
+            await journal.RecordAsync("setup_localization", "completed", setupAudit.Status, ct);
             var splitReport = await _splitter.SplitOutputAsync(sources, options.SplitWim, ct, message => Log?.Invoke(message));
+            await journal.RecordAsync("wim_split", "completed", options.SplitWim ? "install.wim разделён на SWM и проверен." : "Split-WIM отключён.", ct);
             ValidateMedia(media);
             var oscdimg = await _adk.EnsureOscdimgAsync(ct, message => Log?.Invoke(message));
             if (File.Exists(output)) throw new IOException("Выходной ISO уже существует; перезапись запрещена.");
@@ -157,20 +176,25 @@ public sealed class IsoBuildService
 
             Status?.Invoke("Создаю загрузочный ISO…");
             var bootData = $"-bootdata:2#p0,e,b{bios}#pEF,e,b{uefi}";
-            await _runner.RunAsync(oscdimg, ["-m", "-o", "-u2", "-udfver102", bootData, media, output],
+            await _runner.RunAsync(oscdimg, ["-m", "-o", "-u2", "-udfver102", bootData, media, partialOutput],
                 cancellationToken: ct, timeout: TimeSpan.FromHours(3));
-            if (!File.Exists(output) || new FileInfo(output).Length < 1024 * 1024)
-                throw new IOException("oscdimg не создал выходной ISO.");
+            if (!File.Exists(partialOutput) || new FileInfo(partialOutput).Length < 1024 * 1024)
+                throw new IOException("oscdimg не создал временный выходной ISO.");
 
-            Status?.Invoke("Повторно подключаю ISO и проверяю WIM…");
-            var verification = await VerifyOutputIsoAsync(output, ct);
+            await journal.RecordAsync("iso_created", "completed", "Временный ISO создан; размер=" + new FileInfo(partialOutput).Length, ct);
+            Status?.Invoke("Повторно подключаю временный ISO и проверяю WIM…");
+            var verification = await VerifyOutputIsoAsync(partialOutput, ct);
             HyperVTestResult? hypervAudit = null;
             if (options.RunHyperVTest)
             {
-                Status?.Invoke("Проверяю загрузку ISO в Hyper-V…");
-                hypervAudit = await _hyperv.RunAsync(output, work,
+                Status?.Invoke("Проверяю загрузку временного ISO в Hyper-V…");
+                hypervAudit = await _hyperv.RunAsync(partialOutput, work,
                     ConfirmHyperVSetup ?? (_ => Task.FromResult(false)), ct, message => Log?.Invoke(message));
             }
+            var outputHash = await ComputeSha256Async(partialOutput, ct);
+            if (File.Exists(output)) throw new IOException("Выходной ISO появился во время сборки; публикация отменена.");
+            File.Move(partialOutput, output, false);
+            await journal.RecordAsync("iso_published", "completed", "SHA-256: " + outputHash, ct);
             var audit = new
             {
                 application = AppInfo.Name,
@@ -178,6 +202,8 @@ public sealed class IsoBuildService
                 created_at = DateTimeOffset.Now,
                 source_iso = source,
                 output_iso = output,
+                output_sha256 = outputHash,
+                source_iso_sha256 = sourceHash,
                 image_language_checks = _images.Audit,
                 setup_winpe_localization = setupAudit,
                 split_wim = splitReport,
@@ -187,6 +213,7 @@ public sealed class IsoBuildService
             };
             var auditPath = Path.ChangeExtension(output, ".localization-audit.json");
             await File.WriteAllTextAsync(auditPath, JsonSerializer.Serialize(audit, new JsonSerializerOptions { WriteIndented = true }), ct);
+            await journal.RecordAsync("audit_written", "completed", auditPath, ct);
 
             if (!options.KeepWorkFiles)
             {
@@ -198,10 +225,12 @@ public sealed class IsoBuildService
             Log?.Invoke($"JSON-аудит: {auditPath}");
             return output;
         }
-        catch
+        catch (Exception ex)
         {
+            try { await journal.RecordAsync("failed", "error", ex.ToString(), CancellationToken.None); } catch { }
             if (sourceMounted) await SafeDismountAsync(source);
             if (donorMounted && options.DonorIso is not null) await SafeDismountAsync(options.DonorIso);
+            try { if (File.Exists(partialOutput)) File.Delete(partialOutput); } catch { }
             throw;
         }
     }
@@ -261,7 +290,8 @@ public sealed class IsoBuildService
             await _images.ServiceAsync(staged, item.Info, candidates, options.FodDirectory, updatePlan, work,
                 message => Log?.Invoke(message), ct,
                 mount => _winre.LocalizeAsync(mount, item.Info.NormalizedArchitecture, options.FodDirectory,
-                    updatePlan, ct, message => Log?.Invoke(message)));
+                    updatePlan, ct, message => Log?.Invoke(message)),
+                options.DriverDirectory, options.UnattendFile, options.AllowPartialLocalization);
         }
 
         var stagedInfos = await _images.GetImageInfoAsync(staged, ct);
@@ -446,6 +476,14 @@ public sealed class IsoBuildService
         return verified;
     }
 
+    private static async Task<string> ComputeSha256Async(string path, CancellationToken ct)
+    {
+        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read,
+            1024 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
+        var hash = await System.Security.Cryptography.SHA256.HashDataAsync(stream, ct);
+        return Convert.ToHexString(hash).ToLowerInvariant();
+    }
+
     private static List<string> FindPackages(string root) =>
         Directory.Exists(root)
             ? Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
@@ -509,5 +547,13 @@ public sealed class IsoBuildService
         if (o.DonorIso is not null && !File.Exists(o.DonorIso)) throw new FileNotFoundException("Русский ISO-донор не найден.", o.DonorIso);
         if (o.FodDirectory is not null && !Directory.Exists(o.FodDirectory)) throw new DirectoryNotFoundException("FOD должен быть каталогом Language and Optional Features.");
         if (o.UpdatesDirectory is not null && !Directory.Exists(o.UpdatesDirectory)) throw new DirectoryNotFoundException("Каталог обновлений не найден.");
+        if (o.DriverDirectory is not null && !Directory.Exists(o.DriverDirectory))
+            throw new DirectoryNotFoundException("Каталог INF-драйверов не найден.");
+        if (o.UnattendFile is not null && !File.Exists(o.UnattendFile))
+            throw new FileNotFoundException("Файл unattend.xml не найден.", o.UnattendFile);
+        if (o.DriverDirectory is not null && !Directory.Exists(o.DriverDirectory))
+            throw new DirectoryNotFoundException("Каталог INF-драйверов не найден.");
+        if (o.UnattendFile is not null && !File.Exists(o.UnattendFile))
+            throw new FileNotFoundException("Файл unattend.xml не найден.", o.UnattendFile);
     }
 }
