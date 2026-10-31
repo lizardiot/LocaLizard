@@ -23,6 +23,9 @@ public sealed record AppSettings
     [JsonPropertyName("process_setup")] public bool ProcessSetup { get; init; } = true;
     [JsonPropertyName("split_wim")] public bool SplitWim { get; init; }
     [JsonPropertyName("vm_test")] public bool RunHyperVTest { get; init; }
+    [JsonPropertyName("driver_directory")] public string DriverDirectory { get; init; } = "";
+    [JsonPropertyName("unattend_file")] public string UnattendFile { get; init; } = "";
+    [JsonPropertyName("allow_partial_localization")] public bool AllowPartialLocalization { get; init; }
 }
 
 public static class SettingsStore
@@ -167,13 +170,25 @@ public sealed class AdkBootstrapper(ProcessRunner runner)
             Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
             Root
         }.Where(x => !string.IsNullOrWhiteSpace(x) && Directory.Exists(x)).Distinct(StringComparer.OrdinalIgnoreCase);
-        foreach (var root in roots)
-        {
-            var path = Directory.EnumerateFiles(root, "oscdimg.exe", SearchOption.AllDirectories).FirstOrDefault();
-            if (path is not null) return path;
-        }
-        return (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator)
-            .Select(p => Path.Combine(p, "oscdimg.exe")).FirstOrDefault(File.Exists);
+        var candidates = roots
+            .SelectMany(root =>
+            {
+                try { return Directory.EnumerateFiles(root, "oscdimg.exe", SearchOption.AllDirectories); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return Enumerable.Empty<string>(); }
+            })
+            .Concat((Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator)
+                .Where(Directory.Exists).Select(p => Path.Combine(p, "oscdimg.exe")).Where(File.Exists))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Select(path => (Path: path, Version: ReadFileVersion(path)))
+            .OrderByDescending(item => item.Version)
+            .ToArray();
+        return candidates.FirstOrDefault().Path;
+    }
+
+    public static Version ReadFileVersion(string path)
+    {
+        var raw = FileVersionInfo.GetVersionInfo(path).FileVersion;
+        return Version.TryParse(raw, out var parsed) ? parsed : new Version(0, 0);
     }
 
     public async Task<string> EnsureOscdimgAsync(CancellationToken ct, Action<string>? log = null)
@@ -237,17 +252,47 @@ public sealed class AdkBootstrapper(ProcessRunner runner)
         Directory.CreateDirectory(directory);
         var target = Path.Combine(directory, name);
         log?.Invoke($"Загружаю официальный установщик Microsoft: {name}.");
-        using var handler = new HttpClientHandler { AllowAutoRedirect = true };
+        using var handler = new HttpClientHandler { AllowAutoRedirect = false };
         using var client = new HttpClient(handler) { Timeout = TimeSpan.FromMinutes(15) };
-        using var response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct);
-        var finalUri = response.RequestMessage?.RequestUri ?? new Uri(url);
-        if (finalUri.Scheme != Uri.UriSchemeHttps || !IsMicrosoftHost(finalUri.Host))
-            throw new InvalidDataException($"Ссылка установщика перенаправлена на недоверенный домен: {finalUri.Host}.");
-        response.EnsureSuccessStatusCode();
-        var temp = target + ".download";
-        await using (var source = await response.Content.ReadAsStreamAsync(ct))
-        await using (var destination = new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.None, 1024 * 1024, true))
-            await source.CopyToAsync(destination, ct);
+        var current = new Uri(url);
+        HttpResponseMessage? finalResponse = null;
+        for (var redirects = 0; redirects <= 6; redirects++)
+        {
+            if (current.Scheme != Uri.UriSchemeHttps || !IsMicrosoftHost(current.Host) || !string.IsNullOrEmpty(current.UserInfo))
+                throw new InvalidDataException($"Недоверенный адрес установщика ADK: {current}.");
+            using var request = new HttpRequestMessage(HttpMethod.Get, current);
+            var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+            if ((int)response.StatusCode is >= 300 and < 400)
+            {
+                var location = response.Headers.Location
+                    ?? throw new InvalidDataException("Перенаправление установщика ADK не содержит Location.");
+                var next = location.IsAbsoluteUri ? location : new Uri(current, location);
+                response.Dispose();
+                current = next;
+                continue;
+            }
+            response.EnsureSuccessStatusCode();
+            finalResponse = response;
+            break;
+        }
+        if (finalResponse is null)
+            throw new InvalidDataException("Превышено число перенаправлений при загрузке ADK.");
+        using (finalResponse)
+        {
+            var temp = target + ".download";
+            try
+            {
+                await using var source = await finalResponse.Content.ReadAsStreamAsync(ct);
+                await using var destination = new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.None, 1024 * 1024, true);
+                await source.CopyToAsync(destination, ct);
+                await destination.FlushAsync(ct);
+            }
+            catch
+            {
+                try { File.Delete(temp); } catch { }
+                throw;
+            }
+        }
         if (new FileInfo(temp).Length < 100_000)
         {
             File.Delete(temp);
@@ -520,8 +565,11 @@ public sealed class SetupLocalizationService(ProcessRunner runner, WindowsImageS
             try { if (Directory.Exists(genMount)) Directory.Delete(genMount, true); } catch { }
         }
         var langIni = Path.Combine(media, "sources", "lang.ini");
-        return new LocalizationStep(localized.Any(x => x.StartsWith("index2:", StringComparison.Ordinal)) ? "localized" : "partial",
-            peDir, localized);
+        var setupIndexDone = localized.Any(x => x.StartsWith("index2:", StringComparison.Ordinal));
+        var winPeIndexDone = localized.Any(x => x.StartsWith("index1:", StringComparison.Ordinal));
+        var setupStatus = setupIndexDone && winPeIndexDone ? "localized" : setupIndexDone ? "partial" : "failed";
+        return new LocalizationStep(setupStatus, peDir, localized,
+            setupStatus == "localized" ? null : "Не все обязательные индексы boot.wim получили RU-компоненты.");
     }
 }
 
