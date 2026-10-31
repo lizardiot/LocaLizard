@@ -13,6 +13,7 @@
     <InformationalVersion>0.2.2.8</InformationalVersion>
     <RootNamespace>LocaLizard.App</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>..\..\assets\LocaLizard.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\LocaLizard.Core\LocaLizard.Core.csproj" />

@@ -33,6 +33,7 @@ public sealed class MainForm : Form
     {
         launchRequest = request;
         Text = $"LocaLizard {AppInfo.Version}";
+        Icon = System.Drawing.Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Application;
         Width = 1060; Height = 840; MinimumSize = new Size(860, 680);
         StartPosition = FormStartPosition.CenterScreen;
         BuildUi();
