@@ -277,9 +277,9 @@ public sealed class AdkBootstrapper(ProcessRunner runner)
         }
         if (finalResponse is null)
             throw new InvalidDataException("Превышено число перенаправлений при загрузке ADK.");
+        var temp = target + ".download";
         using (finalResponse)
         {
-            var temp = target + ".download";
             try
             {
                 await using var source = await finalResponse.Content.ReadAsStreamAsync(ct);
