@@ -1,4 +1,4 @@
-# LocaLizard 0.2.7.5
+# LocaLizard 0.2.7.6
 
 <p align="center">
   <img src="assets/LocaLizard-logo.jpg" alt="LocaLizard logo" width="520">
@@ -6,13 +6,13 @@
 
 **LocaLizard** is a graphical utility for preparing Windows IoT Enterprise LTSC installation media with Russian as the default language.
 
-> **Version 0.2.7.5:** the primary application targets C# / .NET 10 LTS Windows Forms. Historical Python sources and all releases published before this version are retained; previous tags and their assets were not modified. See [dotnet/README.md](dotnet/README.md) for the C# feature set and validation scope.
+> **Version 0.2.7.6:** the primary application targets C# / .NET 10 LTS Windows Forms. Historical Python sources and all releases published before this version are retained; previous tags and their assets were not modified. See [dotnet/README.md](dotnet/README.md) for the C# feature set and validation scope.
 
 ## Download
 
 - [Latest LocaLizard release](https://github.com/lizardiot/LocaLizard/releases/latest)
 - [All releases](https://github.com/lizardiot/LocaLizard/releases)
-- [LocaLizard.exe for Windows x64 — version 0.2.7.5](https://github.com/lizardiot/LocaLizard/releases/download/0.2.7.5/LocaLizard.exe)
+- [LocaLizard.exe for Windows x64 — version 0.2.7.6](https://github.com/lizardiot/LocaLizard/releases/download/0.2.7.6/LocaLizard.exe)
 
 ## Features
 
@@ -50,7 +50,7 @@
 - Static validation checks the ISO structure and whether images can be read, but cannot guarantee installation on every hardware configuration. Test the ISO in a separate VM or on a test device before deployment. OOBE can affect the preferred UI language of the first user.
 ## Run
 
-1. Download `LocaLizard.exe` from the [0.1.1.3 release](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.1.3).
+1. Download `LocaLizard.exe` from the [0.2.7.6 release](https://github.com/lizardiot/LocaLizard/releases/tag/0.2.7.6).
 2. Run the application. The main window runs without elevation: drag the target ISO into the first drop zone and the Russian donor ISO into the separate zone in the language-components section. Approve the UAC prompt when the application starts an operation that requires administrator privileges.
 3. Select the source Windows ISO, output ISO path, and working directory.
 4. If needed, specify a Russian ISO source, FOD / Language and Optional Features sources, and an update catalog.
@@ -60,8 +60,11 @@ You do not need to install Python or development tools manually. The source ISO 
 
 ## Version history
 
-### [0.2.7.5](https://github.com/lizardiot/LocaLizard/releases/tag/0.2.7.5) — current release
-The primary Windows application has been migrated to C# / .NET 8 Windows Forms. The port covers ISO/WIM servicing, UUP Dump Client Language Pack discovery and verification, managed cache integrity, resumable downloads, Microsoft Update Catalog, ordered update manifests, ADK/WinPE, Setup/WinPE/WinRE localization, SWM, patch-existing-WIM, audit, UAC, drag-and-drop, and UUP diagnostics. Regression tests and a Windows DISM integration test for a two-index WIM were added. CI builds and publishes the standalone Windows x64 app. Applying language CAB/MSU packages to specific IoT LTSC images, building a real user ISO, and visually checking Hyper-V boot remain target-environment validation steps; CI does not claim those steps have been performed.
+### [0.2.7.6](https://github.com/lizardiot/LocaLizard/releases/tag/0.2.7.6) — current release
+Fixed Windows ADK `oscdimg.exe` discovery. Instead of recursive enumeration that could abort when a protected system folder denied access, the application now traverses directories branch by branch and continues searching after skipping an inaccessible folder. Added isolated handling for unreadable candidate files and a regression test that simulates access denial during lazy directory enumeration. CI successfully builds .NET 10, runs regression tests and Windows DISM WIM integration tests, publishes the self-contained win-x64 application, and verifies its icon.
+
+### [0.2.7.5](https://github.com/lizardiot/LocaLizard/releases/tag/0.2.7.5) — previous release
+The primary Windows application was migrated to C# / .NET 10 LTS Windows Forms. The port covers ISO/WIM servicing, UUP Dump Client Language Pack discovery and verification, managed cache integrity, resumable downloads, Microsoft Update Catalog, ordered update manifests, ADK/WinPE, Setup/WinPE/WinRE localization, SWM, patch-existing-WIM, audit, UAC, drag-and-drop, and UUP diagnostics. Regression tests and a Windows DISM integration test for a two-index WIM were added. CI builds and publishes the standalone Windows x64 app. Applying language CAB/MSU packages to specific IoT LTSC images, building a real user ISO, and visually checking Hyper-V boot remain target-environment validation steps; CI does not claim those steps have been performed.
 
 ### [0.1.1.4](https://github.com/lizardiot/LocaLizard/releases/tag/0.1.1.4) — previous release
 Fixed the invalid DISM system-locale switch (/Set-SysLocale replaces /Set-SystemLocale) and separated base Client Language Pack candidate selection from later servicing, so another LP is tried only when /Add-Package rejects the current one. Optional Russian FODs are limited to Basic, OCR, Text-to-Speech, and Handwriting and are attempted only with a selected source. Optional FOD failures no longer roll back a successfully added base package. Added regression tests. Full Windows Setup resource localization still requires a compatible Russian donor ISO containing sources/ru-ru.
