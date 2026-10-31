@@ -86,6 +86,7 @@ public static class BuildPreflightService
             Add(ruComponents > 0 ? "info" : "warning", "RU FOD", ruComponents > 0
                 ? $"Обнаружено CAB-файлов с ru-RU в имени/пути: {ruComponents} (поиск ограничен первыми 100 совпадениями)."
                 : "В каталоге не обнаружены CAB-файлы с ru-RU в имени/пути. Проверьте соответствие ISO-версии, языка и архитектуры.");
+        }
         if (!string.IsNullOrWhiteSpace(options.DriverDirectory))
         {
             if (!Directory.Exists(options.DriverDirectory))
