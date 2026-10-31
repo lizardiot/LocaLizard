@@ -1,0 +1,165 @@
+name: Publish LocaLizard 0.2.7.6
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "global.json"
+      - "dotnet/**"
+      - "assets/LocaLizard.ico"
+      - "README.md"
+      - "README_EN.md"
+      - "CHANGELOG.md"
+      - ".github/workflows/build-csharp.yml"
+      - ".github/workflows/release-0.2.7.6.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 75
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+
+      - name: Set up .NET SDK 10.0.403
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        with:
+          dotnet-version: 10.0.403
+
+      - name: Verify centralized release version
+        shell: pwsh
+        run: |
+          $props = Get-Content -Raw "dotnet/Directory.Build.props"
+          if ($props -notmatch '<LocaLizardVersion>0\.2\.7\.5</LocaLizardVersion>') {
+            throw "The centralized LocaLizard version must be 0.2.7.6."
+          }
+          $global = Get-Content -Raw "global.json"
+          if ($global -notmatch '"version"\s*:\s*"10\.0\.403"') {
+            throw "global.json must pin SDK 10.0.403."
+          }
+
+      - name: Build solution
+        run: dotnet build dotnet/LocaLizard.sln -c Release
+
+      - name: Run regression tests
+        run: dotnet run --project dotnet/LocaLizard.SmokeTests/LocaLizard.SmokeTests.csproj -c Release
+
+      - name: Run Windows DISM WIM integration tests
+        run: dotnet run --project dotnet/LocaLizard.WindowsIntegrationTests/LocaLizard.WindowsIntegrationTests.csproj -c Release
+
+      - name: Publish self-contained Windows x64 application
+        run: dotnet publish dotnet/LocaLizard.App/LocaLizard.App.csproj -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true /p:IncludeNativeLibrariesForSelfExtract=true
+
+      - name: Verify published application icon
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.Drawing
+          $exe = Resolve-Path "dotnet/LocaLizard.App/bin/Release/net10.0-windows/win-x64/publish/LocaLizard.exe"
+          $icon = [System.Drawing.Icon]::ExtractAssociatedIcon($exe.Path)
+          if ($null -eq $icon) { throw "Published EXE has no extractable application icon." }
+          try {
+            if ($icon.Width -lt 16 -or $icon.Height -lt 16) {
+              throw "Published application icon has invalid dimensions."
+            }
+            $bitmap = $icon.ToBitmap()
+            try {
+              $greenPixels = 0
+              for ($y = 0; $y -lt $bitmap.Height; $y++) {
+                for ($x = 0; $x -lt $bitmap.Width; $x++) {
+                  $pixel = $bitmap.GetPixel($x, $y)
+                  if ($pixel.G -gt 80 -and $pixel.G -gt ($pixel.R * 1.2) -and $pixel.G -gt ($pixel.B * 1.2)) {
+                    $greenPixels++
+                  }
+                }
+              }
+              if ($greenPixels -lt 20) { throw "Expected neon-green dragon-eye icon is missing." }
+              Write-Host "Verified dragon-eye icon, green pixels=$greenPixels."
+            } finally { $bitmap.Dispose() }
+          } finally { $icon.Dispose() }
+
+      - name: Package release assets and checksums
+        shell: pwsh
+        run: |
+          $publish = "dotnet/LocaLizard.App/bin/Release/net10.0-windows/win-x64/publish"
+          if (-not (Test-Path "$publish/LocaLizard.exe")) { throw "LocaLizard.exe was not published." }
+          $assets = "release-assets"
+          New-Item -ItemType Directory -Force -Path $assets | Out-Null
+          Copy-Item "$publish/LocaLizard.exe" "$assets/LocaLizard.exe" -Force
+          Compress-Archive -Path "$publish/*" -DestinationPath "$assets/LocaLizard-0.2.7.6-win-x64.zip" -Force
+          $files = @("$assets/LocaLizard.exe", "$assets/LocaLizard-0.2.7.6-win-x64.zip")
+          $lines = foreach ($file in $files) {
+            $hash = (Get-FileHash -Path $file -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $(Split-Path $file -Leaf)"
+          }
+          Set-Content -Path "$assets/SHA256.txt" -Value $lines -Encoding ascii
+          $changelog = Get-Content -Raw -Encoding UTF8 "CHANGELOG.md"
+          $releaseSection = [regex]::Match($changelog, '(?ms)^## \[0\.2\.7\.5\].*?(?=^## \[|\z)')
+          if (-not $releaseSection.Success) { throw "CHANGELOG.md has no 0.2.7.6 release section." }
+          Set-Content -Path "$assets/RELEASE_NOTES.md" -Value ($releaseSection.Value.Trim() + [Environment]::NewLine) -Encoding UTF8
+
+      - name: Upload release assets
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: LocaLizard-0.2.7.6-release-assets
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    needs: build
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && contains(github.event.head_commit.message, 'release-0.2.7.6')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout release metadata
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+
+      - name: Download verified release assets
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
+        with:
+          name: LocaLizard-0.2.7.6-release-assets
+          path: release-assets
+
+      - name: Refuse to move an existing 0.2.7.6 tag
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
+        with:
+          script: |
+            try {
+              await github.rest.git.getRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: "tags/0.2.7.6"
+              });
+              core.setFailed("Tag 0.2.7.6 already exists. Refusing to move or overwrite it.");
+            } catch (error) {
+              if (error.status === 404) {
+                core.info("Tag 0.2.7.6 does not exist; a new release can be created.");
+              } else {
+                throw error;
+              }
+            }
+
+      - name: Publish GitHub Release 0.2.7.6
+        if: success()
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          tag_name: 0.2.7.6
+          target_commitish: ${{ github.sha }}
+          name: LocaLizard 0.2.7.6
+          draft: false
+          prerelease: false
+          fail_on_unmatched_files: true
+          files: |
+            release-assets/LocaLizard.exe
+            release-assets/LocaLizard-0.2.7.6-win-x64.zip
+            release-assets/SHA256.txt
+          body_path: release-assets/RELEASE_NOTES.md

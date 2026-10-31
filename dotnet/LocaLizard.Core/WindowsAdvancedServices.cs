@@ -169,20 +169,102 @@ public sealed class AdkBootstrapper(ProcessRunner runner)
             Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
             Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
             Root
-        }.Where(x => !string.IsNullOrWhiteSpace(x) && Directory.Exists(x)).Distinct(StringComparer.OrdinalIgnoreCase);
-        var candidates = roots
-            .SelectMany(root =>
-            {
-                try { return Directory.EnumerateFiles(root, "oscdimg.exe", SearchOption.AllDirectories); }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return Enumerable.Empty<string>(); }
-            })
+        }.Where(x => !string.IsNullOrWhiteSpace(x) && Directory.Exists(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+
+        var paths = roots.SelectMany(root => EnumerateFilesSafely(root, "oscdimg.exe"))
             .Concat((Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator)
                 .Where(Directory.Exists).Select(p => Path.Combine(p, "oscdimg.exe")).Where(File.Exists))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Select(path => (Path: path, Version: ReadFileVersion(path)))
-            .OrderByDescending(item => item.Version)
-            .ToArray();
-        return candidates.FirstOrDefault().Path;
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+
+        var candidates = new List<(string Path, Version Version)>();
+        foreach (var path in paths)
+        {
+            try
+            {
+                candidates.Add((path, ReadFileVersion(path)));
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
+            {
+                // A stale or protected candidate must not prevent checking the remaining locations.
+            }
+        }
+
+        return candidates.OrderByDescending(item => item.Version)
+            .Select(item => item.Path).FirstOrDefault();
+    }
+
+    internal static IEnumerable<string> EnumerateFilesSafely(
+        string root,
+        string searchPattern,
+        Func<string, IEnumerable<string>>? enumerateDirectories = null,
+        Func<string, string, IEnumerable<string>>? enumerateFiles = null)
+    {
+        if (string.IsNullOrWhiteSpace(root)) yield break;
+        enumerateDirectories ??= Directory.EnumerateDirectories;
+        enumerateFiles ??= Directory.EnumerateFiles;
+
+        var pending = new Stack<string>();
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        pending.Push(root);
+
+        while (pending.Count > 0)
+        {
+            var directory = pending.Pop();
+            string fullPath;
+            try { fullPath = Path.GetFullPath(directory); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+            {
+                continue;
+            }
+
+            if (!visited.Add(fullPath)) continue;
+
+            // Enumerate each folder independently. In particular, do not use
+            // SearchOption.AllDirectories: its lazy iterator can throw from MoveNext()
+            // after entering a protected child and abort the entire ADK search.
+            foreach (var file in EnumerateSafely(() => enumerateFiles(directory, searchPattern)))
+                yield return file;
+
+            foreach (var child in EnumerateSafely(() => enumerateDirectories(directory)))
+                pending.Push(child);
+        }
+    }
+
+    private static IEnumerable<string> EnumerateSafely(Func<IEnumerable<string>> createSequence)
+    {
+        IEnumerator<string>? enumerator = null;
+        try { enumerator = createSequence().GetEnumerator(); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+
+        if (enumerator is null) yield break;
+
+        try
+        {
+            while (true)
+            {
+                var moved = false;
+                var failed = false;
+                string? current = null;
+                try
+                {
+                    moved = enumerator.MoveNext();
+                    if (moved) current = enumerator.Current;
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    failed = true;
+                }
+
+                if (failed || !moved) yield break;
+                yield return current!;
+            }
+        }
+        finally
+        {
+            try { enumerator.Dispose(); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        }
     }
 
     public static Version ReadFileVersion(string path)

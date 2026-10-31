@@ -17,6 +17,27 @@ Check(WindowsLifecycle.GetInfo(26100, new DateOnly(2026, 10, 31)) is { IsSupport
 Check(WindowsLifecycle.GetInfo(99999) is null, "unknown build has no guessed lifecycle");
 Check(AppInfo.Version == "0.2.7.5", "AppInfo version comes from centralized assembly metadata");
 
+static IEnumerable<string> SimulatedDeniedDirectoryEntries()
+{
+    yield return @"root\\blocked\\partial";
+    throw new UnauthorizedAccessException("simulated lazy access denial");
+}
+static IEnumerable<string> SimulatedDirectories(string directory)
+{
+    if (directory == @"root") return new[] { @"root\\blocked", @"root\\accessible" };
+    if (directory == @"root\\blocked") return SimulatedDeniedDirectoryEntries();
+    return Array.Empty<string>();
+}
+var resilientAdkCandidates = AdkBootstrapper.EnumerateFilesSafely(
+    @"root",
+    "oscdimg.exe",
+    SimulatedDirectories,
+    (directory, _) => directory == @"root\\accessible"
+        ? new[] { @"root\\accessible\\oscdimg.exe" }
+        : Array.Empty<string>()).ToArray();
+Check(resilientAdkCandidates.Contains(@"root\\accessible\\oscdimg.exe", StringComparer.OrdinalIgnoreCase),
+    "ADK search continues into accessible sibling folders after lazy UnauthorizedAccessException");
+
 static void Throws<T>(Action action, string message) where T : Exception
 {
     try { action(); }
