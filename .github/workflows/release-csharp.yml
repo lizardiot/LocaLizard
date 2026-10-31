@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "dotnet/**"
+      - "assets/LocaLizard.ico"
       - "README.md"
       - "README_EN.md"
       - "CHANGELOG.md"
@@ -56,6 +57,34 @@ jobs:
 
       - name: Publish standalone Windows x64 application
         run: dotnet publish dotnet/LocaLizard.App/LocaLizard.App.csproj -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true /p:IncludeNativeLibrariesForSelfExtract=true
+
+      - name: Verify dragon-eye icon is embedded in published EXE
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.Drawing
+          $exe = Resolve-Path "dotnet/LocaLizard.App/bin/Release/net8.0-windows/win-x64/publish/LocaLizard.exe"
+          $icon = [System.Drawing.Icon]::ExtractAssociatedIcon($exe.Path)
+          if ($null -eq $icon) { throw "Published EXE has no extractable application icon." }
+          $bitmap = $icon.ToBitmap()
+          try {
+            $greenPixels = 0
+            for ($y = 0; $y -lt $bitmap.Height; $y++) {
+              for ($x = 0; $x -lt $bitmap.Width; $x++) {
+                $pixel = $bitmap.GetPixel($x, $y)
+                if (($pixel.G -gt 80) -and ($pixel.G -gt ($pixel.R * 1.2)) -and ($pixel.G -gt ($pixel.B * 1.2))) {
+                  $greenPixels++
+                }
+              }
+            }
+            if ($greenPixels -lt 20) {
+              throw "Published EXE does not contain the expected neon-green dragon-eye icon."
+            }
+            Write-Host "Verified embedded dragon-eye icon: $($bitmap.Width)x$($bitmap.Height), green pixels=$greenPixels."
+          }
+          finally {
+            $bitmap.Dispose()
+            $icon.Dispose()
+          }
 
       - name: Package release assets and checksums
         shell: pwsh
