@@ -159,6 +159,9 @@ jobs:
           public static class ShellIconCheck {
             [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
             public static extern uint ExtractIconEx(string file, int index, IntPtr[] large, IntPtr[] small, uint count);
+            [DllImport("user32.dll", SetLastError = true)]
+            [return: MarshalAs(UnmanagedType.Bool)]
+            public static extern bool DestroyIcon(IntPtr icon);
           }
           '@
           Add-Type -TypeDefinition $source
@@ -181,9 +184,37 @@ jobs:
             Write-Host "Windows Shell extracted small icon $($smallIcon.Width)x$($smallIcon.Height) and large icon $($largeIcon.Width)x$($largeIcon.Height)."
           }
           finally {
-            if ($large[0] -ne [IntPtr]::Zero) { [void][System.Runtime.InteropServices.Marshal]::Release($large[0]) }
-            if ($small[0] -ne [IntPtr]::Zero) { [void][System.Runtime.InteropServices.Marshal]::Release($small[0]) }
+            if ($large[0] -ne [IntPtr]::Zero) {
+              if (-not [ShellIconCheck]::DestroyIcon($large[0])) { throw "DestroyIcon failed for the large HICON." }
+            }
+            if ($small[0] -ne [IntPtr]::Zero) {
+              if (-not [ShellIconCheck]::DestroyIcon($small[0])) { throw "DestroyIcon failed for the small HICON." }
+            }
           }
+
+      - name: Verify icon resource contains all Explorer sizes
+        shell: pwsh
+        run: |
+          $icon = [System.IO.File]::ReadAllBytes("assets/LocaLizard.ico")
+          if ($icon.Length -lt 6) { throw "ICO file is truncated." }
+          $reserved = [BitConverter]::ToUInt16($icon, 0)
+          $type = [BitConverter]::ToUInt16($icon, 2)
+          $count = [BitConverter]::ToUInt16($icon, 4)
+          if ($reserved -ne 0 -or $type -ne 1 -or $count -ne 7) {
+            throw "ICO header is invalid or does not contain seven images."
+          }
+          $sizes = @()
+          for ($i = 0; $i -lt $count; $i++) {
+            $offset = 6 + (16 * $i)
+            $width = [int]$icon[$offset]
+            if ($width -eq 0) { $width = 256 }
+            $sizes += $width
+          }
+          $expected = @(16, 24, 32, 48, 64, 128, 256)
+          if (Compare-Object $expected $sizes) {
+            throw "ICO sizes differ from expected set. Found: $($sizes -join ', ')."
+          }
+          Write-Host "Verified ICO contains 16, 24, 32, 48, 64, 128 and 256 px variants."
 
       - name: Package release assets and checksums
         shell: pwsh
