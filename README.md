@@ -1,5 +1,10 @@
 # LocaLizard 0.2.2.8
 
+<p align="center">
+  <img src="assets/LocaLizard-logo.jpg" alt="LocaLizard logo" width="520">
+</p>
+
+
 **LocaLizard** — графическая утилита для подготовки установочного ISO Windows IoT Enterprise LTSC с русским языком по умолчанию.
 
 > **Версия 0.2.2.8:** основное приложение перенесено на C# / .NET 8 (Windows Forms). Исторические Python-исходники и опубликованные до этого выпуска релизы сохранены; предыдущие теги и их файлы не изменялись. Состав C#-версии и условия проверки описаны в [dotnet/README.md](dotnet/README.md).

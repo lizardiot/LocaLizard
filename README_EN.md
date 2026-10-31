@@ -1,5 +1,10 @@
 # LocaLizard 0.2.2.8
 
+<p align="center">
+  <img src="assets/LocaLizard-logo.jpg" alt="LocaLizard logo" width="520">
+</p>
+
+
 **LocaLizard** is a graphical utility for preparing Windows IoT Enterprise LTSC installation media with Russian as the default language.
 
 > **Version 0.2.2.8:** the primary application has been migrated to C# / .NET 8 Windows Forms. Historical Python sources and all releases published before this version are retained; previous tags and their assets were not modified. See [dotnet/README.md](dotnet/README.md) for the C# feature set and validation scope.
