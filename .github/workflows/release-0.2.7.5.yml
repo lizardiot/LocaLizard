@@ -1,17 +1,6 @@
 name: Publish LocaLizard 0.2.7.5
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "global.json"
-      - "dotnet/**"
-      - "assets/LocaLizard.ico"
-      - "README.md"
-      - "README_EN.md"
-      - "CHANGELOG.md"
-      - ".github/workflows/build-csharp.yml"
-      - ".github/workflows/release-0.2.7.5.yml"
   workflow_dispatch:
 
 permissions:

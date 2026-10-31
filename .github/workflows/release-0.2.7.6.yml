@@ -36,7 +36,7 @@ jobs:
         shell: pwsh
         run: |
           $props = Get-Content -Raw "dotnet/Directory.Build.props"
-          if ($props -notmatch '<LocaLizardVersion>0\.2\.7\.5</LocaLizardVersion>') {
+          if ($props -notmatch '<LocaLizardVersion>0\.2\.7\.6</LocaLizardVersion>') {
             throw "The centralized LocaLizard version must be 0.2.7.6."
           }
           $global = Get-Content -Raw "global.json"
@@ -99,7 +99,7 @@ jobs:
           }
           Set-Content -Path "$assets/SHA256.txt" -Value $lines -Encoding ascii
           $changelog = Get-Content -Raw -Encoding UTF8 "CHANGELOG.md"
-          $releaseSection = [regex]::Match($changelog, '(?ms)^## \[0\.2\.7\.5\].*?(?=^## \[|\z)')
+          $releaseSection = [regex]::Match($changelog, '(?ms)^## \[0\.2\.7\.6\].*?(?=^## \[|\z)')
           if (-not $releaseSection.Success) { throw "CHANGELOG.md has no 0.2.7.6 release section." }
           Set-Content -Path "$assets/RELEASE_NOTES.md" -Value ($releaseSection.Value.Trim() + [Environment]::NewLine) -Encoding UTF8
 
