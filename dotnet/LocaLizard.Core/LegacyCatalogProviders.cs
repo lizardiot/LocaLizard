@@ -54,7 +54,8 @@ public sealed class W10MuiCatalogProvider : ILanguageResourceProvider, IDisposab
             }
             catch (HttpRequestException) { continue; }
 
-            var parsed = ParseCatalog(text, request, catalogBuild.Value);
+            var parsed = ParseCatalog(text, request, catalogBuild.Value,
+                string.Equals(directory, "OnDemand", StringComparison.OrdinalIgnoreCase));
             if (parsed.Count > 0) return parsed;
         }
 
@@ -72,15 +73,21 @@ public sealed class W10MuiCatalogProvider : ILanguageResourceProvider, IDisposab
     };
 
     internal static IReadOnlyList<LanguageResourceCandidate> ParseCatalog(
-        string text, LanguageResourceRequest request, int catalogBuild)
+        string text, LanguageResourceRequest request, int catalogBuild, bool featureOnDemand = false)
     {
         var lines = text.Replace("\r", "").Split('\n');
         var results = new List<LanguageResourceCandidate>();
         var currentSection = "";
+        var inRussianSection = false;
         for (var i = 0; i < lines.Length; i++)
         {
             var line = lines[i].Trim();
             if (line.Length == 0) continue;
+            if (Regex.IsMatch(line, @"(?i)^[a-z]{2,3}-[a-z]{2,4}$"))
+            {
+                inRussianSection = line.Equals("ru-RU", StringComparison.OrdinalIgnoreCase);
+                continue;
+            }
             if (!line.StartsWith("http://", StringComparison.OrdinalIgnoreCase) &&
                 !line.StartsWith("https://", StringComparison.OrdinalIgnoreCase) &&
                 (line.Contains("x64", StringComparison.OrdinalIgnoreCase) ||
@@ -91,20 +98,27 @@ public sealed class W10MuiCatalogProvider : ILanguageResourceProvider, IDisposab
             {
                 currentSection = line;
             }
-
-            if (!line.Equals("ru-RU", StringComparison.OrdinalIgnoreCase)) continue;
-            var resourceUrl = lines.Skip(i + 1).Take(4).Select(x => x.Trim())
-                .FirstOrDefault(x => x.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
-                                     x.StartsWith("https://", StringComparison.OrdinalIgnoreCase));
-            if (resourceUrl is null || !Uri.TryCreate(resourceUrl, UriKind.Absolute, out var parsedUri)) continue;
+            if (!inRussianSection ||
+                !(line.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+                  line.StartsWith("https://", StringComparison.OrdinalIgnoreCase)))
+                continue;
+            if (!Uri.TryCreate(line, UriKind.Absolute, out var parsedUri)) continue;
             var fileName = Path.GetFileName(parsedUri.AbsolutePath);
             if (string.IsNullOrWhiteSpace(fileName)) continue;
 
             var isServer = PackageCompatibilityService.PackageNameLooksServer(fileName) ||
                            currentSection.Contains("Server", StringComparison.OrdinalIgnoreCase);
             if (isServer != PackageCompatibilityService.IsServer(request.ProductFamily)) continue;
-            var type = isServer ? LanguageResourceType.ServerLanguagePack : LanguageResourceType.ClientLanguagePack;
+            var type = featureOnDemand ? LanguageResourceType.FeatureOnDemand :
+                isServer ? LanguageResourceType.ServerLanguagePack : LanguageResourceType.ClientLanguagePack;
             if (request.ResourceType is not null && request.ResourceType != type) continue;
+            if (featureOnDemand)
+            {
+                if (!PackageCompatibilityService.IsFodPackage(fileName) ||
+                    !fileName.Contains("ru-ru", StringComparison.OrdinalIgnoreCase) &&
+                    !fileName.Contains("ru-RU", StringComparison.OrdinalIgnoreCase))
+                    continue;
+            }
             var architecture = InferArchitecture(fileName);
             if (architecture is null || !string.Equals(architecture, request.Architecture, StringComparison.OrdinalIgnoreCase))
                 continue;
