@@ -10,7 +10,7 @@ public static class FodCapabilityCatalog
         "Language.OCR~~~ru-RU~0.0.1.0",
         "Language.Handwriting~~~ru-RU~0.0.1.0",
         "Language.Speech~~~ru-RU~0.0.1.0",
-        "Language.TextToSpeech~~~ru-RU~0.0.1.0"
+        "Language.TextToSpeech~~~ru-RU~0.0.1.0",\n        "Language.Fonts~~~ru-RU~0.0.1.0"
     ];
 }
 
