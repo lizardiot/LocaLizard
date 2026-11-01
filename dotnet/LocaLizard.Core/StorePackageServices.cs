@@ -16,7 +16,8 @@ public sealed record AppxPackageInfo(
     string Architecture,
     IReadOnlyList<string> Languages,
     IReadOnlyList<AppxDependency> Dependencies,
-    bool IsBundle);
+    bool IsBundle,
+    IReadOnlyList<string>? IncludedArchitectures = null);
 
 public sealed class AppxPackageInspector
 {
@@ -59,11 +60,48 @@ public sealed class AppxPackageInspector
             .Select(x => (string?)x.Attribute("Language") ?? (string?)x.Attribute("LanguageTag"))
             .Where(x => !string.IsNullOrWhiteSpace(x))
             .Select(x => x!)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
+            .ToList();
 
-        var dependencies = document.Descendants()
-            .Where(x => x.Name.LocalName == "PackageDependency")
+        var dependencies = ParseDependencies(document).ToList();
+        var includedArchitectures = new List<string>();
+        if (isBundle)
+        {
+            foreach (var nestedEntry in archive.Entries.Where(x =>
+                         Path.GetExtension(x.FullName).Equals(".appx", StringComparison.OrdinalIgnoreCase) ||
+                         Path.GetExtension(x.FullName).Equals(".msix", StringComparison.OrdinalIgnoreCase)))
+            {
+                using var nestedInput = nestedEntry.Open();
+                using var memory = new MemoryStream();
+                nestedInput.CopyTo(memory);
+                memory.Position = 0;
+                using var nestedArchive = new ZipArchive(memory, ZipArchiveMode.Read, leaveOpen: false);
+                var nestedManifest = nestedArchive.Entries.FirstOrDefault(x =>
+                    x.FullName.Equals("AppxManifest.xml", StringComparison.OrdinalIgnoreCase));
+                if (nestedManifest is null) continue;
+                using var nestedStream = nestedManifest.Open();
+                using var nestedReader = XmlReader.Create(nestedStream, settings);
+                var nestedDocument = XDocument.Load(nestedReader);
+                var nestedIdentity = nestedDocument.DescendantsAndSelf()
+                    .FirstOrDefault(x => x.Name.LocalName == "Identity");
+                var nestedArchitecture = NormalizeAppxArchitecture(
+                    (string?)nestedIdentity?.Attribute("ProcessorArchitecture") ?? "neutral");
+                includedArchitectures.Add(nestedArchitecture);
+                languages.AddRange(nestedDocument.Descendants()
+                    .Where(x => x.Name.LocalName is "Resource" or "ResourcePackage")
+                    .Select(x => (string?)x.Attribute("Language") ?? (string?)x.Attribute("LanguageTag"))
+                    .Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x!));
+                dependencies.AddRange(ParseDependencies(nestedDocument));
+            }
+        }
+
+        return new AppxPackageInfo(Path.GetFullPath(packagePath), name, publisher, version,
+            architecture, languages.Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
+            dependencies.DistinctBy(x => (x.Name, x.Publisher), StringTupleComparer.Instance).ToArray(),
+            isBundle, includedArchitectures.Distinct(StringComparer.OrdinalIgnoreCase).ToArray());
+    }
+
+    private static IEnumerable<AppxDependency> ParseDependencies(XDocument document) =>
+        document.Descendants().Where(x => x.Name.LocalName == "PackageDependency")
             .Select(x =>
             {
                 var depName = (string?)x.Attribute("Name") ?? "";
@@ -72,12 +110,7 @@ public sealed class AppxPackageInspector
                 Version? min = Version.TryParse(minText, out var parsed) ? parsed : null;
                 return new AppxDependency(depName, depPublisher, min);
             })
-            .Where(x => !string.IsNullOrWhiteSpace(x.Name))
-            .ToArray();
-
-        return new AppxPackageInfo(Path.GetFullPath(packagePath), name, publisher, version,
-            architecture, languages, dependencies, isBundle);
-    }
+            .Where(x => !string.IsNullOrWhiteSpace(x.Name));
 
     public static string NormalizeAppxArchitecture(string? architecture)
     {
@@ -96,8 +129,11 @@ public sealed class AppxPackageInspector
         package.Name.Contains("LanguageExperiencePack", StringComparison.OrdinalIgnoreCase) &&
         package.Languages.Contains("ru-RU", StringComparer.OrdinalIgnoreCase) &&
         package.Publisher.Contains("Microsoft Corporation", StringComparison.OrdinalIgnoreCase) &&
-        (package.Architecture == "neutral" ||
-         package.Architecture.Equals(BuildNumbers.Architecture(architecture), StringComparison.OrdinalIgnoreCase));
+        (package.IsBundle
+            ? package.IncludedArchitectures?.Any(x => x == "neutral" ||
+                x.Equals(BuildNumbers.Architecture(architecture), StringComparison.OrdinalIgnoreCase)) == true
+            : package.Architecture == "neutral" ||
+                package.Architecture.Equals(BuildNumbers.Architecture(architecture), StringComparison.OrdinalIgnoreCase));
 }
 
 public sealed record AppxDependencyResolution(
@@ -147,7 +183,7 @@ public sealed class AppxDependencyResolver(AppxPackageInspector? inspector = nul
 public sealed class StoreProductResolver(HttpClient? httpClient = null) : IDisposable
 {
     private const string StoreMetadataEndpoint = "https://store.rg-adguard.net/api/GetFiles";
-    private readonly HttpClient _http = httpClient ?? new HttpClient { Timeout = TimeSpan.FromSeconds(45) };
+    private readonly HttpClient _http = httpClient ?? new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(45) };
 
     public async Task<IReadOnlyList<LanguageResourceCandidate>> ResolveRussianLxpAsync(
         string productId, string architecture, int buildFamily, CancellationToken ct)
@@ -159,6 +195,8 @@ public sealed class StoreProductResolver(HttpClient? httpClient = null) : IDispo
         if (!BuildNumbers.IsSupportedArchitecture(normalized))
             throw new InvalidDataException("Unsupported architecture for Store package discovery.");
 
+        if (!SecurityPolicy.IsTrustedMetadataUrl(new Uri(StoreMetadataEndpoint)))
+            throw new InvalidDataException("Store metadata endpoint is not allow-listed.");
         using var form = new FormUrlEncodedContent(new Dictionary<string, string>
         {
             ["type"] = "ProductId",
@@ -168,6 +206,9 @@ public sealed class StoreProductResolver(HttpClient? httpClient = null) : IDispo
         });
         using var response = await _http.PostAsync(StoreMetadataEndpoint, form, ct);
         response.EnsureSuccessStatusCode();
+        if (response.RequestMessage?.RequestUri is not { } finalUri ||
+            !SecurityPolicy.IsTrustedMetadataUrl(finalUri))
+            throw new InvalidDataException("Store metadata request redirected outside the exact allow-listed endpoint.");
         var html = await response.Content.ReadAsStringAsync(ct);
         if (html.Length > 8 * 1024 * 1024) throw new InvalidDataException("Store metadata response is too large.");
 
