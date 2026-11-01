@@ -348,8 +348,19 @@ public sealed class UupDumpClient : IDisposable
             var relative = Path.GetRelativePath(cacheRoot, Path.GetFullPath(path)).Replace('\\', '/');
             if (manifest is null || manifest.SchemaVersion is not (1 or 2) ||
                 !manifest.Packages.TryGetValue(relative, out var record)) return false;
-            if (manifest.SchemaVersion == 2 &&
-                !string.Equals(record.Language, "ru-RU", StringComparison.OrdinalIgnoreCase)) return false;
+            if (manifest.SchemaVersion == 2)
+            {
+                var context = ReadCacheContext(cacheRoot);
+                if (!string.Equals(record.Language, "ru-RU", StringComparison.OrdinalIgnoreCase) ||
+                    !string.Equals(record.ResourceType, "ClientLanguagePack", StringComparison.OrdinalIgnoreCase) ||
+                    string.IsNullOrWhiteSpace(record.SourcePackage) ||
+                    !BuildNumbers.IsSupportedArchitecture(record.Architecture) ||
+                    record.TargetBuildFamily is null or <= 0 ||
+                    context.BuildFamily is int family && record.TargetBuildFamily != family ||
+                    context.Architecture is not null &&
+                        !string.Equals(record.Architecture, context.Architecture, StringComparison.OrdinalIgnoreCase))
+                    return false;
+            }
             var info = new FileInfo(path);
             if (info.Length != record.Size || record.Size <= 0) return false;
             await using var stream = File.OpenRead(path);
