@@ -3,7 +3,7 @@ namespace LocaLizard.Core;
 public static class AppInfo
 {
     public const string Name = "LocaLizard";
-    public static string Version => typeof(AppInfo).Assembly.GetName().Version?.ToString(4) ?? "0.0.0.0";
+    public static string Version => typeof(AppInfo).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
 }
 
 public sealed record RunOptions

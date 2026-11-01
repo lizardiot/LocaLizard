@@ -337,8 +337,8 @@ public sealed class IsoBuildService
     {
         var donorSources = Path.Combine(donorRoot, "sources");
         var donorImages = Directory.Exists(donorSources)
-            ? Directory.EnumerateFiles(donorSources, "install*.wim")
-                .Concat(Directory.EnumerateFiles(donorSources, "install*.esd")).ToArray()
+            ? AdkBootstrapper.EnumerateFilesSafely(donorSources, "install*.wim")
+                .Concat(AdkBootstrapper.EnumerateFilesSafely(donorSources, "install*.esd")).ToArray()
             : Array.Empty<string>();
         var donorInfo = new List<ImageInfo>();
         foreach (var file in donorImages)
@@ -361,7 +361,7 @@ public sealed class IsoBuildService
         if (Directory.Exists(donorRu) && (!Directory.Exists(targetRu) || !Directory.EnumerateFileSystemEntries(targetRu).Any()))
         {
             Directory.CreateDirectory(targetRu);
-            foreach (var item in Directory.EnumerateFiles(donorRu, "*", SearchOption.AllDirectories))
+            foreach (var item in AdkBootstrapper.EnumerateFilesSafely(donorRu, "*"))
             {
                 var relative = Path.GetRelativePath(donorRu, item);
                 var copyTo = Path.Combine(targetRu, relative);
@@ -370,9 +370,10 @@ public sealed class IsoBuildService
             }
             Log?.Invoke("Совместимые localized Setup resources скопированы в sources\\ru-ru.");
         }
+        var donorCabFiles = AdkBootstrapper.EnumerateFilesSafely(donorRoot, "*.cab").ToArray();
         var setupDestination = Path.Combine(work, "donor_setup_packages");
         Directory.CreateDirectory(setupDestination);
-        foreach (var file in Directory.EnumerateFiles(donorRoot, "*.cab", SearchOption.AllDirectories))
+        foreach (var file in donorCabFiles)
         {
             var lowName = Path.GetFileName(file).ToLowerInvariant();
             var lowPath = file.ToLowerInvariant();
@@ -388,7 +389,7 @@ public sealed class IsoBuildService
 
         var destination = Path.Combine(work, "donor_packages");
         Directory.CreateDirectory(destination);
-        foreach (var file in Directory.EnumerateFiles(donorRoot, "*.cab", SearchOption.AllDirectories))
+        foreach (var file in donorCabFiles)
         {
             ct.ThrowIfCancellationRequested();
             var name = Path.GetFileName(file);
@@ -486,7 +487,7 @@ public sealed class IsoBuildService
 
     private static List<string> FindPackages(string root) =>
         Directory.Exists(root)
-            ? Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
+            ? AdkBootstrapper.EnumerateFilesSafely(root, "*")
                 .Where(p => p.EndsWith(".cab", StringComparison.OrdinalIgnoreCase) ||
                             p.EndsWith(".mum", StringComparison.OrdinalIgnoreCase)).ToList()
             : [];

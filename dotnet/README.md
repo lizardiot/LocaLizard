@@ -1,16 +1,16 @@
-# LocaLizard — C# / .NET 10
+# LocaLizard 0.3.6 — C# / .NET 10
 
-Ветка C# содержит основной выпуск LocaLizard 0.2.7.5 на Windows Forms / .NET 10. Исторический Python-проект сохранён как исходный reference и recovery path; все опубликованные до 0.2.7.5 версии, теги и файлы релизов оставлены без изменений.
+Основной выпуск LocaLizard развивается в ветке `main` на Windows Forms / .NET 10. Исторические Python-исходники и уже опубликованные релизы сохранены; ветка `rewrite/csharp` является более старым снимком .NET 8 и не используется для выпуска 0.3.6.
 
 ## Сохранение предыдущих выпусков
 
-- Изменения C# выполняются в ветке `rewrite/csharp`.
-- Исходные `source/main.py.part01` … `source/main.py.part16`, `test_helpers.py` и прежний Python workflow не заменяются.
-- Существующие Git-теги, GitHub Releases и их assets не изменяются и не пересоздаются.
-- C# имеет версию 0.2.7.5; Windows build workflow собирает приложение, запускает регрессионные и DISM WIM integration tests.
-- Релиз C# публикуется отдельным workflow и не переписывает Python-теги или прежние GitHub Releases.
+- Исторические Python-файлы и опубликованные ранее релизы остаются в репозитории; версия 0.3.6 публикуется отдельным тегом и отдельным GitHub Release.
+- Централизованная версия C# задаётся в `dotnet/Directory.Build.props`.
+- Предыдущие Git-теги и assets выпусков не перезаписываются.
+- Workflow выпуска собирает приложение, выполняет regression tests и синтетический DISM WIM integration test, затем публикует Windows x64 assets.
+- Hyper-V/VMConnect smoke test остаётся пользовательской опцией и не является условием CI или выпуска.
 
-## Возможности 0.2.7.5
+## Возможности 0.3.6
 
 - Предварительная диагностика ISO/WIM/ESD, build family, архитектуры, донорского ISO, манифеста обновлений и свободного места.
 - Поддержка .NET 10 LTS; единственный источник версии — `dotnet/Directory.Build.props`.
@@ -39,8 +39,8 @@ dotnet publish dotnet/LocaLizard.App/LocaLizard.App.csproj -c Release -r win-x64
 - Отдельные drag-and-drop зоны для целевого и донорского ISO; запуск основного окна без повышения прав, запрос UAC только перед DISM/servicing-операцией и восстановление выбранного действия в повышенном процессе.
 - Разделитель с изменяемой высотой журнала; сохранение и миграция пользовательских параметров в `%LOCALAPPDATA%\\LocaLizard\\settings.json` с совместимыми именами ключей старой Python-версии.
 - Инвентаризация WIM/ESD-индексов через DISM, получение build family/architecture, экспорт ESD в WIM и проверка результата.
-- Поиск Client Language Pack ru-RU через UUP Dump, отдельная диагностика пяти LTSC build families, проверка клиентского SKU/языка/архитектуры/семейства сборки, безопасные разрешённые CDN-пути Microsoft, проверка размера и SHA-1, retry/resume для загрузок, извлечение UUP ESD через DISM и установка по `update.mum`.
-- Импорт совместимых пакетов из русского ISO-донора, управляемый кэш с package_manifest.json / SHA-256 и проверкой tampering при повторном использовании, установка базового Client Language Pack с повторным выбором только при отказе DISM на `/Add-Package`.
+- Поиск только русского Client Language Pack `ru-RU` через UUP Dump: без искусственного лимита в 32 кандидата, с проверкой семейства сборки/архитектуры, разрешённых CDN-путей Microsoft, размера и SHA-1, retry/resume и повторным разрешением истёкшей временной ссылки с перепроверкой метаданных; извлечение UUP ESD через DISM и установка по `update.mum`.
+- Импорт совместимых пакетов из русского ISO-донора; управляемый кэш schema 2 фиксирует исходный пакет, тип ресурса, язык, архитектуру и семью сборки, проверяет SHA-256 и сохраняет чтение schema 1; установка базового Client Language Pack с повторным выбором только при отказе DISM на `/Add-Package`.
 - Офлайн-настройка локали ru-RU и необязательные Language Features Basic, OCR, Text-to-Speech и Handwriting из выбранного FOD/L&O-источника.
 - Проверка и применение цепочки обновлений `updates.json`: безопасные имена файлов, целевое семейство сборки и архитектура, SHA-256, отсутствие повторов и упорядочивание checkpoint/LCU/WinRE/SafeOS.
 - Поиск LCU по KB или семейству сборки в Microsoft Update Catalog, фильтрация стабильных Windows 10/11 пакетов по KB/build/architecture, разбор DownloadDialog, HTTPS-политика Catalog/CDN, SHA-1 при наличии серверных метаданных, локальный SHA-256 и создание `updates.json`, `catalog-source.json`, `SHA256.txt`.
@@ -49,18 +49,18 @@ dotnet publish dotnet/LocaLizard.App/LocaLizard.App.csproj -c Release -r win-x64
 - Объединение входного split-WIM `.swm`, необязательное разбиение `install.wim` на части SWM по 3800 MiB, проверка непрерывности и читаемости индексов.
 - Режим patch-existing WIM: исходный файл сохраняется; обслуживание идёт на рабочей копии, а новый файл публикуется лишь после повторной проверки числа индексов и записи JSON-аудита.
 - Создание ISO, повторное монтирование и статическая проверка `boot.wim` и `install.wim/install*.swm`; JSON-аудит источников, обслуживания, языковых пакетов и проверки.
-- Необязательный Hyper-V/VMConnect тест: временная VM Gen 2 без сетевого адаптера, подключение ISO, ожидание запуска и запрос оператору подтвердить экран Windows Setup; временная VM и файлы очищаются.
+- Необязательный Hyper-V/VMConnect тест: временная VM Gen 2 без сетевого адаптера, подключение ISO, ожидание запуска и запрос оператору подтвердить экран Windows Setup; временная VM и файлы очищаются. Он не требуется для создания ISO, CI или выпуска.
 
 ## Валидация и известные ограничения
 
-CI на Windows выполняет сборку .NET 10 solution, smoke/regression проверки, отдельный DISM WIM integration test и публикацию self-contained win-x64. WIM integration test создаёт синтетический двухиндексный образ через DISM Capture/Append, проверяет Get-WimInfo, монтирует/изменяет/фиксирует первый индекс, повторно применяет оба индекса и проверяет сохранность содержимого. Smoke tests покрывают build/architecture, trust policy URL, Catalog parse/filter/download metadata, UUP Dump sparse responses and no-results, Client LP CAB/ESD/MUM classifier and architecture checks, managed cache manifest + tamper detection, update manifest order/path/hash and SWM sequence.
+CI на Windows выполняет сборку .NET 10 solution, smoke/regression проверки, отдельный DISM WIM integration test и публикацию self-contained win-x64. WIM integration test создаёт синтетический двухиндексный образ через DISM Capture/Append, проверяет Get-WimInfo, монтирует/изменяет/фиксирует первый индекс, повторно применяет оба индекса и проверяет сохранность содержимого. Smoke tests дополнительно проверяют отсутствие ограничения UUP кандидатов первыми 32 записями, повторное разрешение временной ссылки при сохранении метаданных пакета и расширенный манифест кэша.
 
-**Проверенный DISM round-trip на синтетическом WIM не означает, что уже проверена локализация реальных ISO.** Применимость конкретных CAB/MSU к выпускам IoT Enterprise LTSC, установка ADK/WinPE Add-on, загрузка/обслуживание Setup/WinPE/WinRE, сборка реального загрузочного ISO и интерактивный Hyper-V test требуют отдельных прогонов с лицензированными целевыми ISO/WIM и совместимыми источниками. CI не скачивает и не обслуживает пользовательские Windows ISO и не делает визуальное подтверждение VMConnect.
+**Проверенный DISM round-trip на синтетическом WIM не означает, что уже проверена локализация реальных ISO.** Применимость конкретных CAB/MSU к выпускам IoT Enterprise LTSC, установка ADK/WinPE Add-on, загрузка/обслуживание Setup/WinPE/WinRE и сборка реального загрузочного ISO рекомендуется дополнительно проверить с лицензированными целевыми ISO/WIM и совместимыми источниками. Hyper-V/VMConnect test — необязательная ручная проверка, не условие сборки или релиза. CI не скачивает и не обслуживает пользовательские Windows ISO и не делает визуальное подтверждение VMConnect.
 
 Полный legacy-набор из `test_helpers.py` шире быстрых smoke tests; отдельные проверки Python downloader/cache, Catalog fallback, ADK installer diagnostics, ISO provider errors и UAC resume ещё не все имеют прямой C# unit-test equivalent. Поэтому legacy исходники оставлены в репозитории и могут использоваться для сравнения/восстановления поведения.
 
 ## Сценарии, которые требуют ручного подтверждения
 
-- Hyper-V status подтверждает запуск VM, но отображение экрана Setup должен подтвердить оператор в VMConnect.
+- При включённой Hyper-V проверке отображение экрана Setup подтверждает оператор в VMConnect; этот этап можно пропустить.
 - Отсутствие совместимых источников RU Client LP/FOD/WinPE CAB не маскируется: соответствующая часть операции отмечается в журнале и аудите.
 - Статическая проверка читаемости WIM и структуры ISO не гарантирует успешную установку на всех аппаратных конфигурациях.

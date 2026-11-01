@@ -24,7 +24,7 @@ public sealed class MainForm : Form
     private readonly CheckBox keep = new() { Text = "Сохранять рабочие файлы для диагностики", Checked = true, AutoSize = true };
     private readonly CheckBox setup = new() { Text = "Локализовать Setup / WinPE", Checked = true, AutoSize = true };
     private readonly CheckBox split = new() { Text = "Разбить install.wim на SWM (FAT32)", AutoSize = true };
-    private readonly CheckBox hyperv = new() { Text = "Проверить ISO в Hyper-V (120 секунд)", AutoSize = true };
+    private readonly CheckBox hyperv = new() { Text = "Необязательно: проверить ISO в Hyper-V (120 секунд)", AutoSize = true };
     private readonly CheckBox allowPartial = new() { Text = "Разрешить частичную локализацию", AutoSize = true };
     private readonly Button preflight = new() { Text = "Предварительная проверка…", AutoSize = true };
     private readonly Button exportProfile = new() { Text = "Сохранить профиль…", AutoSize = true };
@@ -114,7 +114,7 @@ public sealed class MainForm : Form
             Dock = DockStyle.Fill, AutoSize = false, ForeColor = Color.DarkSlateGray,
             TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(6),
             Text = "Setup/WinPE и WinRE используют официальные ресурсы Windows ADK / WinPE Add-on или совместимый русский ISO-донор. " +
-                   "Разделение SWM создаёт части до 3800 MiB. Hyper-V проверка отключает сеть; оператор вручную подтверждает экран Windows Setup. " +
+                   "Разделение SWM создаёт части до 3800 MiB. Hyper-V проверка необязательна; при её запуске сеть отключается, а экран Setup подтверждает оператор. " +
                    "Перемещайте разделитель, чтобы изменить высоту журнала."
         });
         log.Dock = DockStyle.Fill; log.ReadOnly = true; log.Font = new Font("Consolas", 9);

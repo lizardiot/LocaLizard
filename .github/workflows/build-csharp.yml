@@ -32,7 +32,7 @@ jobs:
       - name: Upload Windows x64 CI artifact
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         with:
-          name: LocaLizard-0.2.7.5-Windows-x64
+          name: LocaLizard-0.3.6-Windows-x64
           path: dotnet/LocaLizard.App/bin/Release/net10.0-windows/win-x64/publish/
           if-no-files-found: error
           retention-days: 30

@@ -45,6 +45,11 @@ public static class BuildPreflightService
         var images = new List<ImageInfo>();
         void Add(string level, string name, string detail) => items.Add(new PreflightItem(level, name, detail));
 
+        Add("info", "Hyper-V",
+            options.RunHyperVTest
+                ? "Необязательная проверка загрузки включена; она выполняется после создания и статической проверки ISO."
+                : "Необязательная проверка загрузки отключена; она не требуется для создания ISO.");
+
         if (!OperatingSystem.IsWindows())
         {
             Add("error", "Операционная система", "Для DISM и монтирования ISO требуется Windows.");
@@ -81,10 +86,10 @@ public static class BuildPreflightService
             Add("warning", "FOD", "FOD/L&O не задан. OCR, речь и рукописный ввод не будут добавлены автоматически.");
         if (!string.IsNullOrWhiteSpace(options.FodDirectory) && Directory.Exists(options.FodDirectory))
         {
-            var ruComponents = Directory.EnumerateFiles(options.FodDirectory, "*.cab", SearchOption.AllDirectories)
-                .Where(path => path.Contains("ru-ru", StringComparison.OrdinalIgnoreCase)).Take(100).Count();
+            var ruComponents = AdkBootstrapper.EnumerateFilesSafely(options.FodDirectory, "*.cab")
+                .Count(path => path.Contains("ru-ru", StringComparison.OrdinalIgnoreCase));
             Add(ruComponents > 0 ? "info" : "warning", "RU FOD", ruComponents > 0
-                ? $"Обнаружено CAB-файлов с ru-RU в имени/пути: {ruComponents} (поиск ограничен первыми 100 совпадениями)."
+                ? $"Обнаружено CAB-файлов с ru-RU в имени/пути: {ruComponents}."
                 : "В каталоге не обнаружены CAB-файлы с ru-RU в имени/пути. Проверьте соответствие ISO-версии, языка и архитектуры.");
         }
         if (!string.IsNullOrWhiteSpace(options.DriverDirectory))
