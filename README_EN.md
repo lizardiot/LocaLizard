@@ -1,4 +1,4 @@
-# LocaLizard 0.2.7.6
+# LocaLizard 0.3.6
 
 <p align="center">
   <img src="assets/LocaLizard-logo.jpg" alt="LocaLizard logo" width="520">
@@ -6,16 +6,17 @@
 
 **LocaLizard** is a graphical utility for preparing Windows IoT Enterprise LTSC installation media with Russian as the default language.
 
-> **Version 0.2.7.6:** the primary application targets C# / .NET 10 LTS Windows Forms. Historical Python sources and all releases published before this version are retained; previous tags and their assets were not modified. See [dotnet/README.md](dotnet/README.md) for the C# feature set and validation scope.
+> **Version 0.3.6:** the primary application targets C# / .NET 10 LTS Windows Forms. Historical Python sources and all releases published before this version are retained; previous tags and their assets were not modified. See [dotnet/README.md](dotnet/README.md) for the C# feature set and validation scope.
 
 ## Download
 
 - [Latest LocaLizard release](https://github.com/lizardiot/LocaLizard/releases/latest)
 - [All releases](https://github.com/lizardiot/LocaLizard/releases)
-- [LocaLizard.exe for Windows x64 — version 0.2.7.6](https://github.com/lizardiot/LocaLizard/releases/download/0.2.7.6/LocaLizard.exe)
+- [LocaLizard.exe for Windows x64 — version 0.3.6](https://github.com/lizardiot/LocaLizard/releases/download/0.3.6/LocaLizard.exe)
 
 ## Features
 
+- Russian `ru-RU` is the only target language; no other language support or language selection is being added.
 - The base UUP Client Language Pack ESD is extracted with native DISM and installed directly from `update.mum`, avoiding an unnecessary CAB rebuild. HTTP Microsoft Delivery CDN responses are permitted only for the exact CDN hosts/path and only with the SHA-1 and file size supplied by UUP Dump.
 
 - Before servicing, the application preflights the ISO, editions, indexes, architecture, build family, update sources and available disk space.
@@ -43,24 +44,28 @@
 - The base ru-RU Client Language Pack supports both CAB and UUP ESD sources. ESD is extracted by DISM and serviced through `update.mum`; local CAB packages and donor ISO packages remain supported.
 
 - Latest-LCU search uses the build family and architecture detected from the selected ISO. If a build has no predefined query profile, the utility searches by numeric OS build and tries fallback Microsoft Update Catalog queries. Automatic download still requires an unambiguous stable update matching the exact build family and architecture. If the Catalog HTML changes or no matching entry is returned, the utility stops rather than guessing; a KB can be entered manually.
-- Client Language Pack discovery checks the local cache, a donor ISO, and up to 32 matching client installation builds after a ru-RU language availability check for the same build family and architecture. Localization of an image index cannot continue if no compatible standalone Client Language Pack in CAB or UUP ESD form is available from trusted sources. DISM performs the final applicability check. This covers LTSC build families 10240, 14393, 17763, 19044, and 26100; UUP Dump may not retain entries for every older release, so a compatible donor ISO or local package may be required.
+- Client Language Pack discovery checks the local cache, a donor ISO, and every compatible client installation build returned by the UUP Dump API after a ru-RU language availability check for the same build family and architecture; the candidate list is no longer capped at 32. Localization of an image index cannot continue if no compatible standalone Client Language Pack in CAB or UUP ESD form is available from trusted sources. DISM performs the final applicability check. This covers LTSC build families 10240, 14393, 17763, 19044, and 26100; UUP Dump may not retain entries for every older release, so a compatible donor ISO or local package may be required.
+- If a temporary UUP URL expires, LocaLizard resolves a fresh URL for the same package and verifies that its name, size, and SHA-1 have not changed. Managed cache schema 2 records the source package, resource type, `ru-RU`, architecture, and build family.
 - Extra Russian language capabilities (Basic, OCR, Text-to-Speech, Handwriting) are installed only when a Language and Optional Features repository or mounted ISO is selected. Without a FOD source, LocaLizard skips them instead of asking offline DISM to query Windows Update; a failed optional capability does not roll back the successfully added base Client Language Pack. Results are recorded in the JSON audit.
 - Setup/WinPE and WinRE use compatible Russian resources from the selected source and/or the official ADK WinPE Add-on. If the add-on cannot be downloaded or signature-verified, disk space is insufficient, or DISM rejects the CABs, that part of the image is left unchanged; details are written to the log and audit.
-- The interactive Hyper-V test requires Windows with Hyper-V enabled, administrator privileges, and VMConnect. It launches a temporary VM without networking but asks the user to visually confirm the Windows Setup screen: a running VM alone does not prove that Setup appeared. This interactive test is not run in GitHub Actions.
-- Static validation checks the ISO structure and whether images can be read, but cannot guarantee installation on every hardware configuration. Test the ISO in a separate VM or on a test device before deployment. OOBE can affect the preferred UI language of the first user.
+- The Hyper-V ISO boot check is optional and is not required to build or release an ISO. When selected, it requires Windows with Hyper-V enabled, administrator privileges, and VMConnect. The temporary VM has no network adapter, and the user confirms that the Setup screen appeared. This manual step is not run in GitHub Actions.
+- Static validation checks the ISO structure and whether images can be read, but cannot guarantee installation on every hardware configuration. An additional test in a separate VM or on a test device is recommended, but is not a build or release requirement. OOBE can affect the preferred UI language of the first user.
 ## Run
 
-1. Download `LocaLizard.exe` from the [0.2.7.6 release](https://github.com/lizardiot/LocaLizard/releases/tag/0.2.7.6).
+1. Download `LocaLizard.exe` from the [0.3.6 release](https://github.com/lizardiot/LocaLizard/releases/tag/0.3.6).
 2. Run the application. The main window runs without elevation: drag the target ISO into the first drop zone and the Russian donor ISO into the separate zone in the language-components section. Approve the UAC prompt when the application starts an operation that requires administrator privileges.
 3. Select the source Windows ISO, output ISO path, and working directory.
 4. If needed, specify a Russian ISO source, FOD / Language and Optional Features sources, and an update catalog.
-5. Click **Check prerequisites and create ISO**. The Hyper-V test also requires Hyper-V to be installed and the user to visually confirm the Setup screen.
+5. Click **Check prerequisites and create ISO**. The Hyper-V test can be enabled separately; ISO creation works without it.
 
 You do not need to install Python or development tools manually. The source ISO remains unchanged.
 
 ## Version history
 
-### [0.2.7.6](https://github.com/lizardiot/LocaLizard/releases/tag/0.2.7.6) — current release
+### [0.3.6](https://github.com/lizardiot/LocaLizard/releases/tag/0.3.6) — current release
+UUP Dump Client Language Pack discovery is no longer capped at the first 32 compatible builds. When a temporary CDN URL expires, the app resolves a fresh URL for the same package and verifies its name, size, and SHA-1. Managed cache schema 2 records resource type, source package, `ru-RU`, architecture, and build family while retaining schema 1 read compatibility. Local FOD and donor ISO traversal now tolerates inaccessible directories. The Hyper-V boot check is explicitly optional and does not gate builds, CI, or releases. No additional languages were added.
+
+### [0.2.7.6](https://github.com/lizardiot/LocaLizard/releases/tag/0.2.7.6) — previous release
 Fixed Windows ADK `oscdimg.exe` discovery. Instead of recursive enumeration that could abort when a protected system folder denied access, the application now traverses directories branch by branch and continues searching after skipping an inaccessible folder. Added isolated handling for unreadable candidate files and a regression test that simulates access denial during lazy directory enumeration. CI successfully builds .NET 10, runs regression tests and Windows DISM WIM integration tests, publishes the self-contained win-x64 application, and verifies its icon.
 
 ### [0.2.7.5](https://github.com/lizardiot/LocaLizard/releases/tag/0.2.7.5) — previous release
