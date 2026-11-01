@@ -158,7 +158,7 @@ public sealed class LegacyPackageDownloader(HttpClient? httpClient = null)
                         .FirstOrDefault(x => x.Contains("WinSxS", StringComparison.OrdinalIgnoreCase));
                     if (mum is null)
                         throw new InvalidDataException("ESD passed integrity checks but contains no language-pack update.mum.");
-                    normalizedPath = await inspectorAfterDownload.NormalizeFileNameAsync(mum, request, ct);
+                    normalizedPath = await inspectorAfterDownload.NormalizeFileNameAsync(mum, request, ct, repositoryRoot);
                 }
                 finally { try { Directory.Delete(extractionRoot, true); } catch { } }
             }
