@@ -421,7 +421,8 @@ public sealed class UupDumpClient : IDisposable
             foreach (var key in manifest.Packages.Keys.ToArray())
             {
                 if (!key.Contains("ru-ru", StringComparison.OrdinalIgnoreCase)) continue;
-                var recordPath = key.Split('/', 2)[0];
+                var slash = key.IndexOf('/');
+                var recordPath = slash >= 0 ? key[..slash] : key;
                 manifest.Packages[key] = manifest.Packages[key] with
                 {
                     SourcePackage = manifest.Packages[key].SourcePackage ?? Path.GetFileName(recordPath),
