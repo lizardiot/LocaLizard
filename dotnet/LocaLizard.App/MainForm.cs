@@ -93,6 +93,8 @@ public sealed class MainForm : Form
         AddPath(paths, 8, "Файл автоматической установки (unattend.xml):", unattend, false, false,
             "Unattend XML (*.xml)|*.xml|Все файлы (*.*)|*.*");
         AddPath(paths, 9, "Каталог русских Store LXP (APPX/MSIX + License XML):", lxp, true, false);
+        paths.RowCount++;
+        paths.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         paths.Controls.Add(new Label { Text = "Microsoft Store Product ID для ru-RU LXP:", AutoSize = true, Anchor = AnchorStyles.Left, Padding = new Padding(0, 8, 8, 0) }, 0, 10);
         storeProductId.Dock = DockStyle.Fill;
         storeProductId.PlaceholderText = "Необязательно: ID продукта Microsoft Store";
