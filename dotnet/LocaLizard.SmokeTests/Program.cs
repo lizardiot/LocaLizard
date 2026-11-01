@@ -275,6 +275,48 @@ try
         JsonSerializer.Serialize(cacheManifest));
     Check(await UupDumpClient.VerifyManagedCacheFileAsync(cachedPackage, CancellationToken.None),
         "verify legacy-compatible managed package cache manifest");
+
+    var schema2Manifest = new
+    {
+        schema_version = 2,
+        packages = new Dictionary<string, object>
+        {
+            ["client-language-pack_ru-ru_x64.cab"] = new
+            {
+                file = "client-language-pack_ru-ru_x64.cab", size = cachedInfo.Length,
+                sha1 = cachedSha1, sha256 = cachedSha256, api_sha1 = cachedSha1,
+                source_host = "download.microsoft.com", downloaded_at = DateTimeOffset.UtcNow,
+                source_package = "Microsoft-Windows-Client-LanguagePack-Package_ru-ru_x64.cab",
+                resource_type = "ClientLanguagePack", language = "ru-RU",
+                architecture = "x64", target_build_family = 26100
+            }
+        }
+    };
+    await File.WriteAllTextAsync(Path.Combine(autoCache, "package_manifest.json"),
+        JsonSerializer.Serialize(schema2Manifest));
+    Check(await UupDumpClient.VerifyManagedCacheFileAsync(cachedPackage, CancellationToken.None),
+        "verify schema 2 Russian package provenance metadata");
+    var wrongLanguageSchema2 = new
+    {
+        schema_version = 2,
+        packages = new Dictionary<string, object>
+        {
+            ["client-language-pack_ru-ru_x64.cab"] = new
+            {
+                file = "client-language-pack_ru-ru_x64.cab", size = cachedInfo.Length,
+                sha1 = cachedSha1, sha256 = cachedSha256, api_sha1 = cachedSha1,
+                source_host = "download.microsoft.com", downloaded_at = DateTimeOffset.UtcNow,
+                source_package = "unexpected-package.cab", resource_type = "ClientLanguagePack",
+                language = "en-US", architecture = "x64", target_build_family = 26100
+            }
+        }
+    };
+    await File.WriteAllTextAsync(Path.Combine(autoCache, "package_manifest.json"),
+        JsonSerializer.Serialize(wrongLanguageSchema2));
+    Check(!await UupDumpClient.VerifyManagedCacheFileAsync(cachedPackage, CancellationToken.None),
+        "reject schema 2 cache record for a language other than ru-RU");
+    await File.WriteAllTextAsync(Path.Combine(autoCache, "package_manifest.json"),
+        JsonSerializer.Serialize(schema2Manifest));
     await File.WriteAllTextAsync(cachedPackage, "tampered cache content");
     Check(!await UupDumpClient.VerifyManagedCacheFileAsync(cachedPackage, CancellationToken.None),
         "reject tampered managed cache package");
