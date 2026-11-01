@@ -114,19 +114,16 @@ public sealed class FodRepositoryBuilder(ProcessRunner runner)
 
         var repository = Path.Combine(workDirectory, "fod_repository_ru_ru_" + BuildNumbers.Architecture(architecture));
         Directory.CreateDirectory(repository);
-        var exportArgs = new List<string> { $"/Image:{imageMount}", "/Export-Source", $"/Source:{fullSource}", $"/Target:{repository}" };
+        log?.Invoke($"DISM /Export-Source: готовлю репозиторий ru-RU для {requested.Length} capabilities.");
         foreach (var capability in requested)
         {
             ct.ThrowIfCancellationRequested();
-            exportArgs.Add($"/CapabilityName:{capability}");
-        }
-        log?.Invoke($"DISM /Export-Source: готовлю репозиторий ru-RU для {requested.Length} capabilities.");
-        var export = await _runner.RunAsync("dism.exe", exportArgs,
-            cancellationToken: ct, throwOnError: false, timeout: TimeSpan.FromMinutes(60));
-        if (export.ExitCode != 0)
-        {
-            log?.Invoke($"DISM /Export-Source вернул код {export.ExitCode}; пробую использовать исходный каталог как источник.");
-            return fullSource;
+            var export = await _runner.RunAsync("dism.exe",
+                [$"/Image:{imageMount}", "/Export-Source", $"/Source:{fullSource}",
+                 $"/Target:{repository}", $"/CapabilityName:{capability}"],
+                cancellationToken: ct, throwOnError: false, timeout: TimeSpan.FromMinutes(60));
+            if (export.ExitCode != 0)
+                throw new InvalidDataException($"DISM /Export-Source не смог подготовить {capability} (код {export.ExitCode}).");
         }
         if (!AdkBootstrapper.EnumerateFilesSafely(repository, "*").Any())
             throw new InvalidDataException("DISM /Export-Source не создал репозиторий компонентов.");
