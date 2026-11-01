@@ -162,7 +162,7 @@ public sealed class IsoBuildService
             foreach (var item in imagePlan)
             {
                 ct.ThrowIfCancellationRequested();
-                var candidates = await FindVerifiedMatchingPackagesAsync(packages, item.Info, ct);
+                var candidates = await FindVerifiedMatchingPackagesAsync(packages, item.Info, packageRoot, ct);
                 if (candidates.Count == 0 && !PackageCompatibilityService.IsServer(PackageCompatibilityService.ProductFamily(item.Info)))
                 {
                     Status?.Invoke($"Ищу Client Language Pack ru-RU через UUP Dump для {item.Info.BuildFamily}/{item.Info.NormalizedArchitecture}…");
@@ -562,18 +562,71 @@ public sealed class IsoBuildService
         return [];
     }
 
-    private async Task<List<string>> FindVerifiedMatchingPackagesAsync(IEnumerable<string> all, ImageInfo image, CancellationToken ct)
+    private async Task<List<string>> FindVerifiedMatchingPackagesAsync(
+        IEnumerable<string> all, ImageInfo image, string repositoryRoot, CancellationToken ct)
     {
         var verified = new List<string>();
+        var request = PackageCompatibilityService.CreateRequest(image,
+            PackageCompatibilityService.IsServer(PackageCompatibilityService.ProductFamily(image))
+                ? LanguageResourceType.ServerLanguagePack : LanguageResourceType.ClientLanguagePack);
+        var signatures = new PackageSignatureVerifier(_runner);
+        var identities = new DismPackageIdentityInspector(_runner);
+        var manifest = new ManagedRepositoryService();
+
         foreach (var candidate in FindMatchingPackages(all, image))
         {
             ct.ThrowIfCancellationRequested();
-            if (await UupDumpClient.VerifyManagedCacheFileAsync(candidate, ct))
-                verified.Add(candidate);
-            else
-                Log?.Invoke($"Автоматический кэш пакета повреждён или не подтверждён манифестом: {Path.GetFileName(candidate)}.");
+            try
+            {
+                string normalized;
+                PackageSignatureResult signature;
+                if (Path.GetFileName(candidate).Equals("update.mum", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!await UupDumpClient.VerifyManagedCacheFileAsync(candidate, ct))
+                        throw new InvalidDataException("update.mum отсутствует в проверенном кэше.");
+                    _ = await identities.InspectLanguagePackAsync(candidate, request, ct);
+                    var packageDirectory = Path.GetDirectoryName(candidate)
+                        ?? throw new InvalidDataException("update.mum has no package directory.");
+                    var catalogFiles = AdkBootstrapper.EnumerateFilesSafely(packageDirectory, "*.cat").ToArray();
+                    signature = new PackageSignatureResult(false, "missing",
+                        Error: "Для извлечённого update.mum не найден подписанный CAT.");
+                    foreach (var catalog in catalogFiles)
+                    {
+                        var result = await signatures.VerifyMicrosoftAsync(catalog, ct);
+                        if (!result.IsValid) continue;
+                        signature = result;
+                        break;
+                    }
+                    if (!signature.IsValid)
+                        throw new InvalidDataException(signature.Error ?? "Не удалось подтвердить подпись Microsoft CAT для update.mum.");
+                    normalized = candidate;
+                }
+                else
+                {
+                    signature = await signatures.VerifyMicrosoftAsync(candidate, ct);
+                    if (!signature.IsValid)
+                        throw new InvalidDataException("CAB не прошёл Microsoft Authenticode: " + signature.Error);
+                    normalized = await identities.NormalizeFileNameAsync(candidate, request, ct);
+                }
+
+                if (!WindowsImageService.IsLanguagePackForImage(normalized, image))
+                    throw new InvalidDataException("Package Identity не совпадает с целевым продуктом, ru-RU и архитектурой.");
+                var normalizedName = Path.GetFileName(normalized.Equals(candidate, StringComparison.OrdinalIgnoreCase)
+                    ? Path.GetDirectoryName(normalized)! : normalized);
+                var record = new LanguageResourceCandidate(
+                    $"local:{Path.GetFullPath(normalized)}", "local-repository", normalizedName,
+                    request.ResourceType ?? LanguageResourceType.ClientLanguagePack, "ru-RU",
+                    request.Architecture, request.BuildFamily, request.ProductFamily, normalizedName,
+                    LocalPath: normalized, TrustLevel: ResourceTrustLevel.MicrosoftSigned);
+                await manifest.RegisterAsync(repositoryRoot, normalized, record, signature, ct);
+                verified.Add(normalized);
+            }
+            catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or InvalidOperationException)
+            {
+                Log?.Invoke($"Пакет {Path.GetFileName(candidate)} не прошёл проверку подписи/CBS identity: {ex.Message}");
+            }
         }
-        return verified;
+        return verified.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
     }
 
     private static async Task<string> ComputeSha256Async(string path, CancellationToken ct)
@@ -592,7 +645,10 @@ public sealed class IsoBuildService
             : [];
 
     private static List<string> FindMatchingPackages(IEnumerable<string> all, ImageInfo image) =>
-        all.Where(p => WindowsImageService.IsLanguagePackForImage(p, image))
+        all.Where(p => WindowsImageService.IsLanguagePackForImage(p, image) ||
+                       Path.GetFileName(p).Equals("lp.cab", StringComparison.OrdinalIgnoreCase) ||
+                       Path.GetFileName(p).Contains("languagepack", StringComparison.OrdinalIgnoreCase) ||
+                       Path.GetFileName(p).Contains("language-pack", StringComparison.OrdinalIgnoreCase))
             .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
     private static void ValidateMedia(string media)
