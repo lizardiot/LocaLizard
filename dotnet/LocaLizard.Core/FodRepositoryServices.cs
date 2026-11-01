@@ -112,6 +112,16 @@ public sealed class FodRepositoryBuilder(ProcessRunner runner)
         if (sourcePackages.Count == 0)
             throw new InvalidDataException("В выбранном каталоге не обнаружены русские FOD CAB для указанной архитектуры.");
 
+        var languageFodOnly = sourcePackages.All(path =>
+            Path.GetFileName(path).Contains("LanguageFeatures", StringComparison.OrdinalIgnoreCase) ||
+            Path.GetFileName(path).Contains("WinOcr-FOD-Package", StringComparison.OrdinalIgnoreCase) ||
+            Path.GetFileName(path).Contains("Language.Fonts", StringComparison.OrdinalIgnoreCase));
+        if (languageFodOnly)
+        {
+            log?.Invoke("Обнаружены монолитные языковые FOD ru-RU без satellite packages; использую проверенную CAB-папку как источник DISM /Add-Capability.");
+            return fullSource;
+        }
+
         var repository = Path.Combine(workDirectory, "fod_repository_ru_ru_" + BuildNumbers.Architecture(architecture));
         Directory.CreateDirectory(repository);
         log?.Invoke($"DISM /Export-Source: готовлю репозиторий ru-RU для {requested.Length} capabilities.");
