@@ -29,7 +29,7 @@ public sealed class UupDumpClient : IDisposable
         var builds = GetClientBuildCandidates(listDoc.RootElement, family, arch);
         log?.Invoke($"UUP Dump вернул {builds.Count} совместимых клиентских сборок; проверяю доступность ru-RU.");
 
-        if (builds.Length == 0) throw new InvalidOperationException($"UUP Dump не вернул клиентские сборки Windows {family}/{arch}.");
+        if (builds.Count == 0) throw new InvalidOperationException($"UUP Dump не вернул клиентские сборки Windows {family}/{arch}.");
 
         foreach (var build in builds)
         {
