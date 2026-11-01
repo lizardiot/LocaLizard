@@ -26,9 +26,8 @@ public sealed class UupDumpClient : IDisposable
             throw new InvalidOperationException($"Сборка/архитектура образа не распознаны: {image.Version}/{image.Architecture}");
 
         using var listDoc = await GetApiDocumentAsync($"{Api}/listid.php?search={family}&sortByDate=1", true, ct);
-        var builds = GetBuilds(listDoc.RootElement)
-            .Where(b => CandidateMatches(b, family, arch))
-            .Take(32).ToArray();
+        var builds = GetClientBuildCandidates(listDoc.RootElement, family, arch);
+        log?.Invoke($"UUP Dump вернул {builds.Count} совместимых клиентских сборок; проверяю доступность ru-RU.");
 
         if (builds.Length == 0) throw new InvalidOperationException($"UUP Dump не вернул клиентские сборки Windows {family}/{arch}.");
 
@@ -52,7 +51,7 @@ public sealed class UupDumpClient : IDisposable
                 SecurityPolicy.EnsureSafeFileName(targetFolder, fileName);
                 var target = Path.Combine(targetFolder, fileName);
                 if (!await ExistingFileValidAsync(target, package, ct))
-                    await DownloadAsync(package, target, ct);
+                    await DownloadWithLinkRefreshAsync(id, package, target, arch, log, ct);
 
                 if (target.EndsWith(".esd", StringComparison.OrdinalIgnoreCase))
                 {
@@ -69,6 +68,45 @@ public sealed class UupDumpClient : IDisposable
             }
         }
         throw new InvalidOperationException("Не удалось получить совместимый Client Language Pack ru-RU из UUP Dump.");
+    }
+
+    private async Task DownloadWithLinkRefreshAsync(
+        string buildId, UupFile package, string target, string architecture, Action<string>? log, CancellationToken ct)
+    {
+        for (var refreshAttempt = 0; refreshAttempt < 2; refreshAttempt++)
+        {
+            try
+            {
+                await DownloadAsync(package, target, ct);
+                return;
+            }
+            catch (HttpRequestException ex) when (
+                refreshAttempt == 0 &&
+                ex.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden or HttpStatusCode.NotFound)
+            {
+                log?.Invoke($"Ссылка UUP для {Path.GetFileName(package.Name)} устарела; повторно запрашиваю метаданные ru-RU.");
+                using var refreshedDoc = await GetApiDocumentAsync(
+                    $"{Api}/get.php?id={Uri.EscapeDataString(buildId)}&lang=ru-ru", false, ct);
+                var refreshed = GetFiles(refreshedDoc.RootElement).FirstOrDefault(x =>
+                    string.Equals(x.Name, package.Name, StringComparison.OrdinalIgnoreCase) &&
+                    IsClientLp(x, architecture));
+                if (refreshed is null || !SamePackageMetadata(package, refreshed))
+                    throw new InvalidDataException("Повторная ссылка UUP не совпадает с исходным русским Client Language Pack по имени, размеру или SHA-1.");
+                package = refreshed;
+            }
+        }
+    }
+
+    internal static bool SamePackageMetadata(UupFile original, UupFile refreshed)
+    {
+        if (!string.Equals(original.Name, refreshed.Name, StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (original.Size is > 0 && original.Size != refreshed.Size)
+            return false;
+        if (!string.IsNullOrWhiteSpace(original.Sha1) &&
+            !string.Equals(original.Sha1, refreshed.Sha1, StringComparison.OrdinalIgnoreCase))
+            return false;
+        return refreshed.Url is not null && SecurityPolicy.IsTrustedPackageUrl(refreshed.Url);
     }
 
     private async Task<JsonDocument> GetApiDocumentAsync(string url, bool searchNoResultsIsEmpty, CancellationToken ct)
@@ -308,8 +346,10 @@ public sealed class UupDumpClient : IDisposable
                 await File.ReadAllTextAsync(manifestPath, ct),
                 new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
             var relative = Path.GetRelativePath(cacheRoot, Path.GetFullPath(path)).Replace('\\', '/');
-            if (manifest is null || manifest.SchemaVersion != 1 ||
+            if (manifest is null || manifest.SchemaVersion is not (1 or 2) ||
                 !manifest.Packages.TryGetValue(relative, out var record)) return false;
+            if (manifest.SchemaVersion == 2 &&
+                !string.Equals(record.Language, "ru-RU", StringComparison.OrdinalIgnoreCase)) return false;
             var info = new FileInfo(path);
             if (info.Length != record.Size || record.Size <= 0) return false;
             await using var stream = File.OpenRead(path);
@@ -329,8 +369,10 @@ public sealed class UupDumpClient : IDisposable
         var sha256 = Convert.ToHexString(await SHA256.HashDataAsync(stream, ct)).ToLowerInvariant();
         await using var shaStream = File.OpenRead(path);
         var sha1 = Convert.ToHexString(await SHA1.HashDataAsync(shaStream, ct)).ToLowerInvariant();
+        var context = ReadCacheContext(cacheRoot);
         await SaveCacheRecordAsync(cacheRoot, path, new CacheRecord(info.Length, sha1, sha256,
-            package.Sha1, source.Host, DateTimeOffset.UtcNow), ct);
+            package.Sha1, source.Host, DateTimeOffset.UtcNow, package.Name, "ClientLanguagePack",
+            "ru-RU", context.Architecture, context.BuildFamily), ct);
     }
 
     private static async Task RecordExtractedDirectoryAsync(string directory, string cacheRoot, UupFile package, CancellationToken ct)
@@ -343,8 +385,10 @@ public sealed class UupDumpClient : IDisposable
             var sha256 = Convert.ToHexString(await SHA256.HashDataAsync(stream, ct)).ToLowerInvariant();
             await using var shaStream = File.OpenRead(file);
             var sha1 = Convert.ToHexString(await SHA1.HashDataAsync(shaStream, ct)).ToLowerInvariant();
+            var context = ReadCacheContext(cacheRoot);
             await SaveCacheRecordAsync(cacheRoot, file, new CacheRecord(info.Length, sha1, sha256,
-                package.Sha1, package.Url?.Host, DateTimeOffset.UtcNow), ct);
+                package.Sha1, package.Url?.Host, DateTimeOffset.UtcNow, package.Name, "ClientLanguagePack",
+                "ru-RU", context.Architecture, context.BuildFamily), ct);
         }
     }
 
@@ -361,12 +405,21 @@ public sealed class UupDumpClient : IDisposable
         }
         catch (JsonException) { manifest = new CacheManifest(); }
         var relative = Path.GetRelativePath(cacheRoot, Path.GetFullPath(path)).Replace('\\', '/');
-        manifest.SchemaVersion = 1;
+        manifest.SchemaVersion = 2;
         manifest.Packages[relative] = record;
         var temporary = manifestPath + ".tmp";
         await File.WriteAllTextAsync(temporary,
             JsonSerializer.Serialize(manifest, new JsonSerializerOptions { WriteIndented = true }), ct);
         File.Move(temporary, manifestPath, true);
+    }
+
+    private static (int? BuildFamily, string? Architecture) ReadCacheContext(string cacheRoot)
+    {
+        var parts = Path.GetFileName(cacheRoot).Split('_', 2, StringSplitOptions.RemoveEmptyEntries);
+        int? buildFamily = parts.Length > 0 && int.TryParse(parts[0], out var parsedBuild) ? parsedBuild : null;
+        string? architecture = parts.Length > 1 ? BuildNumbers.Architecture(parts[1]) : null;
+        if (!BuildNumbers.IsSupportedArchitecture(architecture)) architecture = null;
+        return (buildFamily, architecture);
     }
 
     private static string? GetManagedCacheRoot(string path)
@@ -411,7 +464,7 @@ public sealed class UupDumpClient : IDisposable
     private sealed class CacheManifest
     {
         [JsonPropertyName("schema_version")]
-        public int SchemaVersion { get; set; } = 1;
+        public int SchemaVersion { get; set; } = 2;
 
         [JsonPropertyName("packages")]
         public Dictionary<string, CacheRecord> Packages { get; set; } = new(StringComparer.OrdinalIgnoreCase);
@@ -423,7 +476,15 @@ public sealed class UupDumpClient : IDisposable
         [property: JsonPropertyName("sha256")] string Sha256,
         [property: JsonPropertyName("api_sha1")] string? ApiSha1,
         [property: JsonPropertyName("source_host")] string? SourceHost,
-        [property: JsonPropertyName("downloaded_at")] DateTimeOffset DownloadedAt);
+        [property: JsonPropertyName("downloaded_at")] DateTimeOffset DownloadedAt,
+        [property: JsonPropertyName("source_package")] string? SourcePackage = null,
+        [property: JsonPropertyName("resource_type")] string? ResourceType = null,
+        [property: JsonPropertyName("language")] string? Language = null,
+        [property: JsonPropertyName("architecture")] string? Architecture = null,
+        [property: JsonPropertyName("target_build_family")] int? TargetBuildFamily = null);
+
+    internal static IReadOnlyList<JsonElement> GetClientBuildCandidates(JsonElement root, int family, string architecture) =>
+        GetBuilds(root).Where(build => CandidateMatches(build, family, architecture)).ToArray();
 
     internal static IEnumerable<JsonElement> GetBuilds(JsonElement root)
     {
