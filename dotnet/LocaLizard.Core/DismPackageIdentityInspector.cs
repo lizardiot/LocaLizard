@@ -60,7 +60,7 @@ public sealed class DismPackageIdentityInspector(ProcessRunner runner)
     }
 
     public async Task<string> NormalizeFileNameAsync(
-        string packagePath, LanguageResourceRequest request, CancellationToken ct)
+        string packagePath, LanguageResourceRequest request, CancellationToken ct, string? targetRoot = null)
     {
         var identity = await InspectLanguagePackAsync(packagePath, request, ct);
         var prefix = identity.ProductFamily == "Server"
@@ -71,7 +71,11 @@ public sealed class DismPackageIdentityInspector(ProcessRunner runner)
         {
             var parent = Path.GetDirectoryName(packagePath)!;
             var targetName = $"{prefix}_ru-ru_{identity.Architecture}_{identity.BuildFamily}_extracted";
-            var target = Path.Combine(Path.GetDirectoryName(parent)!, targetName);
+            var destinationRoot = string.IsNullOrWhiteSpace(targetRoot)
+                ? Path.GetDirectoryName(parent)!
+                : Path.GetFullPath(targetRoot);
+            Directory.CreateDirectory(destinationRoot);
+            var target = Path.Combine(destinationRoot, targetName);
             if (!parent.Equals(target, StringComparison.OrdinalIgnoreCase))
             {
                 if (Directory.Exists(target)) Directory.Delete(target, true);
