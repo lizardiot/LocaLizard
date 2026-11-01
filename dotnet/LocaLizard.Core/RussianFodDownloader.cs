@@ -23,7 +23,7 @@ public sealed class FodPackageIdentityInspector(ProcessRunner runner)
         if (!lower.Contains("ru-ru", StringComparison.Ordinal) ||
             !(lower.Contains("languagefeatures", StringComparison.Ordinal) ||
               lower.Contains("language.fonts", StringComparison.Ordinal) ||
-              lower.Contains("wino cr", StringComparison.Ordinal)))
+              lower.Contains("winocr", StringComparison.Ordinal)))
             throw new InvalidDataException("Пакет не является языковым FOD ru-RU.");
         var architecture = lower.Contains("arm64") ? "arm64" :
             lower.Contains("amd64") || lower.Contains("x64") ? "x64" :
@@ -91,7 +91,7 @@ public sealed class RussianFodPackageDownloader(HttpClient? httpClient = null)
                             throw new InvalidDataException($"Blocked FOD download redirect: {current}");
                         using var requestMessage = new HttpRequestMessage(HttpMethod.Get, current);
                         response = await _http.SendAsync(requestMessage, HttpCompletionOption.ResponseHeadersRead, ct);
-                        if ((int)response.StatusCode is >= 300 and < 400)
+                        if ((int)(int)response.StatusCode is >= 300 and < 400)
                         {
                             var location = response.Headers.Location ??
                                 throw new InvalidDataException("FOD redirect has no Location.");
