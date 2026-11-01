@@ -294,15 +294,17 @@ public sealed class LocalExperiencePackService(ProcessRunner runner)
     private readonly ProcessRunner _runner = runner;
 
     public async Task<IReadOnlyList<LxpProvisionResult>> ProvisionAsync(
-        string imageMount, string? lxpRoot, string architecture, CancellationToken ct, Action<string>? log = null)
+        string imageMount, IEnumerable<string>? lxpRoots, string architecture, CancellationToken ct, Action<string>? log = null)
     {
-        if (string.IsNullOrWhiteSpace(lxpRoot) || !Directory.Exists(lxpRoot))
-            return [];
+        var roots = (lxpRoots ?? [])
+            .Where(x => !string.IsNullOrWhiteSpace(x) && Directory.Exists(x))
+            .Select(Path.GetFullPath).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        if (roots.Length == 0) return [];
         var inspector = new AppxPackageInspector();
-        var files = AdkBootstrapper.EnumerateFilesSafely(lxpRoot, "*")
+        var files = roots.SelectMany(root => AdkBootstrapper.EnumerateFilesSafely(root, "*"))
             .Where(x => new[] { ".appx", ".msix", ".appxbundle", ".msixbundle" }
                 .Contains(Path.GetExtension(x), StringComparer.OrdinalIgnoreCase))
-            .ToArray();
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         var packages = new List<AppxPackageInfo>();
         var results = new List<LxpProvisionResult>();
         foreach (var file in files)
@@ -337,7 +339,7 @@ public sealed class LocalExperiencePackService(ProcessRunner runner)
                     string.Join(", ", resolution.MissingDependencies)));
                 continue;
             }
-            var license = FindLicense(lxpRoot, package.FilePath);
+            var license = roots.Select(root => FindLicense(root, package.FilePath)).FirstOrDefault(path => path is not null);
             if (license is null)
             {
                 results.Add(new LxpProvisionResult(Path.GetFileName(package.FilePath), "license_required",
