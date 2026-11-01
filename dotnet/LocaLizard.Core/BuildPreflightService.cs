@@ -50,6 +50,28 @@ public static class BuildPreflightService
                 ? "Необязательная проверка загрузки включена; она выполняется после создания и статической проверки ISO."
                 : "Необязательная проверка загрузки отключена; она не требуется для создания ISO.");
 
+        if (!string.IsNullOrWhiteSpace(options.LxpDirectory))
+        {
+            if (!Directory.Exists(options.LxpDirectory))
+                Add("error", "Russian LXP", "Каталог APPX/MSIX не найден.");
+            else
+            {
+                var lxpCount = AdkBootstrapper.EnumerateFilesSafely(options.LxpDirectory, "*")
+                    .Count(path => new[] { ".appx", ".msix", ".appxbundle", ".msixbundle" }
+                        .Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase));
+                Add(lxpCount > 0 ? "info" : "warning", "Russian LXP",
+                    lxpCount > 0 ? $"Найдено пакетов APPX/MSIX: {lxpCount}; подписи, Publisher, ru-RU и зависимости будут проверены перед provision."
+                        : "Пакеты APPX/MSIX не найдены; необязательная LXP-интеграция будет пропущена.");
+            }
+        }
+        if (!string.IsNullOrWhiteSpace(options.StoreProductId))
+        {
+            Add(System.Text.RegularExpressions.Regex.IsMatch(options.StoreProductId.Trim(), @"^[A-Za-z0-9][A-Za-z0-9._-]{7,63}$")
+                    ? "info" : "error",
+                "Microsoft Store Product ID",
+                "Резолвер использует сторонний каталог только для метаданных; бинарный пакет принимается только с разрешённого HTTPS Microsoft CDN и после проверки подписи.");
+        }
+
         if (!OperatingSystem.IsWindows())
         {
             Add("error", "Операционная система", "Для DISM и монтирования ISO требуется Windows.");
@@ -86,11 +108,20 @@ public static class BuildPreflightService
             Add("warning", "FOD", "FOD/L&O не задан. OCR, речь и рукописный ввод не будут добавлены автоматически.");
         if (!string.IsNullOrWhiteSpace(options.FodDirectory) && Directory.Exists(options.FodDirectory))
         {
-            var ruComponents = AdkBootstrapper.EnumerateFilesSafely(options.FodDirectory, "*.cab")
-                .Count(path => path.Contains("ru-ru", StringComparison.OrdinalIgnoreCase));
-            Add(ruComponents > 0 ? "info" : "warning", "RU FOD", ruComponents > 0
-                ? $"Обнаружено CAB-файлов с ru-RU в имени/пути: {ruComponents}."
-                : "В каталоге не обнаружены CAB-файлы с ru-RU в имени/пути. Проверьте соответствие ISO-версии, языка и архитектуры.");
+            var ruComponents = FodInventoryService.FindRussianCapabilityPackages(options.FodDirectory,
+                images.FirstOrDefault()?.NormalizedArchitecture ?? "x64").Count;
+            var hasRepositoryMetadata = Directory.Exists(Path.Combine(options.FodDirectory, "Metadata")) ||
+                                        Directory.Exists(Path.Combine(options.FodDirectory, "metadata")) ||
+                                        Path.GetFileName(options.FodDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
+                                            .Equals("LanguagesAndOptionalFeatures", StringComparison.OrdinalIgnoreCase) ||
+                                        Path.GetFileName(options.FodDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
+                                            .Equals("FeaturesOnDemand", StringComparison.OrdinalIgnoreCase);
+            Add(ruComponents > 0 ? (hasRepositoryMetadata ? "info" : "warning") : "warning", "RU FOD",
+                ruComponents > 0
+                    ? hasRepositoryMetadata
+                        ? $"Обнаружены русские FOD CAB: {ruComponents}; каталог содержит признаки официального репозитория."
+                        : $"Обнаружены русские FOD CAB: {ruComponents}, но не обнаружены Metadata. Плоская папка CAB не считается готовым FOD-репозиторием; DISM /Export-Source должен успешно подготовить источник."
+                    : "В каталоге не обнаружены русские FOD CAB для целевой архитектуры.");
         }
         if (!string.IsNullOrWhiteSpace(options.DriverDirectory))
         {
