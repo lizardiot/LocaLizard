@@ -43,7 +43,7 @@ public sealed class WindowsImageService(ProcessRunner runner)
         string? fod, UpdatePlan? updates, string work, Action<string>? log, CancellationToken ct,
         Func<string, Task<LocalizationStep>>? serviceWinRe = null,
         string? driverDirectory = null, string? unattendFile = null, bool allowPartialLocalization = false,
-        string? lxpDirectory = null)
+        IEnumerable<string>? lxpDirectories = null)
     {
         if (image.BuildFamily == 0 || !BuildNumbers.IsSupportedArchitecture(image.NormalizedArchitecture))
             throw new InvalidDataException($"Не удалось определить сборку/архитектуру индекса {image.Index}.");
@@ -160,7 +160,7 @@ public sealed class WindowsImageService(ProcessRunner runner)
                 throw new InvalidOperationException($"DISM не подтвердил ru-RU для индекса {image.Index}.");
 
             var lxpResults = await new LocalExperiencePackService(_runner)
-                .ProvisionAsync(mount, lxpDirectory, image.NormalizedArchitecture, ct, log);
+                .ProvisionAsync(mount, lxpDirectories, image.NormalizedArchitecture, ct, log);
 
             LocalizationStep? winReAudit = null;
             if (serviceWinRe is not null)
