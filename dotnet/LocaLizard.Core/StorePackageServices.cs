@@ -282,7 +282,11 @@ public sealed class StorePackageDownloader(HttpClient? httpClient = null)
                     continue;
                 }
                 response.EnsureSuccessStatusCode();
+                if (response.RequestMessage?.RequestUri is not { } finalUri ||
+                    finalUri.Scheme != Uri.UriSchemeHttps || !SecurityPolicy.IsTrustedPackageUrl(finalUri))
+                    throw new InvalidDataException("Store package redirect did not end at an allow-listed Microsoft HTTPS CDN.");
                 final = response;
+                current = finalUri;
                 break;
             }
             if (final is null) throw new InvalidDataException("Too many Store package redirects.");
