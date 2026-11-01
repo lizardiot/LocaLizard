@@ -14,6 +14,8 @@ public sealed record RunOptions
     public required string PackageDirectory { get; init; }
     public string? DonorIso { get; init; }
     public string? FodDirectory { get; init; }
+    public string? LxpDirectory { get; init; }
+    public string? StoreProductId { get; init; }
     public string? UpdatesDirectory { get; init; }
     public bool KeepWorkFiles { get; init; } = true;
     public bool ProcessSetup { get; init; } = true;
