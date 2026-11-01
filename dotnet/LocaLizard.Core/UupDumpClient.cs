@@ -354,7 +354,7 @@ public sealed class UupDumpClient : IDisposable
                 if (!string.Equals(record.Language, "ru-RU", StringComparison.OrdinalIgnoreCase) ||
                     !string.Equals(record.ResourceType, "ClientLanguagePack", StringComparison.OrdinalIgnoreCase) ||
                     string.IsNullOrWhiteSpace(record.SourcePackage) ||
-                    !BuildNumbers.IsSupportedArchitecture(record.Architecture) ||
+                    !BuildNumbers.IsSupportedArchitecture(record.Architecture ?? "") ||
                     record.TargetBuildFamily is null or <= 0 ||
                     context.BuildFamily is int family && record.TargetBuildFamily != family ||
                     context.Architecture is not null &&
@@ -429,7 +429,7 @@ public sealed class UupDumpClient : IDisposable
         var parts = Path.GetFileName(cacheRoot).Split('_', 2, StringSplitOptions.RemoveEmptyEntries);
         int? buildFamily = parts.Length > 0 && int.TryParse(parts[0], out var parsedBuild) ? parsedBuild : null;
         string? architecture = parts.Length > 1 ? BuildNumbers.Architecture(parts[1]) : null;
-        if (!BuildNumbers.IsSupportedArchitecture(architecture)) architecture = null;
+        if (!BuildNumbers.IsSupportedArchitecture(architecture ?? "")) architecture = null;
         return (buildFamily, architecture);
     }
 
