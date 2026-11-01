@@ -415,6 +415,23 @@ public sealed class UupDumpClient : IDisposable
                 : new CacheManifest();
         }
         catch (JsonException) { manifest = new CacheManifest(); }
+        if (manifest.SchemaVersion == 1)
+        {
+            var context = ReadCacheContext(cacheRoot);
+            foreach (var key in manifest.Packages.Keys.ToArray())
+            {
+                if (!key.Contains("ru-ru", StringComparison.OrdinalIgnoreCase)) continue;
+                var recordPath = key.Split('/', 2)[0];
+                manifest.Packages[key] = manifest.Packages[key] with
+                {
+                    SourcePackage = manifest.Packages[key].SourcePackage ?? Path.GetFileName(recordPath),
+                    ResourceType = manifest.Packages[key].ResourceType ?? "ClientLanguagePack",
+                    Language = manifest.Packages[key].Language ?? "ru-RU",
+                    Architecture = manifest.Packages[key].Architecture ?? context.Architecture,
+                    TargetBuildFamily = manifest.Packages[key].TargetBuildFamily ?? context.BuildFamily
+                };
+            }
+        }
         var relative = Path.GetRelativePath(cacheRoot, Path.GetFullPath(path)).Replace('\\', '/');
         manifest.SchemaVersion = 2;
         manifest.Packages[relative] = record;
