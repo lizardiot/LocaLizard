@@ -15,7 +15,7 @@ Check(WindowsLifecycle.GetInfo(10240, new DateOnly(2026, 10, 31)) is { IsSupport
 Check(WindowsLifecycle.GetInfo(26100, new DateOnly(2026, 10, 31)) is { IsSupported: true },
     "IoT Enterprise LTSC 2024 remains supported");
 Check(WindowsLifecycle.GetInfo(99999) is null, "unknown build has no guessed lifecycle");
-Check(AppInfo.Version == "0.2.7.6", "AppInfo version comes from centralized assembly metadata");
+Check(AppInfo.Version == "0.3.6", "AppInfo version comes from centralized assembly metadata");
 
 static IEnumerable<string> SimulatedDeniedDirectoryEntries()
 {
@@ -137,6 +137,12 @@ using (var uupBuildsDoc = JsonDocument.Parse("""
     Check(!UupDumpClient.CandidateMatches(rows[0], 19044, "x64"),
         "UUP Dump exact build family match");
 }
+var manyBuildEntries = string.Join(",", Enumerable.Range(0, 40).Select(i =>
+    $"\\\"{i}\\\":{{\\\"uuid\\\":\\\"id-{i}\\\",\\\"title\\\":\\\"Windows 11, version 24H2\\\",\\\"build\\\":\\\"10.0.26100.{i + 1}\\\",\\\"arch\\\":\\\"amd64\\\"}}"));
+using (var manyBuildsDoc = JsonDocument.Parse("{\\\"response\\\":{\\\"builds\\\":{" + manyBuildEntries + "}}}"))
+    Check(UupDumpClient.GetClientBuildCandidates(manyBuildsDoc.RootElement, 26100, "x64").Count == 40,
+        "UUP Dump candidate discovery does not truncate compatible builds after the first 32");
+
 using (var uupNoResultsDoc = JsonDocument.Parse("""{"response":{"error":"SEARCH_NO_RESULTS"}}"""))
     Check(!UupDumpClient.GetBuilds(uupNoResultsDoc.RootElement).Any(),
         "UUP Dump SEARCH_NO_RESULTS is treated as an empty result");
@@ -170,6 +176,18 @@ using (var uupFilesDoc = JsonDocument.Parse("""
     Check(UupDumpClient.IsClientLp(files[0], "x64"), "UUP Dump recognizes Client Language Pack CAB");
     Check(!UupDumpClient.IsClientLp(files[0], "arm64"), "UUP Dump rejects wrong-architecture Client Language Pack CAB");
 }
+var originalUupPackage = new UupDumpClient.UupFile(
+    "Microsoft-Windows-Client-LanguagePack-Package_ru-ru_x64.cab",
+    new Uri("https://download.microsoft.com/old.cab"), new string('a', 40), 1024);
+var refreshedUupPackage = new UupDumpClient.UupFile(
+    originalUupPackage.Name, new Uri("https://download.microsoft.com/new.cab"), new string('a', 40), 1024);
+var changedUupPackage = new UupDumpClient.UupFile(
+    originalUupPackage.Name, new Uri("https://download.microsoft.com/new.cab"), new string('b', 40), 1024);
+Check(UupDumpClient.SamePackageMetadata(originalUupPackage, refreshedUupPackage),
+    "UUP temporary link refresh preserves Russian package identity and digest");
+Check(!UupDumpClient.SamePackageMetadata(originalUupPackage, changedUupPackage),
+    "UUP temporary link refresh rejects changed package digest");
+
 var uupEsd = new UupDumpClient.UupFile(
     "Microsoft-Windows-Client-LanguagePack-Package_ru-ru~31bf3856ad364e35~amd64~ru-ru~.esd",
     new Uri("https://download.microsoft.com/client-language-pack.esd"), new string('a', 40), 2048);
