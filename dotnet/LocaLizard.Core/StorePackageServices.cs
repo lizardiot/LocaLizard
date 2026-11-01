@@ -70,6 +70,8 @@ public sealed class AppxPackageInspector
                          Path.GetExtension(x.FullName).Equals(".appx", StringComparison.OrdinalIgnoreCase) ||
                          Path.GetExtension(x.FullName).Equals(".msix", StringComparison.OrdinalIgnoreCase)))
             {
+                if (nestedEntry.Length > 512L * 1024 * 1024)
+                    throw new InvalidDataException("Nested Appx payload is too large for safe manifest inspection.");
                 using var nestedInput = nestedEntry.Open();
                 using var memory = new MemoryStream();
                 nestedInput.CopyTo(memory);
@@ -81,7 +83,7 @@ public sealed class AppxPackageInspector
                 using var nestedStream = nestedManifest.Open();
                 using var nestedReader = XmlReader.Create(nestedStream, settings);
                 var nestedDocument = XDocument.Load(nestedReader);
-                var nestedIdentity = nestedDocument.DescendantsAndSelf()
+                var nestedIdentity = nestedDocument.Root?.DescendantsAndSelf() ?? Enumerable.Empty<XElement>()
                     .FirstOrDefault(x => x.Name.LocalName == "Identity");
                 var nestedArchitecture = NormalizeAppxArchitecture(
                     (string?)nestedIdentity?.Attribute("ProcessorArchitecture") ?? "neutral");
@@ -96,7 +98,7 @@ public sealed class AppxPackageInspector
 
         return new AppxPackageInfo(Path.GetFullPath(packagePath), name, publisher, version,
             architecture, languages.Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
-            dependencies.DistinctBy(x => (x.Name, x.Publisher), StringTupleComparer.Instance).ToArray(),
+            dependencies.DistinctBy(x => x.Name + "|" + x.Publisher, StringComparer.OrdinalIgnoreCase).ToArray(),
             isBundle, includedArchitectures.Distinct(StringComparer.OrdinalIgnoreCase).ToArray());
     }
 
