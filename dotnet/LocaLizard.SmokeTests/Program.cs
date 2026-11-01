@@ -137,9 +137,14 @@ using (var uupBuildsDoc = JsonDocument.Parse("""
     Check(!UupDumpClient.CandidateMatches(rows[0], 19044, "x64"),
         "UUP Dump exact build family match");
 }
-var manyBuildEntries = string.Join(",", Enumerable.Range(0, 40).Select(i =>
-    $"\\\"{i}\\\":{{\\\"uuid\\\":\\\"id-{i}\\\",\\\"title\\\":\\\"Windows 11, version 24H2\\\",\\\"build\\\":\\\"10.0.26100.{i + 1}\\\",\\\"arch\\\":\\\"amd64\\\"}}"));
-using (var manyBuildsDoc = JsonDocument.Parse("{\\\"response\\\":{\\\"builds\\\":{" + manyBuildEntries + "}}}"))
+var manyBuilds = Enumerable.Range(0, 40).Select(i => new
+{
+    uuid = $"id-{i}",
+    title = "Windows 11, version 24H2",
+    build = $"10.0.26100.{i + 1}",
+    arch = "amd64"
+}).ToArray();
+using (var manyBuildsDoc = JsonDocument.Parse(JsonSerializer.Serialize(new { response = new { builds = manyBuilds } })))
     Check(UupDumpClient.GetClientBuildCandidates(manyBuildsDoc.RootElement, 26100, "x64").Count == 40,
         "UUP Dump candidate discovery does not truncate compatible builds after the first 32");
 
