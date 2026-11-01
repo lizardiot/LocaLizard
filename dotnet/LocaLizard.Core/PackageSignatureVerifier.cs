@@ -53,7 +53,8 @@ public sealed class LegacyPackageDownloader(HttpClient? httpClient = null)
     };
 
     public async Task<LanguageResourceCandidate> DownloadVerifiedAsync(
-        LanguageResourceCandidate candidate, string repositoryRoot, PackageSignatureVerifier signatureVerifier,
+        LanguageResourceCandidate candidate, LanguageResourceRequest request, string repositoryRoot,
+        PackageSignatureVerifier signatureVerifier, ManagedRepositoryService manifest,
         ProcessRunner runner, CancellationToken ct, Action<string>? log = null)
     {
         if (candidate.DownloadUri is null || !SecurityPolicy.IsTrustedPackageUrl(candidate.DownloadUri) ||
@@ -64,13 +65,27 @@ public sealed class LegacyPackageDownloader(HttpClient? httpClient = null)
             throw new InvalidDataException("Only CAB and ESD language packages are supported by this downloader.");
 
         Directory.CreateDirectory(repositoryRoot);
-        SecurityPolicy.EnsureSafeFileName(repositoryRoot, candidate.FileName);
-        var destination = Path.Combine(repositoryRoot, candidate.FileName);
+        var effectiveFileName = Path.GetFileName(candidate.DownloadUri.AbsolutePath);
+        if (string.IsNullOrWhiteSpace(effectiveFileName)) effectiveFileName = candidate.FileName;
+        SecurityPolicy.EnsureSafeFileName(repositoryRoot, effectiveFileName);
+        var destination = Path.Combine(repositoryRoot, effectiveFileName);
         if (File.Exists(destination))
         {
             var existingSignature = await signatureVerifier.VerifyMicrosoftAsync(destination, ct);
             if (existingSignature.IsValid)
-                return candidate with { LocalPath = destination, TrustLevel = ResourceTrustLevel.MicrosoftSigned };
+            {
+                var inspector = new DismPackageIdentityInspector(runner);
+                var normalized = await inspector.NormalizeFileNameAsync(destination, request, ct);
+                var existingCandidate = candidate with
+                {
+                    FileName = Path.GetFileName(normalized.Equals(destination, StringComparison.OrdinalIgnoreCase)
+                        ? destination : Path.GetDirectoryName(normalized)!),
+                    LocalPath = normalized,
+                    TrustLevel = ResourceTrustLevel.MicrosoftSigned
+                };
+                await manifest.RegisterAsync(repositoryRoot, normalized, existingCandidate, existingSignature, ct);
+                return existingCandidate;
+            }
         }
 
         var temporary = destination + ".download";
@@ -127,27 +142,43 @@ public sealed class LegacyPackageDownloader(HttpClient? httpClient = null)
             if (!signature.IsValid)
                 throw new InvalidDataException("Legacy package did not pass Microsoft Authenticode verification: " + signature.Error);
 
-            if (candidate.FileName.EndsWith(".esd", StringComparison.OrdinalIgnoreCase))
+            File.Move(temporary, destination, true);
+            var inspectorAfterDownload = new DismPackageIdentityInspector(runner);
+            string normalizedPath;
+            if (destination.EndsWith(".esd", StringComparison.OrdinalIgnoreCase))
             {
-                var validationRoot = Path.Combine(repositoryRoot, "esd-validation-" + Guid.NewGuid().ToString("N"));
-                Directory.CreateDirectory(validationRoot);
+                var extractionRoot = Path.Combine(repositoryRoot, "legacy-esd-" + Guid.NewGuid().ToString("N"));
+                Directory.CreateDirectory(extractionRoot);
                 try
                 {
                     await runner.RunAsync("dism.exe",
-                        ["/Apply-Image", $"/ImageFile:{temporary}", "/Index:1", $"/ApplyDir:{validationRoot}", "/CheckIntegrity"],
+                        ["/Apply-Image", $"/ImageFile:{destination}", "/Index:1", $"/ApplyDir:{extractionRoot}", "/CheckIntegrity"],
                         cancellationToken: ct, timeout: TimeSpan.FromMinutes(40));
-                    if (!AdkBootstrapper.EnumerateFilesSafely(validationRoot, "update.mum")
-                            .Any(x => x.Contains("WinSxS", StringComparison.OrdinalIgnoreCase)))
+                    var mum = AdkBootstrapper.EnumerateFilesSafely(extractionRoot, "update.mum")
+                        .FirstOrDefault(x => x.Contains("WinSxS", StringComparison.OrdinalIgnoreCase));
+                    if (mum is null)
                         throw new InvalidDataException("ESD passed integrity checks but contains no language-pack update.mum.");
+                    normalizedPath = await inspectorAfterDownload.NormalizeFileNameAsync(mum, request, ct);
                 }
-                finally { try { Directory.Delete(validationRoot, true); } catch { } }
+                finally { try { Directory.Delete(extractionRoot, true); } catch { } }
+            }
+            else
+            {
+                normalizedPath = await inspectorAfterDownload.NormalizeFileNameAsync(destination, request, ct);
             }
 
-            File.Move(temporary, destination, true);
-            log?.Invoke($"Проверенный legacy-пакет Microsoft сохранён: {destination}");
-            return candidate with { LocalPath = destination, Size = new FileInfo(destination).Length,
+            var normalizedCandidate = candidate with
+            {
+                FileName = Path.GetFileName(normalizedPath.Equals(destination, StringComparison.OrdinalIgnoreCase)
+                    ? destination : Path.GetDirectoryName(normalizedPath)!),
+                LocalPath = normalizedPath,
+                Size = new FileInfo(normalizedPath).Length,
                 TrustLevel = ResourceTrustLevel.MicrosoftSigned,
-                Notes = $"Microsoft signature: {signature.Subject}; thumbprint: {signature.Thumbprint}" };
+                Notes = $"Microsoft signature: {signature.Subject}; thumbprint: {signature.Thumbprint}"
+            };
+            await manifest.RegisterAsync(repositoryRoot, normalizedPath, normalizedCandidate, signature, ct);
+            log?.Invoke($"Проверенный legacy-пакет Microsoft сохранён: {normalizedPath}");
+            return normalizedCandidate;
         }
         catch
         {
