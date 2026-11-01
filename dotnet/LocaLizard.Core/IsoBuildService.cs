@@ -116,28 +116,85 @@ public sealed class IsoBuildService
             var packages = FindPackages(packageRoot);
             var updatePlan = string.IsNullOrWhiteSpace(options.UpdatesDirectory)
                 ? null : await UpdateManifestValidator.LoadAsync(options.UpdatesDirectory, ct: ct);
+
+            var storeLxpRoot = Path.Combine(packageRoot, "store_lxp");
+            if (!string.IsNullOrWhiteSpace(options.StoreProductId))
+            {
+                Directory.CreateDirectory(storeLxpRoot);
+                var targets = imagePlan.Select(x => (x.Info.BuildFamily, x.Info.NormalizedArchitecture))
+                    .Distinct().ToArray();
+                var signatureVerifier = new PackageSignatureVerifier(_runner);
+                var managedRepository = new ManagedRepositoryService();
+                var storeDownloader = new StorePackageDownloader();
+                using var storeResolver = new StoreProductResolver();
+                foreach (var target in targets)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    try
+                    {
+                        var storeCandidates = await storeResolver.ResolveRussianLxpAsync(
+                            options.StoreProductId, target.NormalizedArchitecture, target.BuildFamily, ct);
+                        foreach (var storeCandidate in storeCandidates)
+                        {
+                            try
+                            {
+                                var downloadedLxp = await storeDownloader.DownloadVerifiedAsync(
+                                    storeCandidate, storeLxpRoot, target.NormalizedArchitecture,
+                                    signatureVerifier, managedRepository, ct);
+                                Log?.Invoke($"Найден и проверен Microsoft ru-RU LXP: {downloadedLxp.FileName}.");
+                            }
+                            catch (Exception ex) when (ex is not OperationCanceledException)
+                            {
+                                Log?.Invoke($"Store LXP пропущен ({storeCandidate.FileName}): {ex.Message}");
+                            }
+                        }
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        Log?.Invoke($"Store metadata не вернула ru-RU LXP для {target.BuildFamily}/{target.NormalizedArchitecture}: {ex.Message}");
+                    }
+                }
+            }
+            var lxpRoots = new[] { options.LxpDirectory, storeLxpRoot }
+                .Where(x => !string.IsNullOrWhiteSpace(x) && Directory.Exists(x))
+                .Cast<string>().Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
             var completed = 0;
             foreach (var item in imagePlan)
             {
                 ct.ThrowIfCancellationRequested();
                 var candidates = await FindVerifiedMatchingPackagesAsync(packages, item.Info, ct);
+                if (candidates.Count == 0 && !PackageCompatibilityService.IsServer(PackageCompatibilityService.ProductFamily(item.Info)))
+                {
+                    Status?.Invoke($"Ищу Client Language Pack ru-RU через UUP Dump для {item.Info.BuildFamily}/{item.Info.NormalizedArchitecture}…");
+                    try
+                    {
+                        var downloaded = await _uup.DownloadRussianLanguagePackAsync(item.Info, packageRoot, _runner,
+                            message => Log?.Invoke(message), ct);
+                        packages.AddRange(downloaded);
+                        candidates = await FindVerifiedMatchingPackagesAsync(packages, item.Info, ct);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        Log?.Invoke($"UUP Dump не дал пригодный пакет; проверяю legacy-каталоги: {ex.Message}");
+                    }
+                }
                 if (candidates.Count == 0)
                 {
-                    Status?.Invoke($"Ищу Client Language Pack ru-RU для {item.Info.BuildFamily}/{item.Info.NormalizedArchitecture}…");
-                    var downloaded = await _uup.DownloadRussianLanguagePackAsync(item.Info, packageRoot, _runner,
-                        message => Log?.Invoke(message), ct);
+                    Status?.Invoke($"Ищу ru-RU Language Pack в W10MUI и OSBuilder для {item.Info.BuildFamily}/{item.Info.NormalizedArchitecture}…");
+                    var downloaded = await DiscoverAndDownloadLegacyLanguagePackAsync(item.Info, packageRoot, ct);
                     packages.AddRange(downloaded);
                     candidates = await FindVerifiedMatchingPackagesAsync(packages, item.Info, ct);
                 }
                 if (candidates.Count == 0)
-                    throw new FileNotFoundException($"Нет подходящего Client Language Pack для индекса {item.Info.Index}.");
+                    throw new FileNotFoundException($"Нет проверенного совместимого ru-RU Language Pack для индекса {item.Info.Index} ({PackageCompatibilityService.ProductFamily(item.Info)}, {item.Info.BuildFamily}/{item.Info.NormalizedArchitecture}).");
 
                 Status?.Invoke($"Локализую {Path.GetFileName(item.File)}, индекс {item.Info.Index}…");
                 await _images.ServiceAsync(item.File, item.Info, candidates, options.FodDirectory,
                     updatePlan, work, message => Log?.Invoke(message), ct,
                     mount => _winre.LocalizeAsync(mount, item.Info.NormalizedArchitecture, options.FodDirectory,
                         updatePlan, ct, message => Log?.Invoke(message)),
-                    options.DriverDirectory, options.UnattendFile, options.AllowPartialLocalization);
+                    options.DriverDirectory, options.UnattendFile, options.AllowPartialLocalization,
+                    lxpRoots.Length == 0 ? null : lxpRoots[0]);
                 completed++;
                 await journal.RecordAsync("install_index_" + item.Info.Index, "completed",
                     $"{Path.GetFileName(item.File)}; build={item.Info.BuildFamily}; arch={item.Info.NormalizedArchitecture}", ct);
@@ -463,6 +520,48 @@ public sealed class IsoBuildService
         finally { await DismountIsoAsync(output); }
     }
 
+    private async Task<IReadOnlyList<string>> DiscoverAndDownloadLegacyLanguagePackAsync(
+        ImageInfo image, string packageRoot, CancellationToken ct)
+    {
+        var productFamily = PackageCompatibilityService.ProductFamily(image);
+        var resourceType = PackageCompatibilityService.IsServer(productFamily)
+            ? LanguageResourceType.ServerLanguagePack : LanguageResourceType.ClientLanguagePack;
+        var request = PackageCompatibilityService.CreateRequest(image, resourceType);
+        using var w10Mui = new W10MuiCatalogProvider();
+        using var osBuilder = new OsBuilderCatalogProvider();
+        var registry = new ResourceSourceRegistry();
+        registry.Register(w10Mui);
+        registry.Register(osBuilder);
+        var discovered = await registry.DiscoverAsync(request, ct);
+        Log?.Invoke($"Legacy providers: найдено кандидатов Microsoft-hosted metadata — {discovered.Count}.");
+        if (discovered.Count == 0) return [];
+
+        var signatureVerifier = new PackageSignatureVerifier(_runner);
+        var repositoryManifest = new ManagedRepositoryService();
+        var downloader = new LegacyPackageDownloader();
+        foreach (var candidate in discovered.OrderBy(x => x.TrustLevel))
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                var downloaded = await downloader.DownloadVerifiedAsync(candidate, request, packageRoot,
+                    signatureVerifier, repositoryManifest, _runner, ct, message => Log?.Invoke(message));
+                if (downloaded.LocalPath is not null &&
+                    WindowsImageService.IsLanguagePackForImage(downloaded.LocalPath, image))
+                {
+                    Log?.Invoke($"Legacy-провайдер подтвердил пакет ru-RU: {downloaded.FileName}");
+                    return [downloaded.LocalPath];
+                }
+                Log?.Invoke($"Пакет {downloaded.FileName} не прошёл проверку CBS identity для целевого индекса.");
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                Log?.Invoke($"Legacy-кандидат {candidate.FileName} отклонён: {ex.Message}");
+            }
+        }
+        return [];
+    }
+
     private async Task<List<string>> FindVerifiedMatchingPackagesAsync(IEnumerable<string> all, ImageInfo image, CancellationToken ct)
     {
         var verified = new List<string>();
@@ -493,7 +592,7 @@ public sealed class IsoBuildService
             : [];
 
     private static List<string> FindMatchingPackages(IEnumerable<string> all, ImageInfo image) =>
-        all.Where(p => WindowsImageService.IsClientLp(p, image.NormalizedArchitecture))
+        all.Where(p => WindowsImageService.IsLanguagePackForImage(p, image))
             .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
     private static void ValidateMedia(string media)
