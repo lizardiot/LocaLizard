@@ -194,7 +194,7 @@ public sealed class IsoBuildService
                     mount => _winre.LocalizeAsync(mount, item.Info.NormalizedArchitecture, options.FodDirectory,
                         updatePlan, ct, message => Log?.Invoke(message)),
                     options.DriverDirectory, options.UnattendFile, options.AllowPartialLocalization,
-                    lxpRoots.Length == 0 ? null : lxpRoots[0]);
+                    lxpRoots);
                 completed++;
                 await journal.RecordAsync("install_index_" + item.Info.Index, "completed",
                     $"{Path.GetFileName(item.File)}; build={item.Info.BuildFamily}; arch={item.Info.NormalizedArchitecture}", ct);
