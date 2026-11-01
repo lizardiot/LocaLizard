@@ -44,12 +44,16 @@ public sealed class W10MuiCatalogProvider : ILanguageResourceProvider, IDisposab
         {
             cancellationToken.ThrowIfCancellationRequested();
             var uri = new Uri($"{RawRoot}/{directory}/{Uri.EscapeDataString(fileName)}");
+            if (!SecurityPolicy.IsTrustedMetadataUrl(uri)) continue;
             string text;
             try
             {
                 using var response = await _http.GetAsync(uri, cancellationToken);
                 if (response.StatusCode == HttpStatusCode.NotFound) continue;
                 response.EnsureSuccessStatusCode();
+                if (response.RequestMessage?.RequestUri is not { } finalUri ||
+                    !SecurityPolicy.IsTrustedMetadataUrl(finalUri))
+                    throw new InvalidDataException("W10MUI metadata redirect left the allow-listed raw GitHub catalog path.");
                 text = await response.Content.ReadAsStringAsync(cancellationToken);
             }
             catch (HttpRequestException) { continue; }
@@ -200,9 +204,13 @@ public sealed class OsBuilderCatalogProvider : ILanguageResourceProvider, IDispo
             try
             {
                 var uri = new Uri($"{RawRoot}/{string.Join("/", catalog.Split('/').Select(Uri.EscapeDataString))}");
+                if (!SecurityPolicy.IsTrustedMetadataUrl(uri)) continue;
                 using var response = await _http.GetAsync(uri, cancellationToken);
                 if (response.StatusCode == HttpStatusCode.NotFound) continue;
                 response.EnsureSuccessStatusCode();
+                if (response.RequestMessage?.RequestUri is not { } finalUri ||
+                    !SecurityPolicy.IsTrustedMetadataUrl(finalUri))
+                    throw new InvalidDataException("OSBuilder metadata redirect left the allow-listed raw GitHub catalog path.");
                 payload = await response.Content.ReadAsStringAsync(cancellationToken);
             }
             catch (HttpRequestException) { continue; }
