@@ -83,7 +83,7 @@ public sealed class AppxPackageInspector
                 using var nestedStream = nestedManifest.Open();
                 using var nestedReader = XmlReader.Create(nestedStream, settings);
                 var nestedDocument = XDocument.Load(nestedReader);
-                var nestedIdentity = nestedDocument.Root?.DescendantsAndSelf() ?? Enumerable.Empty<XElement>()
+                var nestedIdentity = (nestedDocument.Root?.DescendantsAndSelf() ?? Enumerable.Empty<XElement>())
                     .FirstOrDefault(x => x.Name.LocalName == "Identity");
                 var nestedArchitecture = NormalizeAppxArchitecture(
                     (string?)nestedIdentity?.Attribute("ProcessorArchitecture") ?? "neutral");
