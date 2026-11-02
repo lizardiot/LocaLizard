@@ -396,7 +396,7 @@ public sealed class LocalExperiencePackService(ProcessRunner runner)
             var args = new List<string>
             {
                 $"/Image:{imageMount}", "/Add-ProvisionedAppxPackage",
-                $"/PackagePath:{package.FilePath}", $"/LicensePath:{license}"
+                $"/PackagePath:{package.FilePath}", $"/LicensePath:{license}", "/Region:all"
             };
             foreach (var dependency in resolution.DependencyPaths)
                 args.Add($"/DependencyPackagePath:{dependency}");
