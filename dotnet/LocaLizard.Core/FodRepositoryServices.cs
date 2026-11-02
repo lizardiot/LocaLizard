@@ -68,9 +68,7 @@ public sealed class FodInventoryService(ProcessRunner runner)
             var packageArch = InferArchitecture(file);
             if (packageArch is not null && !string.Equals(packageArch, arch, StringComparison.OrdinalIgnoreCase))
                 continue;
-            if (PackageCompatibilityService.IsFodPackage(name) ||
-                file.Contains("LanguagesAndOptionalFeatures", StringComparison.OrdinalIgnoreCase) ||
-                file.Contains("FeaturesOnDemand", StringComparison.OrdinalIgnoreCase))
+            if (PackageCompatibilityService.IsFodPackage(name))
                 candidates.Add(file);
         }
         return candidates.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
