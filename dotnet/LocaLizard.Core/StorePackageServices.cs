@@ -242,6 +242,27 @@ public sealed class StoreProductResolver(HttpClient? httpClient = null) : IDispo
     public void Dispose() => _http.Dispose();
 }
 
+public sealed class MicrosoftStoreProvider(string productId, HttpClient? httpClient = null) : ILanguageResourceProvider, IDisposable
+{
+    private readonly StoreProductResolver _resolver = new(httpClient);
+    public string SourceId => "microsoft-store";
+
+    public Task<IReadOnlyList<LanguageResourceCandidate>> DiscoverAsync(
+        LanguageResourceRequest request, CancellationToken cancellationToken)
+    {
+        if (request.ResourceType is not null &&
+            request.ResourceType != LanguageResourceType.LocalExperiencePack)
+            return Task.FromResult<IReadOnlyList<LanguageResourceCandidate>>([]);
+        if (!string.Equals(request.Language, "ru-RU", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("Microsoft Store provider supports Russian ru-RU only.");
+        if (PackageCompatibilityService.IsServer(request.ProductFamily))
+            return Task.FromResult<IReadOnlyList<LanguageResourceCandidate>>([]);
+        return _resolver.ResolveRussianLxpAsync(productId, request.Architecture, request.BuildFamily, cancellationToken);
+    }
+
+    public void Dispose() => _resolver.Dispose();
+}
+
 public sealed class StorePackageDownloader(HttpClient? httpClient = null)
 {
     private readonly HttpClient _http = httpClient ?? new HttpClient(new HttpClientHandler { AllowAutoRedirect = false })
