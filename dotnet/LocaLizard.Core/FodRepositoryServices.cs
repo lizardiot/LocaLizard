@@ -9,8 +9,8 @@ public static class FodCapabilityCatalog
         "Language.Basic~~~ru-RU~0.0.1.0",
         "Language.OCR~~~ru-RU~0.0.1.0",
         "Language.Handwriting~~~ru-RU~0.0.1.0",
-        "Language.Speech~~~ru-RU~0.0.1.0",
         "Language.TextToSpeech~~~ru-RU~0.0.1.0",
+        "Language.Speech~~~ru-RU~0.0.1.0",
         "Language.Fonts~~~ru-RU~0.0.1.0"
     ];
 }
@@ -91,39 +91,55 @@ public sealed class FodRepositoryBuilder(ProcessRunner runner)
     private readonly ProcessRunner _runner = runner;
 
     public async Task<string> PrepareRepositoryAsync(
-        string imageMount, string sourceRoot, string workDirectory, string architecture,
+        string imageMount, string sourceRoot, string workDirectory, ImageInfo image,
         CancellationToken ct, Action<string>? log = null)
     {
         if (!Directory.Exists(sourceRoot)) throw new DirectoryNotFoundException("FOD source directory not found.");
         var fullSource = Path.GetFullPath(sourceRoot);
+        var request = PackageCompatibilityService.CreateRequest(image, LanguageResourceType.FeatureOnDemand);
+        var sourcePackages = FodInventoryService.FindRussianCapabilityPackages(fullSource, image.NormalizedArchitecture);
+        if (sourcePackages.Count == 0)
+            throw new InvalidDataException("В выбранном каталоге не обнаружены русские FOD CAB для указанной архитектуры.");
+
+        var signatureVerifier = new PackageSignatureVerifier(_runner);
+        var identityInspector = new FodPackageIdentityInspector(_runner);
+        var verifiedPackages = new List<string>();
+        foreach (var package in sourcePackages)
+        {
+            ct.ThrowIfCancellationRequested();
+            var signature = await signatureVerifier.VerifyMicrosoftAsync(package, ct);
+            if (!signature.IsValid)
+                throw new InvalidDataException($"FOD CAB не прошёл проверку подписи Microsoft: {Path.GetFileName(package)} ({signature.Error})");
+            _ = await identityInspector.InspectAsync(package, request, ct);
+            verifiedPackages.Add(package);
+        }
+
         if (LooksLikeOfficialRepository(fullSource))
         {
-            log?.Invoke("Использую исходный Microsoft Languages and Optional Features / FOD repository без перестроения.");
+            log?.Invoke($"Использую проверенный Microsoft Languages and Optional Features / FOD repository ({verifiedPackages.Count} русских CAB).");
             return fullSource;
         }
 
         var available = await new FodInventoryService(_runner).GetImageCapabilitiesAsync(imageMount, ct);
-        var supported = available.Select(x => x.Name)
-            .Where(name => FodCapabilityCatalog.RussianCapabilities.Contains(name, StringComparer.OrdinalIgnoreCase))
-            .ToArray();
+        var supported = available
+            .Where(x => FodCapabilityCatalog.RussianCapabilities.Contains(x.Name, StringComparer.OrdinalIgnoreCase) &&
+                        !x.State.Equals("Installed", StringComparison.OrdinalIgnoreCase))
+            .Select(x => x.Name).ToArray();
         var requested = supported.Length == 0
             ? FodCapabilityCatalog.RussianCapabilities.ToArray()
             : supported;
-        var sourcePackages = FodInventoryService.FindRussianCapabilityPackages(fullSource, architecture);
-        if (sourcePackages.Count == 0)
-            throw new InvalidDataException("В выбранном каталоге не обнаружены русские FOD CAB для указанной архитектуры.");
 
-        var languageFodOnly = sourcePackages.All(path =>
+        var languageFodOnly = verifiedPackages.All(path =>
             Path.GetFileName(path).Contains("LanguageFeatures", StringComparison.OrdinalIgnoreCase) ||
             Path.GetFileName(path).Contains("WinOcr-FOD-Package", StringComparison.OrdinalIgnoreCase) ||
             Path.GetFileName(path).Contains("Language.Fonts", StringComparison.OrdinalIgnoreCase));
         if (languageFodOnly)
         {
-            log?.Invoke("Обнаружены монолитные языковые FOD ru-RU без satellite packages; использую проверенную CAB-папку как источник DISM /Add-Capability.");
+            log?.Invoke("Обнаружены подписанные монолитные языковые FOD ru-RU без satellite packages; использую CAB-папку как источник DISM /Add-Capability.");
             return fullSource;
         }
 
-        var repository = Path.Combine(workDirectory, "fod_repository_ru_ru_" + BuildNumbers.Architecture(architecture));
+        var repository = Path.Combine(workDirectory, "fod_repository_ru_ru_" + image.BuildFamily + "_" + image.NormalizedArchitecture);
         Directory.CreateDirectory(repository);
         log?.Invoke($"DISM /Export-Source: готовлю репозиторий ru-RU для {requested.Length} capabilities.");
         foreach (var capability in requested)
