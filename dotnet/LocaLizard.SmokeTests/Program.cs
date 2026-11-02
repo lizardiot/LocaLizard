@@ -218,6 +218,25 @@ var folder = Path.Combine(Path.GetTempPath(), "LocaLizardTest_" + Guid.NewGuid()
 Directory.CreateDirectory(folder);
 try
 {
+    var managedRepositoryRoot = Path.Combine(folder, "managed-resource-repository");
+    Directory.CreateDirectory(managedRepositoryRoot);
+    var managedResourcePath = Path.Combine(managedRepositoryRoot, "client-language-pack_ru-ru_x64.cab");
+    await File.WriteAllTextAsync(managedResourcePath, "signed fixture bytes");
+    var managedCandidate = new LanguageResourceCandidate(
+        "fixture:managed-resource", "test-provider", Path.GetFileName(managedResourcePath),
+        LanguageResourceType.ClientLanguagePack, "ru-RU", "x64", 26100, "Client",
+        Path.GetFileName(managedResourcePath), LocalPath: managedResourcePath,
+        TrustLevel: ResourceTrustLevel.MicrosoftSigned);
+    var testSignature = new PackageSignatureResult(true, "valid", "CN=Microsoft Corporation", "TESTTHUMBPRINT");
+    var managedRepository = new ManagedRepositoryService();
+    await managedRepository.RegisterAsync(managedRepositoryRoot, managedResourcePath,
+        managedCandidate, testSignature, CancellationToken.None);
+    Check(await managedRepository.VerifyAsync(managedRepositoryRoot, managedResourcePath, CancellationToken.None),
+        "managed repository verifies Russian package provenance and SHA-256");
+    await File.WriteAllTextAsync(managedResourcePath, "tampered bytes");
+    Check(!await managedRepository.VerifyAsync(managedRepositoryRoot, managedResourcePath, CancellationToken.None),
+        "managed repository rejects modified package bytes");
+
 var ruRequest = new LanguageResourceRequest(22631, "x64", "ru-RU", "Client",
     LanguageResourceType.ClientLanguagePack);
 var compatibleRuCandidate = new LanguageResourceCandidate(
