@@ -353,6 +353,7 @@ public sealed class LocalExperiencePackService(ProcessRunner runner)
                 .Contains(Path.GetExtension(x), StringComparer.OrdinalIgnoreCase))
             .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         var packages = new List<AppxPackageInfo>();
+        var lxpPackages = new List<AppxPackageInfo>();
         var results = new List<LxpProvisionResult>();
         foreach (var file in files)
         {
@@ -366,8 +367,16 @@ public sealed class LocalExperiencePackService(ProcessRunner runner)
                     continue;
                 }
                 var info = inspector.Inspect(file);
-                if (!AppxPackageInspector.IsRussianMicrosoftLxp(info, architecture)) continue;
+                if (!info.Publisher.Contains("Microsoft Corporation", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                var architectureMatches = info.Architecture == "neutral" ||
+                    info.Architecture.Equals(BuildNumbers.Architecture(architecture), StringComparison.OrdinalIgnoreCase) ||
+                    info.IncludedArchitectures?.Any(x => x == "neutral" ||
+                        x.Equals(BuildNumbers.Architecture(architecture), StringComparison.OrdinalIgnoreCase)) == true;
+                if (!architectureMatches) continue;
                 packages.Add(info);
+                if (AppxPackageInspector.IsRussianMicrosoftLxp(info, architecture))
+                    lxpPackages.Add(info);
             }
             catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or XmlException)
             {
@@ -375,7 +384,7 @@ public sealed class LocalExperiencePackService(ProcessRunner runner)
             }
         }
 
-        foreach (var package in packages)
+        foreach (var package in lxpPackages)
         {
             ct.ThrowIfCancellationRequested();
             var resolution = new AppxDependencyResolver(inspector)
