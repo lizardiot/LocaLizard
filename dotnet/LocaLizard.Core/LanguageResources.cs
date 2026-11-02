@@ -117,7 +117,8 @@ public static class PackageCompatibilityService
         if (request.ResourceType is not null && candidate.ResourceType != request.ResourceType) return false;
         if (!string.Equals(BuildNumbers.Architecture(candidate.Architecture), request.Architecture,
                 StringComparison.OrdinalIgnoreCase)) return false;
-        if (candidate.BuildFamily != request.BuildFamily) return false;
+        if (candidate.BuildFamily is int candidateBuild &&
+            !IsCompatiblePackageBuild(request.BuildFamily, candidateBuild)) return false;
         if (!string.Equals(candidate.ProductFamily, request.ProductFamily, StringComparison.OrdinalIgnoreCase)) return false;
         if (!IsKnownBuildFamily(request.BuildFamily, request.ProductFamily)) return false;
         if (candidate.LocalPath is null && candidate.DownloadUri is null) return false;
