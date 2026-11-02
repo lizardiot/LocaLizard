@@ -72,6 +72,7 @@ public sealed class W10MuiCatalogProvider : ILanguageResourceProvider, IDisposab
         14393 => 14393,
         17763 => 17763,
         19044 => 19041,
+        20348 => 20348,
         26100 => 26100,
         _ => null
     };
@@ -294,6 +295,10 @@ public sealed class OsBuilderCatalogProvider : ILanguageResourceProvider, IDispo
 
     private static int ParseBuildFamily(string title)
     {
+        if (Regex.IsMatch(title, @"(?i)Windows\s+Server\s+2016")) return 14393;
+        if (Regex.IsMatch(title, @"(?i)Windows\s+Server\s+2019")) return 17763;
+        if (Regex.IsMatch(title, @"(?i)Windows\s+Server\s+2022")) return 20348;
+        if (Regex.IsMatch(title, @"(?i)Windows\s+Server\s+2025")) return 26100;
         var match = Regex.Match(title, @"(?i)Windows\s+10\s+Version\s+(\d{4})");
         if (!match.Success) return 0;
         return match.Groups[1].Value switch
