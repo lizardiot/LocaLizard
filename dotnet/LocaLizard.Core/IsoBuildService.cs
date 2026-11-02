@@ -180,7 +180,7 @@ public sealed class IsoBuildService
             foreach (var item in imagePlan)
             {
                 ct.ThrowIfCancellationRequested();
-                var candidates = await FindVerifiedMatchingPackagesAsync(packages, item.Info, packageRoot, ct);
+                var candidates = await FindVerifiedMatchingPackagesAsync(packages, item.Info, options.PackageDirectory, ct);
                 if (candidates.Count == 0 && !PackageCompatibilityService.IsServer(PackageCompatibilityService.ProductFamily(item.Info)))
                 {
                     Status?.Invoke($"Ищу Client Language Pack ru-RU через UUP Dump для {item.Info.BuildFamily}/{item.Info.NormalizedArchitecture}…");
@@ -189,7 +189,7 @@ public sealed class IsoBuildService
                         var downloaded = await _uup.DownloadRussianLanguagePackAsync(item.Info, packageRoot, _runner,
                             message => Log?.Invoke(message), ct);
                         packages.AddRange(downloaded);
-                        candidates = await FindVerifiedMatchingPackagesAsync(packages, item.Info, packageRoot, ct);
+                        candidates = await FindVerifiedMatchingPackagesAsync(packages, item.Info, options.PackageDirectory, ct);
                     }
                     catch (Exception ex) when (ex is not OperationCanceledException)
                     {
@@ -201,7 +201,7 @@ public sealed class IsoBuildService
                     Status?.Invoke($"Ищу ru-RU Language Pack в W10MUI и OSBuilder для {item.Info.BuildFamily}/{item.Info.NormalizedArchitecture}…");
                     var downloaded = await DiscoverAndDownloadLegacyLanguagePackAsync(item.Info, packageRoot, ct);
                     packages.AddRange(downloaded);
-                    candidates = await FindVerifiedMatchingPackagesAsync(packages, item.Info, packageRoot, ct);
+                    candidates = await FindVerifiedMatchingPackagesAsync(packages, item.Info, options.PackageDirectory, ct);
                 }
                 if (candidates.Count == 0)
                     throw new FileNotFoundException($"Нет проверенного совместимого ru-RU Language Pack для индекса {item.Info.Index} ({PackageCompatibilityService.ProductFamily(item.Info)}, {item.Info.BuildFamily}/{item.Info.NormalizedArchitecture}).");
@@ -354,13 +354,13 @@ public sealed class IsoBuildService
         {
             ct.ThrowIfCancellationRequested();
             var item = imagePlan[i];
-            var candidates = await FindVerifiedMatchingPackagesAsync(packages, item.Info, packageRoot, ct);
+            var candidates = await FindVerifiedMatchingPackagesAsync(packages, item.Info, options.PackageDirectory, ct);
             if (candidates.Count == 0)
             {
                 Status?.Invoke($"Ищу Client Language Pack ru-RU для индекса {item.Info.Index}…");
                 packages.AddRange(await _uup.DownloadRussianLanguagePackAsync(item.Info, options.PackageDirectory,
                     _runner, message => Log?.Invoke(message), ct));
-                candidates = await FindVerifiedMatchingPackagesAsync(packages, item.Info, packageRoot, ct);
+                candidates = await FindVerifiedMatchingPackagesAsync(packages, item.Info, options.PackageDirectory, ct);
             }
             if (candidates.Count == 0)
                 throw new FileNotFoundException($"Нет проверенного Client Language Pack ru-RU для индекса {item.Info.Index}.");
