@@ -91,7 +91,7 @@ public sealed class RussianFodPackageDownloader(HttpClient? httpClient = null)
                             throw new InvalidDataException($"Blocked FOD download redirect: {current}");
                         using var requestMessage = new HttpRequestMessage(HttpMethod.Get, current);
                         response = await _http.SendAsync(requestMessage, HttpCompletionOption.ResponseHeadersRead, ct);
-                        if ((int)(int)response.StatusCode is >= 300 and < 400)
+                        if ((int)response.StatusCode is >= 300 and < 400)
                         {
                             var location = response.Headers.Location ??
                                 throw new InvalidDataException("FOD redirect has no Location.");
@@ -154,7 +154,21 @@ public sealed class RussianFodPackageDownloader(HttpClient? httpClient = null)
             {
                 var signature = await signatures.VerifyMicrosoftAsync(destination, ct);
                 if (!signature.IsValid) throw new InvalidDataException(signature.Error ?? "FOD signature invalid.");
-                _ = await inspector.InspectAsync(destination, request, ct);
+                var identity = await inspector.InspectAsync(destination, request, ct);
+                var existingRecord = candidates.FirstOrDefault(x =>
+                    string.Equals(Path.GetFileName(x.DownloadUri?.AbsolutePath ?? x.FileName), urlName,
+                        StringComparison.OrdinalIgnoreCase));
+                var record = (existingRecord ?? new LanguageResourceCandidate(
+                    $"local-fod:{destination}", "local-fod", urlName,
+                    LanguageResourceType.FeatureOnDemand, "ru-RU", request.Architecture,
+                    request.BuildFamily, request.ProductFamily, urlName, LocalPath: destination))
+                    with
+                    {
+                        LocalPath = destination,
+                        TrustLevel = ResourceTrustLevel.MicrosoftSigned,
+                        Notes = $"CBS identity: {identity.Identity}; capability: {identity.Capability}; signer: {signature.Subject}"
+                    };
+                await manifest.RegisterAsync(repositoryRoot, destination, record, signature, ct);
                 downloaded.Add(destination);
             }
             catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException)
