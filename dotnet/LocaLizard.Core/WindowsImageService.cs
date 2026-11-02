@@ -117,14 +117,19 @@ public sealed class WindowsImageService(ProcessRunner runner)
                 try
                 {
                     var inventory = await new FodInventoryService(_runner).GetImageCapabilitiesAsync(mount, ct);
-                    var available = inventory.Select(x => x.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
-                    var requested = caps.Where(x => available.Count == 0 || available.Contains(x)).ToArray();
+                    var byName = inventory.ToDictionary(x => x.Name, StringComparer.OrdinalIgnoreCase);
+                    var requested = caps.Where(x => byName.Count == 0 ||
+                        byName.TryGetValue(x, out var capability) &&
+                        !capability.State.Equals("Installed", StringComparison.OrdinalIgnoreCase)).ToArray();
                     capabilityResults.AddRange(caps.Except(requested, StringComparer.OrdinalIgnoreCase)
-                        .Select(x => new CapabilityAudit(x, "not_available_in_target")));
+                        .Select(x => new CapabilityAudit(x,
+                            byName.TryGetValue(x, out var capability) &&
+                            capability.State.Equals("Installed", StringComparison.OrdinalIgnoreCase)
+                                ? "already_installed" : "not_available_in_target")));
                     if (requested.Length > 0)
                     {
                         var repository = await new FodRepositoryBuilder(_runner).PrepareRepositoryAsync(
-                            mount, fod, work, image.NormalizedArchitecture, ct, log);
+                            mount, fod, work, image, ct, log);
                         foreach (var capability in requested)
                         {
                             ct.ThrowIfCancellationRequested();
