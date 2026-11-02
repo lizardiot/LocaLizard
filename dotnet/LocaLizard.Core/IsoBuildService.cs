@@ -126,14 +126,15 @@ public sealed class IsoBuildService
                 var signatureVerifier = new PackageSignatureVerifier(_runner);
                 var managedRepository = new ManagedRepositoryService();
                 var storeDownloader = new StorePackageDownloader();
-                using var storeResolver = new StoreProductResolver();
+                using var storeProvider = new MicrosoftStoreProvider(options.StoreProductId);
                 foreach (var target in targets)
                 {
                     ct.ThrowIfCancellationRequested();
                     try
                     {
-                        var storeCandidates = await storeResolver.ResolveRussianLxpAsync(
-                            options.StoreProductId, target.NormalizedArchitecture, target.BuildFamily, ct);
+                        var storeRequest = new LanguageResourceRequest(target.BuildFamily,
+                            target.NormalizedArchitecture, "ru-RU", "Client", LanguageResourceType.LocalExperiencePack);
+                        var storeCandidates = await storeProvider.DiscoverAsync(storeRequest, ct);
                         foreach (var storeCandidate in storeCandidates)
                         {
                             try
@@ -549,6 +550,7 @@ public sealed class IsoBuildService
         var registry = new ResourceSourceRegistry();
         registry.Register(w10Mui);
         registry.Register(osBuilder);
+        registry.Diagnostic += message => Log?.Invoke(message);
         var candidates = await registry.DiscoverAsync(request, ct);
         if (candidates.Count == 0)
         {
@@ -576,6 +578,7 @@ public sealed class IsoBuildService
         var registry = new ResourceSourceRegistry();
         registry.Register(w10Mui);
         registry.Register(osBuilder);
+        registry.Diagnostic += message => Log?.Invoke(message);
         var discovered = await registry.DiscoverAsync(request, ct);
         Log?.Invoke($"Legacy providers: найдено кандидатов Microsoft-hosted metadata — {discovered.Count}.");
         if (discovered.Count == 0) return [];
