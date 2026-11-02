@@ -125,13 +125,8 @@ public sealed class W10MuiCatalogProvider : ILanguageResourceProvider, IDisposab
             var type = featureOnDemand ? LanguageResourceType.FeatureOnDemand :
                 isServer ? LanguageResourceType.ServerLanguagePack : LanguageResourceType.ClientLanguagePack;
             if (request.ResourceType is not null && request.ResourceType != type) continue;
-            if (featureOnDemand)
-            {
-                if (!PackageCompatibilityService.IsFodPackage(fileName) ||
-                    !fileName.Contains("ru-ru", StringComparison.OrdinalIgnoreCase) &&
-                    !fileName.Contains("ru-RU", StringComparison.OrdinalIgnoreCase))
-                    continue;
-            }
+            if (featureOnDemand && !PackageCompatibilityService.IsFodPackage(fileName))
+                continue;
             var architecture = InferArchitecture(fileName);
             if (architecture is null || !string.Equals(architecture, request.Architecture, StringComparison.OrdinalIgnoreCase))
                 continue;
