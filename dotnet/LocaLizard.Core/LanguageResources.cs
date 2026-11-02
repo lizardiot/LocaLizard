@@ -160,6 +160,8 @@ public sealed class ResourceSourceRegistry
     private readonly Dictionary<string, ILanguageResourceProvider> _providers =
         new(StringComparer.OrdinalIgnoreCase);
 
+    public event Action<string>? Diagnostic;
+
     public void Register(ILanguageResourceProvider provider)
     {
         ArgumentNullException.ThrowIfNull(provider);
@@ -185,8 +187,10 @@ public sealed class ResourceSourceRegistry
                 results.AddRange(found.Where(x => PackageCompatibilityService.IsCompatible(x, request)));
             }
             catch (OperationCanceledException) { throw; }
-            catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidDataException or UnauthorizedAccessException)
+            catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidDataException or
+                                      UnauthorizedAccessException or System.Xml.XmlException or TimeoutException)
             {
+                Diagnostic?.Invoke($"Источник {provider.SourceId} пропущен: {ex.Message}");
                 // A source outage must not prevent other independent providers from being queried.
             }
         }
