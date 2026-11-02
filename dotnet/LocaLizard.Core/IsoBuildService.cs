@@ -225,8 +225,10 @@ public sealed class IsoBuildService
                 Status?.Invoke("Локализую Windows Setup и WinPE…");
                 try
                 {
-                    setupAudit = await _setup.LocalizeAsync(media, imagePlan[0].Info.NormalizedArchitecture,
-                        options.FodDirectory, _donorSetupPackages, updatePlan, ct, message => Log?.Invoke(message));
+                    var setupImage = imagePlan[0].Info;
+                    var setupFod = fodByTarget.GetValueOrDefault((setupImage.BuildFamily, setupImage.NormalizedArchitecture));
+                    setupAudit = await _setup.LocalizeAsync(media, setupImage.NormalizedArchitecture,
+                        setupFod, _donorSetupPackages, updatePlan, ct, message => Log?.Invoke(message));
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
