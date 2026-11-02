@@ -52,7 +52,7 @@ public sealed class DismPackageIdentityInspector(ProcessRunner runner)
 
         var versionMatch = Regex.Match(identity, @"(?<!\d)10\.0\.(\d{5})\.");
         var build = versionMatch.Success && int.TryParse(versionMatch.Groups[1].Value, out var parsed) ? parsed : 0;
-        if (build > 0 && build != request.BuildFamily)
+        if (build > 0 && !PackageCompatibilityService.IsCompatiblePackageBuild(request.BuildFamily, build))
             throw new InvalidDataException($"Package Identity build {build} does not match target build {request.BuildFamily}.");
 
         return new DismPackageIdentity(identity, server ? "ServerLanguagePack" : "ClientLanguagePack",
