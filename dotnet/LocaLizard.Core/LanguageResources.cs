@@ -64,6 +64,9 @@ public static class PackageCompatibilityService
             [14393] = "Windows 10 IoT Enterprise LTSB 2016",
             [17763] = "Windows 10 IoT Enterprise LTSC 2019",
             [19044] = "Windows 10 IoT Enterprise LTSC 2021",
+            [22000] = "Windows 11 21H2",
+            [22621] = "Windows 11 22H2",
+            [22631] = "Windows 11 23H2 (22621 enablement family)",
             [26100] = "Windows 11 IoT Enterprise LTSC 2024"
         };
 
@@ -308,9 +311,9 @@ public sealed class LocalRepositoryProvider(string root, string sourceId = "loca
     private static int? InferBuildFamily(string file)
     {
         var text = file.Replace('\\', '/');
-        var match = Regex.Match(text, @"(?<!\d)(10240|14393|17763|19041|19044|20348|22000|22621|26100)(?:_|\D)");
+        var match = Regex.Match(text, @"(?<!\d)(10240|14393|17763|19041|19044|20348|22000|22621|22631|26100)(?:_|\D)");
         if (!match.Success) return null;
         var value = int.Parse(match.Groups[1].Value);
-        return value == 19041 ? 19044 : value;
+        return value switch { 19041 => 19044, _ => value };
     }
 }
