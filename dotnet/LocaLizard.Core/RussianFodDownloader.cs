@@ -33,7 +33,7 @@ public sealed class FodPackageIdentityInspector(ProcessRunner runner)
         var buildMatch = Regex.Match(identity, @"(?<!\d)10\.0\.(\d{5})\.");
         var build = buildMatch.Success && int.TryParse(buildMatch.Groups[1].Value, out var parsed)
             ? parsed : request.BuildFamily;
-        if (build != request.BuildFamily)
+        if (!PackageCompatibilityService.IsCompatiblePackageBuild(request.BuildFamily, build))
             throw new InvalidDataException($"FOD CAB build {build} does not match target {request.BuildFamily}.");
         var capability = CapabilityName(identity);
         return new FodPackageIdentity(identity, capability, architecture, build, "ru-RU");
