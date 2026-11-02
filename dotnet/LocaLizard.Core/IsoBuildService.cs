@@ -158,6 +158,23 @@ public sealed class IsoBuildService
             var lxpRoots = new[] { options.LxpDirectory, storeLxpRoot }
                 .Where(x => !string.IsNullOrWhiteSpace(x) && Directory.Exists(x))
                 .Cast<string>().Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+
+            var fodByTarget = new Dictionary<(int BuildFamily, string Architecture), string?>();
+            if (!string.IsNullOrWhiteSpace(options.FodDirectory) && Directory.Exists(options.FodDirectory))
+            {
+                foreach (var item in imagePlan)
+                    fodByTarget[(item.Info.BuildFamily, item.Info.NormalizedArchitecture)] = options.FodDirectory;
+            }
+            else
+            {
+                foreach (var item in imagePlan)
+                {
+                    var key = (item.Info.BuildFamily, item.Info.NormalizedArchitecture);
+                    if (fodByTarget.ContainsKey(key)) continue;
+                    fodByTarget[key] = await DiscoverAndDownloadRussianFodAsync(item.Info, packageRoot, ct);
+                }
+            }
+
             var completed = 0;
             foreach (var item in imagePlan)
             {
@@ -188,10 +205,11 @@ public sealed class IsoBuildService
                 if (candidates.Count == 0)
                     throw new FileNotFoundException($"Нет проверенного совместимого ru-RU Language Pack для индекса {item.Info.Index} ({PackageCompatibilityService.ProductFamily(item.Info)}, {item.Info.BuildFamily}/{item.Info.NormalizedArchitecture}).");
 
+                var fodForImage = fodByTarget.GetValueOrDefault((item.Info.BuildFamily, item.Info.NormalizedArchitecture));
                 Status?.Invoke($"Локализую {Path.GetFileName(item.File)}, индекс {item.Info.Index}…");
-                await _images.ServiceAsync(item.File, item.Info, candidates, options.FodDirectory,
+                await _images.ServiceAsync(item.File, item.Info, candidates, fodForImage,
                     updatePlan, work, message => Log?.Invoke(message), ct,
-                    mount => _winre.LocalizeAsync(mount, item.Info.NormalizedArchitecture, options.FodDirectory,
+                    mount => _winre.LocalizeAsync(mount, item.Info.NormalizedArchitecture, fodForImage,
                         updatePlan, ct, message => Log?.Invoke(message)),
                     options.DriverDirectory, options.UnattendFile, options.AllowPartialLocalization,
                     lxpRoots);
@@ -518,6 +536,30 @@ public sealed class IsoBuildService
             return indexes;
         }
         finally { await DismountIsoAsync(output); }
+    }
+
+    private async Task<string?> DiscoverAndDownloadRussianFodAsync(
+        ImageInfo image, string packageRoot, CancellationToken ct)
+    {
+        var request = PackageCompatibilityService.CreateRequest(image, LanguageResourceType.FeatureOnDemand);
+        using var w10Mui = new W10MuiCatalogProvider();
+        using var osBuilder = new OsBuilderCatalogProvider();
+        var registry = new ResourceSourceRegistry();
+        registry.Register(w10Mui);
+        registry.Register(osBuilder);
+        var candidates = await registry.DiscoverAsync(request, ct);
+        if (candidates.Count == 0)
+        {
+            Log?.Invoke($"Legacy-каталоги не вернули русские FOD CAB для {image.BuildFamily}/{image.NormalizedArchitecture}.");
+            return null;
+        }
+
+        var target = Path.Combine(packageRoot, $"fod_ru_ru_{image.BuildFamily}_{image.NormalizedArchitecture}");
+        var downloaded = await new RussianFodPackageDownloader().DownloadAsync(
+            candidates, request, target, new PackageSignatureVerifier(_runner),
+            new ManagedRepositoryService(), _runner, ct, message => Log?.Invoke(message));
+        Log?.Invoke($"Русские FOD пакеты, прошедшие проверку Microsoft/CBS: {downloaded.Count}.");
+        return downloaded.Count == 0 ? null : target;
     }
 
     private async Task<IReadOnlyList<string>> DiscoverAndDownloadLegacyLanguagePackAsync(
