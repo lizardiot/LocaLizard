@@ -214,7 +214,7 @@ public sealed class StoreProductResolver(HttpClient? httpClient = null) : IDispo
         var html = await response.Content.ReadAsStringAsync(ct);
         if (html.Length > 8 * 1024 * 1024) throw new InvalidDataException("Store metadata response is too large.");
 
-        var matches = Regex.Matches(html, "(?is)href\\s*=\\s*[\\"'](?<url>https?://[^\\"']+)[\\"'][^>]*>(?<text>.*?)</a>");
+        var matches = Regex.Matches(html, """(?is)href\s*=\s*["'](?<url>https?://[^"']+)["'][^>]*>(?<text>.*?)</a>""");
         var results = new List<LanguageResourceCandidate>();
         foreach (Match match in matches)
         {
