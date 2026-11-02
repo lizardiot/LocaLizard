@@ -129,7 +129,8 @@ jobs:
           name: LocaLizard-0.3.6-release-assets
           path: release-assets
 
-      - name: Update existing 0.3.6 tag after successful build
+      - name: Best-effort update of the protected 0.3.6 tag
+        continue-on-error: true
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
         with:
           script: |
@@ -168,6 +169,7 @@ jobs:
           draft: false
           prerelease: false
           fail_on_unmatched_files: true
+          overwrite_files: true
           files: |
             release-assets/LocaLizard.exe
             release-assets/LocaLizard-0.3.6-win-x64.zip
