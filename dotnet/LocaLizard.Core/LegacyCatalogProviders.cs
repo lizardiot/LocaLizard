@@ -36,9 +36,14 @@ public sealed class W10MuiCatalogProvider : ILanguageResourceProvider, IDisposab
             _ => "Langs"
         };
         var suffix = directory == "Langs" ? "-LPs.txt" : "-OnDemand.txt";
+        var isServer = PackageCompatibilityService.IsServer(request.ProductFamily);
         var fileNames = directory == "Langs"
             ? new[] { $"{catalogBuild}{suffix}", $"{catalogBuild}{suffix.Replace(".txt", "_Alternative.txt")}" }
-            : new[] { $"{catalogBuild}{suffix}", $"{catalogBuild}-OnDemand_Alternative.txt" };
+            : isServer && catalogBuild == 26100
+                ? new[] { $"{catalogBuild}-OnDemand-Server.txt", $"{catalogBuild}-OnDemand_Alternate-Server.txt" }
+                : isServer
+                    ? new[] { $"{catalogBuild}{suffix}", $"{catalogBuild}{suffix.Replace(".txt", "_unURL.txt")}" }
+                    : new[] { $"{catalogBuild}{suffix}", $"{catalogBuild}-OnDemand_Alternative.txt" };
 
         foreach (var fileName in fileNames.Distinct(StringComparer.OrdinalIgnoreCase))
         {
@@ -73,6 +78,9 @@ public sealed class W10MuiCatalogProvider : ILanguageResourceProvider, IDisposab
         17763 => 17763,
         19044 => 19041,
         20348 => 20348,
+        22000 => 22000,
+        22621 => 22621,
+        22631 => 22621,
         26100 => 26100,
         _ => null
     };
