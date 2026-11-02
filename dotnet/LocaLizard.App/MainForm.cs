@@ -354,7 +354,7 @@ public sealed class MainForm : Form
         BeginInvoke((Action)(() =>
         {
             var answer = MessageBox.Show(this,
-                $"Окно VMConnect открыто для виртуальной машины {vmName}. Видите экран Windows Setup?\\n\\nДа — подтвердить визуальную загрузку. Нет — оставить результат неподтверждённым.",
+                $"Окно VMConnect открыто для виртуальной машины {vmName}. Видите экран Windows Setup?\n\nДа — подтвердить визуальную загрузку. Нет — оставить результат неподтверждённым.",
                 AppInfo.Name, MessageBoxButtons.YesNo, MessageBoxIcon.Question);
             completion.TrySetResult(answer == DialogResult.Yes);
         }));
