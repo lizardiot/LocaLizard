@@ -285,7 +285,10 @@ public sealed class OsBuilderCatalogProvider : ILanguageResourceProvider, IDispo
             if (PackageCompatibilityService.IsServer(request.ProductFamily) !=
                 (type == LanguageResourceType.ServerLanguagePack)) continue;
             if (type == LanguageResourceType.ClientLanguagePack &&
-                !title.Contains("LanguagePack", StringComparison.OrdinalIgnoreCase)) continue;
+                !(title.Contains("LanguagePack", StringComparison.OrdinalIgnoreCase) ||
+                  title.Contains("Language Pack", StringComparison.OrdinalIgnoreCase) ||
+                  fileName.Contains("LanguagePack", StringComparison.OrdinalIgnoreCase) ||
+                  fileName.Contains("Language-Pack", StringComparison.OrdinalIgnoreCase))) continue;
             if (type == LanguageResourceType.FeatureOnDemand &&
                 !PackageCompatibilityService.IsFodPackage(fileName + " " + title)) continue;
 
