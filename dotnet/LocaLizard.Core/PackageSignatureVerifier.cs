@@ -97,8 +97,8 @@ public sealed class LegacyPackageDownloader(HttpClient? httpClient = null)
             {
                 if (current.Scheme != Uri.UriSchemeHttps || !SecurityPolicy.IsTrustedPackageUrl(current))
                     throw new InvalidDataException($"Blocked legacy catalog redirect: {current}");
-                using var request = new HttpRequestMessage(HttpMethod.Get, current);
-                response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+                using var httpRequest = new HttpRequestMessage(HttpMethod.Get, current);
+                response = await _http.SendAsync(httpRequest, HttpCompletionOption.ResponseHeadersRead, ct);
                 if ((int)response.StatusCode is >= 300 and <= 399)
                 {
                     var location = response.Headers.Location ??
