@@ -42,7 +42,8 @@ public sealed class WindowsImageService(ProcessRunner runner)
         string imageFile, ImageInfo image, IReadOnlyList<string> packageCandidates,
         string? fod, UpdatePlan? updates, string work, Action<string>? log, CancellationToken ct,
         Func<string, Task<LocalizationStep>>? serviceWinRe = null,
-        string? driverDirectory = null, string? unattendFile = null, bool allowPartialLocalization = false)
+        string? driverDirectory = null, string? unattendFile = null, bool allowPartialLocalization = false,
+        IEnumerable<string>? lxpDirectories = null)
     {
         if (image.BuildFamily == 0 || !BuildNumbers.IsSupportedArchitecture(image.NormalizedArchitecture))
             throw new InvalidDataException($"Не удалось определить сборку/архитектуру индекса {image.Index}.");
@@ -54,9 +55,11 @@ public sealed class WindowsImageService(ProcessRunner runner)
         if (!string.IsNullOrWhiteSpace(unattendFile) && !File.Exists(unattendFile))
             throw new FileNotFoundException("Файл unattend.xml не найден.", unattendFile);
 
-        var candidates = packageCandidates.Where(p => IsClientLp(p, image.NormalizedArchitecture))
+        var productFamily = PackageCompatibilityService.ProductFamily(image);
+        var candidates = packageCandidates.Where(p => IsLanguagePackForImage(p, image))
             .OrderBy(p => Path.GetFileName(p).Equals("update.mum", StringComparison.OrdinalIgnoreCase) ? 0 : 1).ToArray();
-        if (candidates.Length == 0) throw new FileNotFoundException($"Не найден Client Language Pack ru-RU для {image.NormalizedArchitecture}.");
+        if (candidates.Length == 0)
+            throw new FileNotFoundException($"Не найден совместимый {productFamily} Language Pack ru-RU для {image.NormalizedArchitecture}, build {image.BuildFamily}.");
 
         var mount = Path.Combine(work, $"mount_install_{image.Index}");
         Directory.CreateDirectory(mount);
@@ -100,26 +103,49 @@ public sealed class WindowsImageService(ProcessRunner runner)
             }
             if (selected is null) throw new InvalidOperationException($"DISM отклонил все языковые пакеты для индекса {image.Index}.", lastError);
 
-            var caps = new[]
-            {
-                "Language.Basic~~~ru-RU~0.0.1.0",
-                "Language.OCR~~~ru-RU~0.0.1.0",
-                "Language.TextToSpeech~~~ru-RU~0.0.1.0",
-                "Language.Handwriting~~~ru-RU~0.0.1.0"
-            };
+            var caps = FodCapabilityCatalog.RussianCapabilities;
             if (string.IsNullOrWhiteSpace(fod))
+            {
                 capabilityResults.AddRange(caps.Select(x => new CapabilityAudit(x, "not_requested")));
+            }
             else if (!Directory.Exists(fod))
+            {
                 capabilityResults.AddRange(caps.Select(x => new CapabilityAudit(x, "source_missing")));
+            }
             else
             {
-                foreach (var capability in caps)
+                try
                 {
-                    ct.ThrowIfCancellationRequested();
-                    var result = await _runner.RunAsync("dism.exe",
-                        [$"/Image:{mount}", "/Add-Capability", $"/CapabilityName:{capability}", $"/Source:{fod}", "/LimitAccess"],
-                        cancellationToken: ct, throwOnError: false, timeout: TimeSpan.FromMinutes(30));
-                    capabilityResults.Add(new CapabilityAudit(capability, result.ExitCode == 0 ? "installed" : "unavailable", result.ExitCode));
+                    var inventory = await new FodInventoryService(_runner).GetImageCapabilitiesAsync(mount, ct);
+                    var byName = inventory.ToDictionary(x => x.Name, StringComparer.OrdinalIgnoreCase);
+                    var requested = caps.Where(x => byName.Count == 0 ||
+                        byName.TryGetValue(x, out var capability) &&
+                        !capability.State.Equals("Installed", StringComparison.OrdinalIgnoreCase)).ToArray();
+                    capabilityResults.AddRange(caps.Except(requested, StringComparer.OrdinalIgnoreCase)
+                        .Select(x => new CapabilityAudit(x,
+                            byName.TryGetValue(x, out var capability) &&
+                            capability.State.Equals("Installed", StringComparison.OrdinalIgnoreCase)
+                                ? "already_installed" : "not_available_in_target")));
+                    if (requested.Length > 0)
+                    {
+                        var repository = await new FodRepositoryBuilder(_runner).PrepareRepositoryAsync(
+                            mount, fod, work, image, ct, log);
+                        foreach (var capability in requested)
+                        {
+                            ct.ThrowIfCancellationRequested();
+                            var result = await _runner.RunAsync("dism.exe",
+                                [$"/Image:{mount}", "/Add-Capability", $"/CapabilityName:{capability}", $"/Source:{repository}", "/LimitAccess"],
+                                cancellationToken: ct, throwOnError: false, timeout: TimeSpan.FromMinutes(30));
+                            capabilityResults.Add(new CapabilityAudit(capability,
+                                result.ExitCode == 0 ? "installed" : "unavailable", result.ExitCode));
+                        }
+                    }
+                }
+                catch (Exception ex) when (ex is IOException or InvalidDataException or InvalidOperationException or UnauthorizedAccessException)
+                {
+                    capabilityResults.AddRange(caps.Where(x => capabilityResults.All(c => !c.Name.Equals(x, StringComparison.OrdinalIgnoreCase)))
+                        .Select(x => new CapabilityAudit(x, "source_unusable")));
+                    log?.Invoke("FOD repository не удалось подготовить; Language Features пропущены: " + ex.Message);
                 }
             }
 
@@ -137,6 +163,9 @@ public sealed class WindowsImageService(ProcessRunner runner)
             var intl = await _runner.RunAsync("dism.exe", [$"/Image:{mount}", "/Get-Intl"], cancellationToken: ct);
             if (!intl.StandardOutput.Contains("ru-ru", StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException($"DISM не подтвердил ru-RU для индекса {image.Index}.");
+
+            var lxpResults = await new LocalExperiencePackService(_runner)
+                .ProvisionAsync(mount, lxpDirectories, image.NormalizedArchitecture, ct, log);
 
             LocalizationStep? winReAudit = null;
             if (serviceWinRe is not null)
@@ -160,7 +189,7 @@ public sealed class WindowsImageService(ProcessRunner runner)
             await using var stream = File.OpenRead(selected);
             var hash = Convert.ToHexString(await SHA256.HashDataAsync(stream, ct)).ToLowerInvariant();
             Audit.Add(new ImageAudit(Path.GetFileName(imageFile), image.Index, image.NormalizedArchitecture,
-                image.Version, Path.GetFileName(selected), hash, true, capabilityResults, winReAudit));
+                image.Version, Path.GetFileName(selected), hash, true, capabilityResults, winReAudit, lxpResults));
             log?.Invoke($"Индекс {image.Index} локализован.");
         }
         catch
@@ -198,6 +227,45 @@ public sealed class WindowsImageService(ProcessRunner runner)
     {
         var match = Regex.Match(output, @"(?im)^\s*" + Regex.Escape(name) + @"\s*:\s*(.+?)\s*$");
         return match.Success ? match.Groups[1].Value.Trim() : null;
+    }
+
+    internal static bool IsLanguagePackForImage(string path, ImageInfo image)
+    {
+        var productFamily = PackageCompatibilityService.ProductFamily(image);
+        return PackageCompatibilityService.IsServer(productFamily)
+            ? IsServerLp(path, image.NormalizedArchitecture)
+            : IsClientLp(path, image.NormalizedArchitecture);
+    }
+
+    internal static bool IsServerLp(string path, string arch)
+    {
+        var fileName = Path.GetFileName(path);
+        var identity = fileName.Equals("update.mum", StringComparison.OrdinalIgnoreCase)
+            ? Path.GetFileName(Path.GetDirectoryName(path) ?? "")
+            : fileName;
+        if (!fileName.Equals("update.mum", StringComparison.OrdinalIgnoreCase) &&
+            !Path.GetExtension(fileName).Equals(".cab", StringComparison.OrdinalIgnoreCase)) return false;
+        var name = identity.ToLowerInvariant();
+        if (!name.Contains("ru-ru", StringComparison.Ordinal) ||
+            !(name.Contains("server-languagepack", StringComparison.Ordinal) ||
+              name.Contains("server-language-pack", StringComparison.Ordinal) ||
+              name.Contains("serverlanguagepack", StringComparison.Ordinal)) ||
+            new[] { "winpe", "setup", "recovery", "languagefeatures", "languageexperiencepack" }.Any(name.Contains))
+            return false;
+        return ContainsArchitecture(name, arch);
+    }
+
+    private static bool ContainsArchitecture(string name, string architecture)
+    {
+        var arch = BuildNumbers.Architecture(architecture);
+        return arch switch
+        {
+            "x64" => name.Contains("x64") || name.Contains("amd64") || name.Contains("x86_64"),
+            "arm64" => name.Contains("arm64"),
+            "x86" => (name.Contains("_x86_") || name.Contains("-x86-") || name.Contains("~x86~")) &&
+                     !name.Contains("x86_64") && !name.Contains("x86-64"),
+            _ => false
+        };
     }
 
     internal static bool IsClientLp(string path, string arch)

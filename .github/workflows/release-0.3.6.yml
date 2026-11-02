@@ -128,23 +128,32 @@ jobs:
           name: LocaLizard-0.3.6-release-assets
           path: release-assets
 
-      - name: Refuse to move an existing 0.3.6 tag
+      - name: Update existing 0.3.6 tag after successful build
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
         with:
           script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const ref = "tags/0.3.6";
             try {
-              await github.rest.git.getRef({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                ref: "tags/0.3.6"
+              await github.rest.git.getRef({ owner, repo, ref });
+              await github.rest.git.updateRef({
+                owner,
+                repo,
+                ref,
+                sha: context.sha,
+                force: true
               });
-              core.setFailed("Tag 0.3.6 already exists. Refusing to move or overwrite it.");
+              core.info("Updated the existing 0.3.6 tag to the verified release commit.");
             } catch (error) {
-              if (error.status === 404) {
-                core.info("Tag 0.3.6 does not exist; a new release can be created.");
-              } else {
-                throw error;
-              }
+              if (error.status !== 404) throw error;
+              await github.rest.git.createRef({
+                owner,
+                repo,
+                ref: "refs/tags/0.3.6",
+                sha: context.sha
+              });
+              core.info("Created the 0.3.6 tag.");
             }
 
       - name: Publish GitHub Release 0.3.6

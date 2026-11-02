@@ -1,16 +1,24 @@
 ## [0.3.6] — 2026-11-02
 
-### Поиск русских языковых компонентов
-- Убран искусственный предел в 32 кандидата UUP Dump: приложение проверяет все совместимые клиентские сборки, возвращённые API для нужной семьи сборки и архитектуры, и по-прежнему запрашивает только русский ru-RU.
-- Добавлено повторное разрешение временной ссылки UUP после HTTP 401/403/404. Перед повторной загрузкой проверяется, что имя, размер и SHA-1 Client Language Pack совпадают с исходными метаданными.
-- Манифест управляемого кэша переведён на schema 2: добавлены исходный пакет, тип ресурса, язык ru-RU, архитектура и целевая семья сборки. Чтение существующих schema 1 кэшей сохранено.
-- Предварительная инвентаризация русских FOD CAB больше не ограничена первыми 100 совпадениями.
-- Поиск CAB/WIM/ESD в ISO-доноре и локальном кэше устойчив к отдельным недоступным каталогам; доступные соседние папки продолжают обрабатываться.
+### Источники и совместимость русских языковых пакетов
+- Добавлена типизированная модель ресурсов и реестр независимых провайдеров; поддерживается только язык `ru-RU`.
+- Реализованы провайдеры W10MUI и OSBuilder.Public для русских Client/Server Language Pack, Language Interface Pack и FOD metadata. Кандидаты фильтруются по build family, архитектуре, семейству продукта и типу ресурса; сторонние каталоги используются только как источники метаданных, а загрузка допускается только с allow-listed Microsoft HTTPS CDN.
+- Совместимость явно описана для Windows IoT LTSC 2015/2016/2019/2021/2024, Windows 11 21H2/22H2/23H2 и Windows Server 2016/2019/2022/2025. Windows 11 23H2 допускает базовый package family 22621; другие несовпадения build family не угадываются.
+- Legacy CAB/ESD перед servicing проходят проверку Microsoft Authenticode и DISM CBS Package Identity: ru-RU, архитектура, Client/Server и build family. UUP ESD извлекается в persistent repository с проверкой `update.mum` и подписанного CAT.
 
-### Область поддержки и проверки
-- Единственный целевой язык остаётся русским ru-RU. Дополнительные языки не добавлялись.
-- Hyper-V/VMConnect загрузочная проверка явно необязательна и не блокирует создание ISO, CI или выпуск.
-- CI выпуска выполняет сборку .NET 10, smoke/regression tests, синтетический DISM WIM integration test и публикацию автономной Windows x64 сборки. Проверка реального пользовательского ISO и визуальный Hyper-V тест в CI не имитируются.
+### FOD, WinPE/WinRE и Store LXP
+- Добавлены инвентаризация русских capabilities через DISM, распознавание установленного/отсутствующего состояния, поиск и загрузка русских FOD CAB из W10MUI/OSBuilder, проверка подписи и CBS identity.
+- Monolithic language FOD CAB используется как прямой источник DISM; FOD с satellite packages подготавливается через `DISM /Export-Source`, затем устанавливается `DISM /Add-Capability /LimitAccess`. Ошибка необязательного FOD не отменяет установленный базовый Language Pack.
+- Добавлены отдельные локальные провайдеры Microsoft Languages and Optional Features ISO, ADK WinPE и WinRE; Setup/WinPE и вложенный WinRE остаются отдельными этапами.
+- Добавлена необязательная загрузка Microsoft Store LXP по Product ID и локальный APPX/MSIX источник. Проверяются подпись Microsoft, Publisher, ru-RU, архитектура и bundle manifests; зависимости и точный license XML обязательны перед `/Add-ProvisionedAppxPackage`. LXP без лицензии или зависимостей пропускается без обхода проверки.
+- Управляемый репозиторий получает отдельный `resource_manifest.json` с source, типом ресурса, языком, архитектурой, build family, signer и SHA-1/SHA-256.
+
+### Безопасность и проверки
+- Разделены allow-list metadata/file hosts; проверяются точные пути raw GitHub/Store metadata, конечные URL после редиректов, HTTPS, имя/размер файла и предел размера.
+- Добавлены smoke tests для W10MUI/OSBuilder parsing, build compatibility, ru-RU FOD inventory, Microsoft ISO/ADK WinPE/WinRE providers, APPX manifest/dependency inspection и tamper detection managed repository.
+- Единственная поддерживаемая локализация — русский `ru-RU`. Hyper-V загрузочная проверка остаётся необязательной и не блокирует сборку, CI или выпуск.
+- CI выполняет .NET build, smoke/regression tests, синтетический DISM WIM integration test и публикацию Windows x64; реальный пользовательский ISO и виртуальная машина в CI не тестируются.
+
 
 ## [0.2.7.6] — 2026-10-31
 

@@ -14,6 +14,8 @@ public sealed class MainForm : Form
     private readonly TextBox work = new();
     private readonly TextBox packages = new();
     private readonly TextBox fod = new();
+    private readonly TextBox lxp = new();
+    private readonly TextBox storeProductId = new();
     private readonly TextBox updates = new();
     private readonly TextBox drivers = new();
     private readonly TextBox unattend = new();
@@ -90,6 +92,14 @@ public sealed class MainForm : Form
         AddPath(paths, 7, "Каталог INF-драйверов для install.wim:", drivers, true, false);
         AddPath(paths, 8, "Файл автоматической установки (unattend.xml):", unattend, false, false,
             "Unattend XML (*.xml)|*.xml|Все файлы (*.*)|*.*");
+        AddPath(paths, 9, "Каталог русских Store LXP (APPX/MSIX + License XML):", lxp, true, false);
+        paths.RowCount++;
+        paths.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        paths.Controls.Add(new Label { Text = "Microsoft Store Product ID для ru-RU LXP:", AutoSize = true, Anchor = AnchorStyles.Left, Padding = new Padding(0, 8, 8, 0) }, 0, 10);
+        storeProductId.Dock = DockStyle.Fill;
+        storeProductId.PlaceholderText = "Необязательно: ID продукта Microsoft Store";
+        paths.Controls.Add(storeProductId, 1, 10);
+        paths.SetColumnSpan(storeProductId, 2);
         root.Controls.Add(paths);
 
         var options = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(0, 8, 0, 8) };
@@ -278,6 +288,8 @@ public sealed class MainForm : Form
         WorkDirectory = work.Text.Trim(),
         PackageDirectory = packages.Text.Trim(),
         FodDirectory = string.IsNullOrWhiteSpace(fod.Text) ? null : fod.Text.Trim(),
+        LxpDirectory = string.IsNullOrWhiteSpace(lxp.Text) ? null : lxp.Text.Trim(),
+        StoreProductId = string.IsNullOrWhiteSpace(storeProductId.Text) ? null : storeProductId.Text.Trim(),
         UpdatesDirectory = string.IsNullOrWhiteSpace(updates.Text) ? null : updates.Text.Trim(),
         KeepWorkFiles = keep.Checked,
         ProcessSetup = setup.Checked,
@@ -297,6 +309,8 @@ public sealed class MainForm : Form
         if (!string.IsNullOrWhiteSpace(saved.WorkRoot)) work.Text = saved.WorkRoot;
         if (!string.IsNullOrWhiteSpace(saved.PackageRoot)) packages.Text = saved.PackageRoot;
         if (!string.IsNullOrWhiteSpace(saved.FodSource)) fod.Text = saved.FodSource;
+        if (!string.IsNullOrWhiteSpace(saved.LxpSource)) lxp.Text = saved.LxpSource;
+        if (!string.IsNullOrWhiteSpace(saved.StoreProductId)) storeProductId.Text = saved.StoreProductId;
         if (!string.IsNullOrWhiteSpace(saved.UpdatesRoot)) updates.Text = saved.UpdatesRoot;
         if (!string.IsNullOrWhiteSpace(saved.DriverDirectory)) drivers.Text = saved.DriverDirectory;
         if (!string.IsNullOrWhiteSpace(saved.UnattendFile)) unattend.Text = saved.UnattendFile;
@@ -319,6 +333,8 @@ public sealed class MainForm : Form
                 WorkRoot = work.Text.Trim(),
                 PackageRoot = packages.Text.Trim(),
                 FodSource = fod.Text.Trim(),
+                LxpSource = lxp.Text.Trim(),
+                StoreProductId = storeProductId.Text.Trim(),
                 UpdatesRoot = updates.Text.Trim(),
                 KeepWorkFiles = keep.Checked,
                 ProcessSetup = setup.Checked,
@@ -338,7 +354,7 @@ public sealed class MainForm : Form
         BeginInvoke((Action)(() =>
         {
             var answer = MessageBox.Show(this,
-                $"Окно VMConnect открыто для виртуальной машины {vmName}. Видите экран Windows Setup?\\n\\nДа — подтвердить визуальную загрузку. Нет — оставить результат неподтверждённым.",
+                $"Окно VMConnect открыто для виртуальной машины {vmName}. Видите экран Windows Setup?\n\nДа — подтвердить визуальную загрузку. Нет — оставить результат неподтверждённым.",
                 AppInfo.Name, MessageBoxButtons.YesNo, MessageBoxIcon.Question);
             completion.TrySetResult(answer == DialogResult.Yes);
         }));

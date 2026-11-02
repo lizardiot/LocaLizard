@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.IO.Compression;
 using LocaLizard.Core;
 
 static void Check(bool condition, string message)
@@ -217,6 +218,194 @@ var folder = Path.Combine(Path.GetTempPath(), "LocaLizardTest_" + Guid.NewGuid()
 Directory.CreateDirectory(folder);
 try
 {
+    var managedRepositoryRoot = Path.Combine(folder, "managed-resource-repository");
+    Directory.CreateDirectory(managedRepositoryRoot);
+    var managedResourcePath = Path.Combine(managedRepositoryRoot, "client-language-pack_ru-ru_x64.cab");
+    await File.WriteAllTextAsync(managedResourcePath, "signed fixture bytes");
+    var managedCandidate = new LanguageResourceCandidate(
+        "fixture:managed-resource", "test-provider", Path.GetFileName(managedResourcePath),
+        LanguageResourceType.ClientLanguagePack, "ru-RU", "x64", 26100, "Client",
+        Path.GetFileName(managedResourcePath), LocalPath: managedResourcePath,
+        TrustLevel: ResourceTrustLevel.MicrosoftSigned);
+    var testSignature = new PackageSignatureResult(true, "valid", "CN=Microsoft Corporation", "TESTTHUMBPRINT");
+    var managedRepository = new ManagedRepositoryService();
+    await managedRepository.RegisterAsync(managedRepositoryRoot, managedResourcePath,
+        managedCandidate, testSignature, CancellationToken.None);
+    Check(await managedRepository.VerifyAsync(managedRepositoryRoot, managedResourcePath, CancellationToken.None),
+        "managed repository verifies Russian package provenance and SHA-256");
+    await File.WriteAllTextAsync(managedResourcePath, "tampered bytes");
+    Check(!await managedRepository.VerifyAsync(managedRepositoryRoot, managedResourcePath, CancellationToken.None),
+        "managed repository rejects modified package bytes");
+
+var ruRequest = new LanguageResourceRequest(22631, "x64", "ru-RU", "Client",
+    LanguageResourceType.ClientLanguagePack);
+var compatibleRuCandidate = new LanguageResourceCandidate(
+    "test:ru", "test", "Microsoft-Windows-Client-LanguagePack-Package_ru-ru_x64.cab",
+    LanguageResourceType.ClientLanguagePack, "ru-RU", "x64", 22631, "Client",
+    "Microsoft-Windows-Client-LanguagePack-Package_ru-ru_x64.cab",
+    LocalPath: @"C:\cache\ru.cab");
+Check(PackageCompatibilityService.IsCompatible(compatibleRuCandidate, ruRequest),
+    "typed resource compatibility accepts the requested Russian client LP");
+Check(PackageCompatibilityService.IsCompatiblePackageBuild(22631, 22621),
+    "Windows 11 23H2 accepts its explicitly shared 22621 language package family");
+Check(!PackageCompatibilityService.IsCompatiblePackageBuild(26100, 22621),
+    "Windows 11 24H2 does not inherit a mismatched 22621 package");
+Check(!PackageCompatibilityService.IsCompatible(compatibleRuCandidate with { Language = "en-US" }, ruRequest),
+    "typed resource compatibility rejects non-Russian candidates");
+Check(!PackageCompatibilityService.IsCompatible(compatibleRuCandidate with { Architecture = "arm64" }, ruRequest),
+    "typed resource compatibility rejects architecture mismatch");
+Check(PackageCompatibilityService.IsKnownBuildFamily(20348, "Server") &&
+      PackageCompatibilityService.IsKnownBuildFamily(26100, "Server"),
+    "Windows Server 2022 and 2025 have explicit compatibility families");
+
+var w10MuiLpCatalog = """
+Client x64
+ru-RU
+https://download.microsoft.com/download/test/Microsoft-Windows-Client-LanguagePack-Package_ru-ru~31bf3856ad364e35~amd64~ru-ru~10.0.22621.1.esd
+en-US
+https://download.microsoft.com/download/test/not-russian.esd
+""";
+var w10MuiCandidates = W10MuiCatalogProvider.ParseCatalog(w10MuiLpCatalog, ruRequest, 22621);
+Check(w10MuiCandidates.Count == 1 &&
+      w10MuiCandidates[0].Language == "ru-RU" &&
+      w10MuiCandidates[0].Architecture == "x64" &&
+      w10MuiCandidates[0].ResourceType == LanguageResourceType.ClientLanguagePack,
+    "W10MUI parser selects the Russian x64 client language pack and ignores other locales");
+var w10MuiFodRequest = ruRequest with { ResourceType = LanguageResourceType.FeatureOnDemand };
+var w10MuiFodCatalog = """
+Client x64
+ru-RU
+https://download.microsoft.com/download/test/Microsoft-Windows-LanguageFeatures-Basic-ru-ru-Package~31bf3856ad364e35~amd64~~10.0.22621.1.cab
+ru-RU
+https://download.microsoft.com/download/test/Microsoft-Windows-WinOcr-FOD-Package~31bf3856ad364e35~amd64~~10.0.22621.1.cab
+""";
+var w10MuiFodCandidates = W10MuiCatalogProvider.ParseCatalog(
+    w10MuiFodCatalog, w10MuiFodRequest, 22621, featureOnDemand: true);
+Check(w10MuiFodCandidates.Count == 2 &&
+      w10MuiFodCandidates.All(x => x.ResourceType == LanguageResourceType.FeatureOnDemand),
+    "W10MUI parser resolves only Russian FOD CAB candidates");
+
+var osBuilderCatalog = """
+<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04">
+  <Obj RefId="0">
+    <MS>
+      <S N="Category">LanguagePack</S>
+      <S N="KBTitle">Russian Language Pack Windows 10 Version 1809 for x64-based Systems</S>
+      <S N="FileName">Microsoft-Windows-Client-LanguagePack-Package_ru-ru~amd64~10.0.17763.1.cab</S>
+      <S N="URL">https://download.windowsupdate.com/c/msdownload/update/software/updt/2026/01/ru-lp.cab</S>
+    </MS>
+  </Obj>
+</Objs>
+""";
+var osBuilderCandidates = OsBuilderCatalogProvider.ParseCatalog(osBuilderCatalog,
+    new LanguageResourceRequest(17763, "x64", "ru-RU", "Client", LanguageResourceType.ClientLanguagePack));
+Check(osBuilderCandidates.Count == 1 &&
+      osBuilderCandidates[0].SourceId == "osbuilder-public" &&
+      osBuilderCandidates[0].BuildFamily == 17763,
+    "OSBuilder CLIXML parser extracts the Russian 1809 x64 language pack");
+
+Check(SecurityPolicy.IsTrustedMetadataUrl(
+        new Uri("https://raw.githubusercontent.com/abbodi1406/BatUtil/master/W10MUI/Langs/22621-LPs.txt")),
+    "W10MUI metadata URL is on the dedicated allow-list");
+Check(!SecurityPolicy.IsTrustedMetadataUrl(
+        new Uri("https://raw.githubusercontent.com/attacker/BatUtil/master/W10MUI/Langs/22621-LPs.txt")),
+    "W10MUI metadata lookalike path is rejected");
+Check(FodCapabilityCatalog.RussianCapabilities.All(x => x.Contains("~~~ru-RU~", StringComparison.Ordinal)),
+    "FOD capability catalog contains only Russian capability identities");
+Check(FodCapabilityCatalog.RussianCapabilities.ToList().IndexOf("Language.TextToSpeech~~~ru-RU~0.0.1.0") <
+      FodCapabilityCatalog.RussianCapabilities.ToList().IndexOf("Language.Speech~~~ru-RU~0.0.1.0"),
+    "Russian text-to-speech is ordered before speech recognition");
+
+var fodInventory = FodInventoryService.ParseCapabilities("""
+Capability Identity : Language.Basic~~~ru-RU~0.0.1.0
+State : Not Present
+Capability Identity : Language.OCR~~~ru-RU~0.0.1.0
+State : Installed
+""");
+Check(fodInventory.Count == 2 && fodInventory[0].State == "Not Present" &&
+      fodInventory[1].State == "Installed",
+    "DISM capability inventory parses identities and install states");
+
+var lxpRoot = Path.Combine(folder, "lxp-fixture");
+Directory.CreateDirectory(lxpRoot);
+var lxpPath = Path.Combine(lxpRoot, "Microsoft.LanguageExperiencePackru-RU_1.0.0.0_x64.msix");
+using (var archive = ZipFile.Open(lxpPath, ZipArchiveMode.Create))
+{
+    var manifestEntry = archive.CreateEntry("AppxManifest.xml");
+    await using var manifestStream = manifestEntry.Open();
+    await using var writer = new StreamWriter(manifestStream);
+    await writer.WriteAsync("""
+        <Package>
+          <Identity Name="Microsoft.LanguageExperiencePackru-RU"
+                    Publisher="CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US"
+                    Version="1.0.0.0" ProcessorArchitecture="x64" />
+          <Properties />
+          <Resources><Resource Language="ru-RU" /></Resources>
+          <Dependencies>
+            <PackageDependency Name="Microsoft.VCLibs.140.00"
+                               Publisher="CN=Microsoft Corporation"
+                               MinVersion="14.0.0.0" />
+          </Dependencies>
+        </Package>
+        """);
+}
+var lxpInfo = new AppxPackageInspector().Inspect(lxpPath);
+Check(AppxPackageInspector.IsRussianMicrosoftLxp(lxpInfo, "x64"),
+    "AppxPackageInspector recognizes a Microsoft ru-RU x64 LXP manifest");
+Check(!AppxPackageInspector.IsRussianMicrosoftLxp(lxpInfo, "arm64"),
+    "AppxPackageInspector rejects an architecture mismatch");
+var dependencyPath = Path.Combine(lxpRoot, "Microsoft.VCLibs.140.00_14.0.0.0_x64.msix");
+using (var archive = ZipFile.Open(dependencyPath, ZipArchiveMode.Create))
+{
+    var manifestEntry = archive.CreateEntry("AppxManifest.xml");
+    await using var manifestStream = manifestEntry.Open();
+    await using var writer = new StreamWriter(manifestStream);
+    await writer.WriteAsync("""
+        <Package>
+          <Identity Name="Microsoft.VCLibs.140.00"
+                    Publisher="CN=Microsoft Corporation"
+                    Version="14.0.0.0" ProcessorArchitecture="x64" />
+          <Resources><Resource Language="en-US" /></Resources>
+        </Package>
+        """);
+}
+var dependencyResolution = new AppxDependencyResolver().Resolve(lxpInfo, [dependencyPath], "x64");
+Check(dependencyResolution.IsComplete && dependencyResolution.DependencyPaths.Count == 1,
+    "Appx dependency resolver selects a matching Microsoft framework package");
+var missingDependencyResolution = new AppxDependencyResolver().Resolve(lxpInfo, [], "x64");
+Check(!missingDependencyResolution.IsComplete &&
+      missingDependencyResolution.MissingDependencies.Contains("Microsoft.VCLibs.140.00"),
+    "Appx dependency resolver reports missing prerequisites instead of provisioning blindly");
+
+var providerRoot = Path.Combine(folder, "provider-fixtures");
+var winPeRu = Path.Combine(providerRoot, "WinPE_OCs", "amd64", "ru-ru");
+Directory.CreateDirectory(winPeRu);
+await File.WriteAllTextAsync(Path.Combine(winPeRu, "lp.cab"), "fixture");
+var winPeRequest = new LanguageResourceRequest(26100, "x64", "ru-RU", "Client",
+    LanguageResourceType.WinPELanguagePack);
+var winPeCandidates = await new AdkWinPeProvider(providerRoot).DiscoverAsync(winPeRequest, CancellationToken.None);
+Check(winPeCandidates.Count == 1 &&
+      winPeCandidates[0].ResourceType == LanguageResourceType.WinPELanguagePack,
+    "ADK WinPE provider discovers a Russian lp.cab in the architecture-specific WinPE_OCs tree");
+var winReRu = Path.Combine(providerRoot, "WinRE", "ru-ru");
+Directory.CreateDirectory(winReRu);
+await File.WriteAllTextAsync(Path.Combine(winReRu, "lp.cab"), "fixture");
+var winReRequest = winPeRequest with { ResourceType = LanguageResourceType.WinRELanguagePack };
+var winReCandidates = await new AdkWinReProvider(providerRoot).DiscoverAsync(winReRequest, CancellationToken.None);
+Check(winReCandidates.Count == 1 &&
+      winReCandidates[0].ResourceType == LanguageResourceType.WinRELanguagePack,
+    "ADK WinRE provider discovers Russian resources separately from WinPE");
+
+var microsoftIsoRoot = Path.Combine(providerRoot, "MicrosoftISO", "LanguagesAndOptionalFeatures", "26100_x64", "ru-ru");
+Directory.CreateDirectory(microsoftIsoRoot);
+await File.WriteAllTextAsync(Path.Combine(microsoftIsoRoot,
+    "Microsoft-Windows-Client-LanguagePack-Package_ru-ru_x64.cab"), "fixture");
+var isoCandidates = await new MicrosoftIsoProvider(Path.Combine(providerRoot, "MicrosoftISO"))
+    .DiscoverAsync(new LanguageResourceRequest(26100, "x64", "ru-RU", "Client",
+        LanguageResourceType.ClientLanguagePack), CancellationToken.None);
+Check(isoCandidates.Count == 1 && isoCandidates[0].SourceId == "microsoft-language-optional-features-iso",
+    "Microsoft ISO provider discovers local Russian language resources");
+
     var payload = Path.Combine(folder, "LCU.msu");
     await File.WriteAllTextAsync(payload, "test update payload");
     string hash;

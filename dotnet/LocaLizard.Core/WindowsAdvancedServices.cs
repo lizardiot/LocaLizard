@@ -18,6 +18,8 @@ public sealed record AppSettings
     [JsonPropertyName("work_root")] public string WorkRoot { get; init; } = "";
     [JsonPropertyName("package_root")] public string PackageRoot { get; init; } = "";
     [JsonPropertyName("fod_source")] public string FodSource { get; init; } = "";
+    [JsonPropertyName("lxp_source")] public string LxpSource { get; init; } = "";
+    [JsonPropertyName("store_product_id")] public string StoreProductId { get; init; } = "";
     [JsonPropertyName("updates_root")] public string UpdatesRoot { get; init; } = "";
     [JsonPropertyName("keep_work")] public bool KeepWorkFiles { get; init; } = true;
     [JsonPropertyName("process_setup")] public bool ProcessSetup { get; init; } = true;

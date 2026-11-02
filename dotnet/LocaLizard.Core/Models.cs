@@ -14,6 +14,8 @@ public sealed record RunOptions
     public required string PackageDirectory { get; init; }
     public string? DonorIso { get; init; }
     public string? FodDirectory { get; init; }
+    public string? LxpDirectory { get; init; }
+    public string? StoreProductId { get; init; }
     public string? UpdatesDirectory { get; init; }
     public bool KeepWorkFiles { get; init; } = true;
     public bool ProcessSetup { get; init; } = true;
@@ -33,7 +35,7 @@ public sealed record ImageInfo(int Index, string Name, string Architecture, stri
 public sealed record UpdatePackage(string File, string Kind, string Sha256, string FullPath);
 public sealed record UpdatePlan(int TargetBuildFamily, string Architecture, IReadOnlyList<UpdatePackage> Packages);
 public sealed record CapabilityAudit(string Name, string Status, int? DismExitCode = null);
-public sealed record ImageAudit(string Image, int Index, string Architecture, string Version, string Package, string Sha256, bool RuRuConfirmed, IReadOnlyList<CapabilityAudit> Capabilities, LocalizationStep? WinRe = null);
+public sealed record ImageAudit(string Image, int Index, string Architecture, string Version, string Package, string Sha256, bool RuRuConfirmed, IReadOnlyList<CapabilityAudit> Capabilities, LocalizationStep? WinRe = null, IReadOnlyList<LxpProvisionResult>? LxpPackages = null);
 
 public static class BuildNumbers
 {
