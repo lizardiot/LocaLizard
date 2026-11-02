@@ -86,6 +86,9 @@ public static class PackageCompatibilityService
         (IsServer(productFamily) ? ServerReleaseNames : ClientReleaseNames)
             .TryGetValue(buildFamily, out var name) ? name : null;
 
+    public static bool IsCompatiblePackageBuild(int targetBuild, int packageBuild) =>
+        targetBuild == packageBuild || targetBuild == 22631 && packageBuild == 22621;
+
     public static bool IsServer(string? productFamily) =>
         string.Equals(productFamily, "Server", StringComparison.OrdinalIgnoreCase);
 
