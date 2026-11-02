@@ -246,7 +246,7 @@ public sealed class LocalRepositoryProvider(string root, string sourceId = "loca
             var lower = name.ToLowerInvariant();
             if (!lower.Contains("ru-ru", StringComparison.Ordinal) &&
                 !Path.GetDirectoryName(file)!.Contains("ru-ru", StringComparison.OrdinalIgnoreCase) &&
-                !PackageNameLooksServer(name) && !name.Equals("lp.cab", StringComparison.OrdinalIgnoreCase))
+                !PackageCompatibilityService.PackageNameLooksServer(name) && !name.Equals("lp.cab", StringComparison.OrdinalIgnoreCase))
                 continue;
 
             var extension = Path.GetExtension(file);
@@ -261,7 +261,7 @@ public sealed class LocalRepositoryProvider(string root, string sourceId = "loca
             var resourceType = Classify(file);
             var architecture = InferArchitecture(file) ?? request.Architecture;
             var build = InferBuildFamily(file);
-            var productFamily = PackageNameLooksServer(file) ? "Server" : request.ProductFamily;
+            var productFamily = PackageCompatibilityService.PackageNameLooksServer(file) ? "Server" : request.ProductFamily;
             candidates.Add(new LanguageResourceCandidate(
                 $"local:{Path.GetFullPath(file)}", SourceId, name, resourceType, "ru-RU",
                 architecture, build ?? request.BuildFamily, productFamily, name,
@@ -286,7 +286,7 @@ public sealed class LocalRepositoryProvider(string root, string sourceId = "loca
         if (name.Contains("winre", StringComparison.OrdinalIgnoreCase) ||
             path.Contains("/WinRE/", StringComparison.OrdinalIgnoreCase))
             return LanguageResourceType.WinRELanguagePack;
-        if (PackageNameLooksServer(name)) return LanguageResourceType.ServerLanguagePack;
+        if (PackageCompatibilityService.PackageNameLooksServer(name)) return LanguageResourceType.ServerLanguagePack;
         if (WindowsImageService.IsClientLp(name, "x64") ||
             WindowsImageService.IsClientLp(name, "x86") ||
             WindowsImageService.IsClientLp(name, "arm64"))
