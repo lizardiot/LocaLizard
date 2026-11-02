@@ -113,6 +113,7 @@ jobs:
 
   release:
     needs: build
+    # Push commits beginning with 'release 0.3.6:' publish the verified artifacts.
     if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && startsWith(github.event.head_commit.message, 'release 0.3.6:')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
