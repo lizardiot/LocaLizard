@@ -285,15 +285,15 @@ public sealed class LocalRepositoryProvider(string root, string sourceId = "loca
         if (name.Contains("winre", StringComparison.OrdinalIgnoreCase) ||
             path.Contains("/WinRE/", StringComparison.OrdinalIgnoreCase))
             return LanguageResourceType.WinRELanguagePack;
-        if (PackageCompatibilityService.IsFodPackage(name) ||
-            path.Contains("LanguagesAndOptionalFeatures", StringComparison.OrdinalIgnoreCase) ||
-            path.Contains("FeaturesOnDemand", StringComparison.OrdinalIgnoreCase))
-            return LanguageResourceType.FeatureOnDemand;
         if (PackageNameLooksServer(name)) return LanguageResourceType.ServerLanguagePack;
         if (WindowsImageService.IsClientLp(name, "x64") ||
             WindowsImageService.IsClientLp(name, "x86") ||
             WindowsImageService.IsClientLp(name, "arm64"))
             return LanguageResourceType.ClientLanguagePack;
+        if (PackageCompatibilityService.IsFodPackage(name) ||
+            path.Contains("LanguagesAndOptionalFeatures", StringComparison.OrdinalIgnoreCase) ||
+            path.Contains("FeaturesOnDemand", StringComparison.OrdinalIgnoreCase))
+            return LanguageResourceType.FeatureOnDemand;
         if (name.Equals("lp.cab", StringComparison.OrdinalIgnoreCase))
             return LanguageResourceType.WinPELanguagePack;
         return LanguageResourceType.LanguageInterfacePack;
