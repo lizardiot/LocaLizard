@@ -413,14 +413,21 @@ public sealed class LocalExperiencePackService(ProcessRunner runner)
     private static string? FindLicense(string root, string packagePath)
     {
         var stem = Path.GetFileNameWithoutExtension(packagePath);
-        var candidates = new[]
+        var candidates = new List<string>
         {
             Path.Combine(root, stem + ".xml"),
-            Path.Combine(root, "License", stem + ".xml"),
-            Path.Combine(root, "License.xml"),
-            Path.Combine(root, "License", "License.xml")
+            Path.Combine(root, "License", stem + ".xml")
         };
-        foreach (var candidate in candidates)
+        candidates.AddRange(AdkBootstrapper.EnumerateFilesSafely(root, "*.xml")
+            .Where(path =>
+            {
+                var name = Path.GetFileName(path);
+                return name.Contains("License", StringComparison.OrdinalIgnoreCase) &&
+                       (name.Contains(stem, StringComparison.OrdinalIgnoreCase) ||
+                        name.Contains("LanguageExperiencePackru-RU", StringComparison.OrdinalIgnoreCase) ||
+                        name.Contains("ru-ru", StringComparison.OrdinalIgnoreCase));
+            }));
+        foreach (var candidate in candidates.Distinct(StringComparer.OrdinalIgnoreCase))
         {
             if (!File.Exists(candidate)) continue;
             try
@@ -428,7 +435,11 @@ public sealed class LocalExperiencePackService(ProcessRunner runner)
                 var settings = new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null, MaxCharactersInDocument = 2 * 1024 * 1024 };
                 using var reader = XmlReader.Create(candidate, settings);
                 var document = XDocument.Load(reader);
-                if (document.Root is not null) return candidate;
+                if (document.Root is null) continue;
+                var rootName = document.Root.Name.LocalName;
+                if (rootName.Contains("License", StringComparison.OrdinalIgnoreCase) ||
+                    document.Descendants().Any(x => x.Name.LocalName.Contains("License", StringComparison.OrdinalIgnoreCase)))
+                    return candidate;
             }
             catch (Exception ex) when (ex is IOException or XmlException or UnauthorizedAccessException) { }
         }
