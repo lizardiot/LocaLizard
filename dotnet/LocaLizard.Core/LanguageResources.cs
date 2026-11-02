@@ -140,7 +140,9 @@ public static class PackageCompatibilityService
                name.Contains("language.speech", StringComparison.OrdinalIgnoreCase) ||
                name.Contains("language.handwriting", StringComparison.OrdinalIgnoreCase) ||
                name.Contains("language.texttospeech", StringComparison.OrdinalIgnoreCase) ||
-               name.Contains("languagefeatures-fonts", StringComparison.OrdinalIgnoreCase) ||\n               name.Contains("language.fonts", StringComparison.OrdinalIgnoreCase) ||\n               name.Contains("winocr", StringComparison.OrdinalIgnoreCase);
+               name.Contains("languagefeatures-fonts", StringComparison.OrdinalIgnoreCase) ||
+               name.Contains("language.fonts", StringComparison.OrdinalIgnoreCase) ||
+               name.Contains("winocr", StringComparison.OrdinalIgnoreCase);
     }
 
     public static bool IsLxpPackage(string? value) =>
