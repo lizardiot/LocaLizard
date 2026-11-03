@@ -28,7 +28,8 @@ public sealed class ManualPackageImportService
         string packageRoot,
         string? expectedDigest,
         CancellationToken ct,
-        Action<string>? log = null)
+        Action<string>? log = null,
+        string? sourceReferenceUrl = null)
     {
         if (sourceFiles.Count == 0) throw new InvalidOperationException("Выберите хотя бы один файл для импорта.");
         if (LanguageSourceCatalog.Find(sourceId) is not { } source ||
@@ -43,6 +44,15 @@ public sealed class ManualPackageImportService
             expectedDigest = expectedDigest.Trim();
             if (sourceFiles.Count != 1 || !Regex.IsMatch(expectedDigest, @"(?i)^(?:[a-f0-9]{40}|[a-f0-9]{64})$"))
                 throw new InvalidDataException("Ручной контрольный хеш должен быть SHA-1 (40 знаков) или SHA-256 (64 знака) и применяться к одному файлу.");
+        }
+
+        Uri? explicitSourceReference = null;
+        if (!string.IsNullOrWhiteSpace(sourceReferenceUrl))
+        {
+            if (!Uri.TryCreate(sourceReferenceUrl.Trim(), UriKind.Absolute, out explicitSourceReference) ||
+                (!SecurityPolicy.IsPermittedExternalDownloadUrl(sourceId, explicitSourceReference) &&
+                 !SecurityPolicy.IsTrustedCommunityDirectUrl(sourceId, explicitSourceReference)))
+                throw new InvalidDataException("Ссылка происхождения файла не разрешена политикой выбранного источника.");
         }
 
         var root = Path.GetFullPath(packageRoot);
@@ -84,7 +94,8 @@ public sealed class ManualPackageImportService
 
             string? catalogSha1 = null;
             string? catalogSha256 = null;
-            Uri? referenceUri = source.InformationUrl is { } sourceUrl ? new Uri(sourceUrl) : null;
+            Uri? referenceUri = explicitSourceReference ??
+                (source.InformationUrl is { } sourceUrl ? new Uri(sourceUrl) : null);
 
             if (fydexx is not null)
             {

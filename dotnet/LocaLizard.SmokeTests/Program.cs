@@ -551,6 +551,37 @@ Check(TorrentDownloadService.IsValidMagnetUri(
       !TorrentDownloadService.IsValidTorrentInput("https://evil.example/file.torrent"),
     "torrent downloader accepts only valid BitTorrent info-hash magnets or local .torrent files");
 
+var pixeldrainShare = new Uri("https://pixeldrain.com/u/AbCd1234");
+var pixeldrainDownload = new Uri("https://pixeldrain.com/api/file/AbCd1234?download");
+var pixeldrainInfo = new Uri("https://pixeldrain.com/api/file/AbCd1234/info");
+var pixeldrainHash = new string('e', 64);
+var pixeldrainFixture = "{\"success\":true,\"id\":\"AbCd1234\",\"name\":\"Microsoft-Windows-Client-Language-Pack_x64_ru-ru.cab\",\"size\":123456,\"mime_type\":\"application/vnd.ms-cab-compressed\",\"hash_sha256\":\""+pixeldrainHash+"\",\"availability\":\"\",\"can_download\":true}";
+var pixeldrainMetadata = PixeldrainFileReferenceProvider.ParseFileInfo(pixeldrainFixture, "AbCd1234");
+Check(pixeldrainMetadata.FileName == "Microsoft-Windows-Client-Language-Pack_x64_ru-ru.cab" &&
+      pixeldrainMetadata.Size == 123456 && pixeldrainMetadata.Sha256 == pixeldrainHash &&
+      pixeldrainMetadata.DownloadUri == pixeldrainDownload,
+    "Pixeldrain metadata parser returns exact installable filename, size, SHA-256 and API download URL");
+var pixeldrainCaptchaRejected = false;
+try
+{
+    PixeldrainFileReferenceProvider.ParseFileInfo(
+        pixeldrainFixture.Replace("\"availability\":\"\"", "\"availability\":\"file_rate_limited_captcha_required\""),
+        "AbCd1234");
+}
+catch (InvalidDataException) { pixeldrainCaptchaRejected = true; }
+Check(pixeldrainCaptchaRejected,
+    "Pixeldrain file metadata is rejected when download requires CAPTCHA or is rate-limited");
+var pixeldrainInvalidTypeRejected = false;
+try
+{
+    PixeldrainFileReferenceProvider.ParseFileInfo(
+        pixeldrainFixture.Replace("Microsoft-Windows-Client-Language-Pack_x64_ru-ru.cab", "payload.exe"),
+        "AbCd1234");
+}
+catch (InvalidDataException) { pixeldrainInvalidTypeRejected = true; }
+Check(pixeldrainInvalidTypeRejected,
+    "Pixeldrain API refuses files whose names do not have a supported installer extension");
+
 Check(LanguageSourceCatalog.ManualSources.Any(x => x.SourceId == "pcportal") &&
       LanguageSourceCatalog.ManualSources.Any(x => x.SourceId == "fydexx-rs5") &&
       LanguageSourceCatalog.ReferenceSources.Any(x => x.SourceId == "rg-adguard-files") &&
@@ -571,12 +602,15 @@ string manualSha256;
 await using (var manualStream = File.OpenRead(manualFixture))
     manualSha256 = Convert.ToHexString(await System.Security.Cryptography.SHA256.HashDataAsync(manualStream)).ToLowerInvariant();
 var manualImporter = new ManualPackageImportService();
+var manualSourceReference = "https://pcportal.org/files/Microsoft-Windows-Client-Language-Pack_x64_ru-ru.cab";
 var manualResult = await manualImporter.ImportAsync("pcportal", [manualFixture], manualImportRoot,
-    manualSha256, CancellationToken.None);
+    manualSha256, CancellationToken.None, sourceReferenceUrl: manualSourceReference);
+var manualManifestText = await File.ReadAllTextAsync(manualResult.ManifestPath);
 Check(manualResult.ImportedFiles.Count == 1 && File.Exists(manualResult.ImportedFiles[0]) &&
       manualResult.ImportedFiles[0].Contains(Path.Combine("ManualImport", "LanguagePacks", "ru-ru"), StringComparison.OrdinalIgnoreCase) &&
-      File.Exists(manualResult.ManifestPath),
-    "manual package import copies a local ru-RU CAB into the package cache and writes a provenance manifest");
+      File.Exists(manualResult.ManifestPath) &&
+      manualManifestText.Contains(manualSourceReference, StringComparison.Ordinal),
+    "manual package import copies a local ru-RU CAB, records the exact source URL and writes a provenance manifest");
 var manualDuplicate = await manualImporter.ImportAsync("pcportal", [manualFixture], manualImportRoot,
     manualSha256, CancellationToken.None);
 Check(manualDuplicate.SkippedFiles.Count == 1 && manualDuplicate.ImportedFiles.Count == 0,
