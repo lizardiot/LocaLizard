@@ -555,7 +555,7 @@ var pixeldrainShare = new Uri("https://pixeldrain.com/u/AbCd1234");
 var pixeldrainDownload = new Uri("https://pixeldrain.com/api/file/AbCd1234?download");
 var pixeldrainInfo = new Uri("https://pixeldrain.com/api/file/AbCd1234/info");
 var pixeldrainHash = new string('e', 64);
-var pixeldrainFixture = "{\\"success\\":true,\\"id\\":\\"AbCd1234\\",\\"name\\":\\"Microsoft-Windows-Client-Language-Pack_x64_ru-ru.cab\\",\\"size\\":123456,\\"mime_type\\":\\"application/vnd.ms-cab-compressed\\",\\"hash_sha256\\":\\""+pixeldrainHash+"\\",\\"availability\\":\\"\\",\\"can_download\\":true}";
+var pixeldrainFixture = "{\"success\":true,\"id\":\"AbCd1234\",\"name\":\"Microsoft-Windows-Client-Language-Pack_x64_ru-ru.cab\",\"size\":123456,\"mime_type\":\"application/vnd.ms-cab-compressed\",\"hash_sha256\":\""+pixeldrainHash+"\",\"availability\":\"\",\"can_download\":true}";
 var pixeldrainMetadata = PixeldrainFileReferenceProvider.ParseFileInfo(pixeldrainFixture, "AbCd1234");
 Check(pixeldrainMetadata.FileName == "Microsoft-Windows-Client-Language-Pack_x64_ru-ru.cab" &&
       pixeldrainMetadata.Size == 123456 && pixeldrainMetadata.Sha256 == pixeldrainHash &&
