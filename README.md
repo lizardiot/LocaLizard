@@ -1,4 +1,4 @@
-# LocaLizard 0.7.2
+# LocaLizard 0.7.2.1
 
 <p align="center">
   <img src="assets/LocaLizard-logo.jpg" alt="LocaLizard logo" width="520">
@@ -6,15 +6,18 @@
 
 **LocaLizard** — графическая утилита для подготовки установочного ISO Windows IoT Enterprise LTSC с русским языком по умолчанию.
 
-> **Версия 0.7.2:** современный интерфейс в стиле Windows 11 Fluent, светлая/тёмная/системная тема, разделённые экраны создания ISO, компонентов, расширенных параметров и инструментов. Основной движок C# / .NET 10, обработка ISO, DISM и проверка пакетов сохранены. Предыдущие релизы и теги не изменяются.
+> **Версия 0.7.2.1:** централизованный реестр онлайн-источников, параллельный поиск W10MUI/OSBuilder/Dexit, поддержка каталога W10MUI для Windows 11 26H1 build 28000 (без предположений о Windows IoT) и управление автоматическими источниками. Основной движок C# / .NET 10; проверки Microsoft Authenticode и CBS Package Identity сохранены.
 
 ## Скачать
 
 - [Последний релиз LocaLizard](https://github.com/lizardiot/LocaLizard/releases/latest)
 - [Все релизы](https://github.com/lizardiot/LocaLizard/releases)
-- [LocaLizard.exe для Windows x64 — версия 0.7.2](https://github.com/lizardiot/LocaLizard/releases/download/0.7.2/LocaLizard.exe)
+- [LocaLizard.exe для Windows x64 — версия 0.7.2.1](https://github.com/lizardiot/LocaLizard/releases/download/0.7.2.1/LocaLizard.exe)
 
 ## Возможности
+
+- Управление онлайн-источниками LP/FoD на отдельном экране: автоматические каталоги настраиваются пользователем, community-площадки и справочники остаются ручными/справочными источниками.
+- Для W10MUI доступны списки build 28000; Dexit Gist подключён только для Windows 10 build 14393 x86/x64 и не меняет требования к подписи Microsoft и CBS identity.
 
 - Единственная целевая локализация — русский язык `ru-RU`; интерфейс и обработка языковых пакетов для других языков не добавляются.
 - Базовый Client Language Pack в формате UUP ESD извлекается штатным DISM и устанавливается напрямую по `update.mum`, без лишней пересборки пакета в CAB. Загрузки с HTTP Microsoft Delivery CDN разрешены только для точных CDN-доменов/пути и при обязательной проверке SHA-1 и размера из UUP Dump.
@@ -29,9 +32,9 @@
 - Поиск стабильных накопительных обновлений (LCU) или указанного KB через Microsoft Update Catalog.
 - Фильтрация Preview/Insider/Canary, Windows Server и несовпадающей архитектуры до загрузки; пользователь подтверждает выбранную запись.
 - Загрузка с доверенных HTTPS-доменов Microsoft Update, проверка доступного Catalog SHA-1 и вычисление SHA-256. Для каждого подготовленного набора создаются `updates.json`, `catalog-source.json` и `SHA256.txt`.
-- Поиск Client/Server Language Pack ru-RU в совместимом ISO, управляемом кэше, UUP Dump, W10MUI и исторических каталогах OSBuilder; перед servicing сверяются Microsoft-подпись и CBS Package Identity.
+- Поиск Client/Server Language Pack ru-RU в совместимом ISO, управляемом кэше, UUP Dump, W10MUI, OSBuilder и закреплённом Gist Dexit для Windows 10 RS1; провайдеры централизованы, а сбой одного каталога не прерывает остальные. Перед servicing сверяются Microsoft-подпись и CBS Package Identity.
 - Типизированные независимые источники для Microsoft Languages and Optional Features ISO, локального репозитория, ADK WinPE и WinRE; несовместимые build family, архитектура и тип ресурса отбрасываются.
-- Определяет семейство сборки и архитектуру независимо от названия Windows; матрица включает IoT LTSC 2015/2016/2019/2021/2024, Windows 11 21H2/22H2/23H2 и Server 2016/2019/2022/2025. Совместимость 23H2 с пакетами базовой семьи 22621 задана отдельным правилом; остальные неподтверждённые совпадения не угадываются.
+- Определяет семейство сборки и архитектуру независимо от названия Windows; матрица включает IoT LTSC 2015/2016/2019/2021/2024, Windows 11 21H2/22H2/23H2/26H1 и Server 2016/2019/2022/2025. Для build 28000 Windows IoT совместимость намеренно не предполагается. Совместимость 23H2 с пакетами базовой семьи 22621 задана отдельным правилом; остальные неподтверждённые совпадения не угадываются.
 - Настройка русской локали через DISM; инвентаризация Basic, Fonts, OCR, Text-to-Speech, Speech и Handwriting. FOD CAB принимаются только после проверки подписи Microsoft и CBS identity; для репозиториев с satellite packages используется DISM `/Export-Source` и `/Add-Capability`.
 - Необязательная интеграция русских Language Experience Pack (LXP): локальный APPX/MSIX-каталог или Microsoft Store Product ID, проверка издателя, `ru-RU`, архитектуры, bundle manifests, зависимостей, подписи и соответствующего license XML до DISM provisioning.
 - При наличии подходящих ресурсов — обработка Windows Setup `boot.wim` index 2, WinPE index 1 и вложенного WinRE.

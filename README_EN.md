@@ -1,4 +1,4 @@
-# LocaLizard 0.7.2
+# LocaLizard 0.7.2.1
 
 <p align="center">
   <img src="assets/LocaLizard-logo.jpg" alt="LocaLizard logo" width="520">
@@ -6,15 +6,19 @@
 
 **LocaLizard** is a graphical utility for preparing Windows IoT Enterprise LTSC installation media with Russian as the default language.
 
-> **Version 0.7.2:** introduces a modern Windows 11 Fluent-inspired interface with light, dark, and system themes, separate screens for ISO creation, components, advanced settings, tools, and diagnostics. The C# / .NET 10 servicing engine, DISM workflows, and package validation are retained. Previous releases and tags remain unchanged.
+> **Version 0.7.2.1:** centralizes online language sources, parallelizes W10MUI/OSBuilder/Dexit discovery, adds Windows 11 26H1 build 28000 W10MUI metadata support (without assuming Windows IoT compatibility), and adds user-configurable source settings. The C# / .NET 10 servicing engine and Microsoft Authenticode/CBS package checks are retained.
 
 ## Download
 
 - [Latest LocaLizard release](https://github.com/lizardiot/LocaLizard/releases/latest)
 - [All releases](https://github.com/lizardiot/LocaLizard/releases)
-- [LocaLizard.exe for Windows x64 — version 0.7.2](https://github.com/lizardiot/LocaLizard/releases/download/0.7.2/LocaLizard.exe)
+- [LocaLizard.exe for Windows x64 — version 0.7.2.1](https://github.com/lizardiot/LocaLizard/releases/download/0.7.2.1/LocaLizard.exe)
 
 ## Features
+
+- Centralized configurable source registry with parallel W10MUI, OSBuilder and pinned Dexit metadata discovery. A failed catalog does not prevent independent providers from completing.
+- W10MUI Windows 11 26H1 build 28000 LP/FoD catalogs are supported for the client family; Windows IoT compatibility is deliberately not inferred.
+- Community archives and extracted MUI reference sources remain manual/reference-only and are not auto-installed.
 
 - Russian `ru-RU` is the only target language; no other language support or language selection is being added.
 - The base UUP Client Language Pack ESD is extracted with native DISM and installed directly from `update.mum`, avoiding an unnecessary CAB rebuild. HTTP Microsoft Delivery CDN responses are permitted only for the exact CDN hosts/path and only with the SHA-1 and file size supplied by UUP Dump.

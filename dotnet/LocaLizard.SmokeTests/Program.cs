@@ -16,7 +16,7 @@ Check(WindowsLifecycle.GetInfo(10240, new DateOnly(2026, 10, 31)) is { IsSupport
 Check(WindowsLifecycle.GetInfo(26100, new DateOnly(2026, 10, 31)) is { IsSupported: true },
     "IoT Enterprise LTSC 2024 remains supported");
 Check(WindowsLifecycle.GetInfo(99999) is null, "unknown build has no guessed lifecycle");
-Check(AppInfo.Version == "0.7.2", "AppInfo version comes from centralized assembly metadata");
+Check(AppInfo.Version == "0.7.2.1", "AppInfo version includes the fourth release component");
 
 static IEnumerable<string> SimulatedDeniedDirectoryEntries()
 {
@@ -51,6 +51,14 @@ Check(BuildNumbers.Family("10.0.19044.4046") == 19044, "Windows 10 IoT LTSC buil
 Check(BuildNumbers.Architecture("AMD64") == "x64", "AMD64 normalization");
 Check(BuildNumbers.Architecture("ARM64") == "arm64", "ARM64 normalization");
 Check(BuildNumbers.Architecture("x86") == "x86", "x86 normalization");
+Check(BuildNumbers.Family("10.0.28000.1000") == 28000, "Windows 11 26H1 build family");
+Check(PackageCompatibilityService.IsKnownBuildFamily(28000, "Client"), "Windows 11 26H1 is an explicit client family");
+Check(W10MuiCatalogProvider.CatalogBuild(28000) == 28000, "W10MUI 28000 catalog mapping");
+Check(PackageCompatibilityService.CreateRequest(new ImageInfo(1, "Windows 11 Pro", "x64", "10.0.28000.1000")).BuildFamily == 28000,
+    "Windows 11 26H1 client request is accepted");
+Throws<InvalidDataException>(() => PackageCompatibilityService.CreateRequest(
+    new ImageInfo(1, "Windows 11 IoT Enterprise", "x64", "10.0.28000.1000")),
+    "Windows IoT build 28000 is not assumed compatible without validation");
 Check(!BuildNumbers.IsSupportedArchitecture("ia64"), "reject unsupported architecture");
 
 Check(SecurityPolicy.IsTrustedPackageUrl(new Uri("https://download.windowsupdate.com/update.cab")), "trusted Microsoft HTTPS CDN");
@@ -285,6 +293,35 @@ Check(w10MuiFodCandidates.Count == 2 &&
       w10MuiFodCandidates.All(x => x.ResourceType == LanguageResourceType.FeatureOnDemand),
     "W10MUI parser resolves only Russian FOD CAB candidates");
 
+var dexitHashX86 = new string('a', 40);
+var dexitHashX64 = new string('b', 40);
+var dexitCatalog = $"""
+ | LangPacks for Windows 10 build 10.0.14393.0 (rs1_release)
+ | x86
+ | ru-RU http://download.windowsupdate.com/c/msdownload/update/software/updt/2016/07/lp_{{dexitHashX86}}.cab
+ | en-US http://download.windowsupdate.com/c/msdownload/update/software/updt/2016/07/lp_{{new string('c', 40)}}.cab
+ | x64
+ | ru-RU http://download.windowsupdate.com/c/msdownload/update/software/updt/2016/07/lp_{{dexitHashX64}}.cab
+""";
+var dexitX64 = DexitGistProvider.ParseCatalog(dexitCatalog,
+    new LanguageResourceRequest(14393, "x64", "ru-RU", "Client", LanguageResourceType.ClientLanguagePack));
+Check(dexitX64.Count == 1 && dexitX64[0].SourceId == "dexit-gist" &&
+      dexitX64[0].Architecture == "x64" && dexitX64[0].Sha1 == dexitHashX64 &&
+      dexitX64[0].DownloadUri?.Scheme == "https" &&
+      dexitX64[0].TrustLevel == ResourceTrustLevel.ThirdPartyMetadataMicrosoftFile,
+    "Dexit parser selects only the Russian x64 RS1 Microsoft CDN CAB and normalizes it to HTTPS");
+var dexitX86 = DexitGistProvider.ParseCatalog(dexitCatalog,
+    new LanguageResourceRequest(14393, "x86", "ru-RU", "Client", LanguageResourceType.ClientLanguagePack));
+Check(dexitX86.Count == 1 && dexitX86[0].Architecture == "x86",
+    "Dexit parser selects the Russian x86 RS1 CAB from its architecture section");
+Check(DexitGistProvider.ParseCatalog(dexitCatalog,
+    new LanguageResourceRequest(17763, "x64", "ru-RU", "Client", LanguageResourceType.ClientLanguagePack)).Count == 0,
+    "Dexit RS1 metadata is not reused for another Windows build family");
+Check(SecurityPolicy.IsTrustedMetadataUrl(new Uri(DexitGistProvider.CatalogUrl)),
+    "pinned Dexit Gist metadata endpoint is allow-listed");
+Check(!SecurityPolicy.IsTrustedMetadataUrl(new Uri("https://api.github.com/gists/87f30cffa70ea6899177f536a8dc788f")),
+    "unversioned or unrelated GitHub Gist API URLs are not allow-listed");
+
 var osBuilderCatalog = """
 <Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04">
   <Obj RefId="0">
@@ -405,6 +442,36 @@ var isoCandidates = await new MicrosoftIsoProvider(Path.Combine(providerRoot, "M
         LanguageResourceType.ClientLanguagePack), CancellationToken.None);
 Check(isoCandidates.Count == 1 && isoCandidates[0].SourceId == "microsoft-language-optional-features-iso",
     "Microsoft ISO provider discovers local Russian language resources");
+
+var optionalRoot = Path.Combine(folder, "optional-component-fixtures");
+var optionalRu = Path.Combine(optionalRoot, "ru-ru");
+Directory.CreateDirectory(optionalRu);
+var optionalNotepad = Path.Combine(optionalRu,
+    "Microsoft-Windows-Notepad-FOD-Package_ru-ru~amd64~10.0.26100.1.cab");
+await File.WriteAllTextAsync(optionalNotepad, "fixture");
+var optionalCandidates = await new LocalRepositoryProvider(optionalRoot).DiscoverAsync(
+    new LanguageResourceRequest(26100, "x64", "ru-RU", "Client"), CancellationToken.None);
+Check(optionalCandidates.Count == 1 &&
+      optionalCandidates[0].ResourceType == LanguageResourceType.LocalizedOptionalComponent,
+    "localized optional components are inventoried as a separate type");
+Check(!PackageCompatibilityService.IsCompatible(optionalCandidates[0],
+      new LanguageResourceRequest(26100, "x64", "ru-RU", "Client", LanguageResourceType.FeatureOnDemand)),
+    "localized optional components are not passed into the core language FoD flow");
+
+var sourceSettingsPath = Path.Combine(folder, "language-sources.json");
+var sourceSettings = new LanguageSourceConfiguration();
+sourceSettings.SetEnabled("dexit-gist", false);
+sourceSettings.Save(sourceSettingsPath);
+var reloadedSourceSettings = LanguageSourceConfiguration.Load(sourceSettingsPath);
+Check(!reloadedSourceSettings.IsEnabled("dexit-gist") && reloadedSourceSettings.IsEnabled("w10mui") &&
+      reloadedSourceSettings.EnabledAutomaticSourceCount == 2,
+    "automatic source settings persist in a local versioned JSON configuration");
+using (var defaultSourceRegistry = LanguageSourceFactory.CreateDefault(reloadedSourceSettings))
+    Check(defaultSourceRegistry.Sources.SequenceEqual(new[] { "osbuilder-public", "w10mui" }),
+        "central source factory registers enabled providers only");
+Check(LanguageSourceCatalog.ManualSources.Any(x => x.SourceId == "community-import") &&
+      LanguageSourceCatalog.ReferenceSources.Any(x => x.SourceId == "m417z-language-files"),
+    "manual community imports and extracted reference files are separated from automatic providers");
 
     var payload = Path.Combine(folder, "LCU.msu");
     await File.WriteAllTextAsync(payload, "test update payload");

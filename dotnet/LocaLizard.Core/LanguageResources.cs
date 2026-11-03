@@ -230,7 +230,11 @@ public sealed class ResourceSourceRegistry : IDisposable
             return new ProviderDiscoveryResult(provider.SourceId,
                 found.Where(x => PackageCompatibilityService.IsCompatible(x, request)).ToArray(), null);
         }
-        catch (OperationCanceledException) { throw; }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (OperationCanceledException ex)
+        {
+            return new ProviderDiscoveryResult(provider.SourceId, [], ex.Message);
+        }
         catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidDataException or
                                   UnauthorizedAccessException or System.Xml.XmlException or TimeoutException)
         {
