@@ -198,7 +198,7 @@ public sealed class IsoBuildService
                 }
                 if (candidates.Count == 0)
                 {
-                    Status?.Invoke($"Ищу ru-RU Language Pack в W10MUI и OSBuilder для {item.Info.BuildFamily}/{item.Info.NormalizedArchitecture}…");
+                    Status?.Invoke($"Ищу ru-RU Language Pack в в автоматических каталогах языковых пакетов для {item.Info.BuildFamily}/{item.Info.NormalizedArchitecture}…");
                     var downloaded = await DiscoverAndDownloadLegacyLanguagePackAsync(item.Info, packageRoot, ct);
                     packages.AddRange(downloaded);
                     candidates = await FindVerifiedMatchingPackagesAsync(packages, item.Info, options.PackageDirectory, ct);
@@ -545,11 +545,7 @@ public sealed class IsoBuildService
         ImageInfo image, string packageRoot, CancellationToken ct)
     {
         var request = PackageCompatibilityService.CreateRequest(image, LanguageResourceType.FeatureOnDemand);
-        using var w10Mui = new W10MuiCatalogProvider();
-        using var osBuilder = new OsBuilderCatalogProvider();
-        var registry = new ResourceSourceRegistry();
-        registry.Register(w10Mui);
-        registry.Register(osBuilder);
+        using var registry = LanguageSourceFactory.CreateDefault();
         registry.Diagnostic += message => Log?.Invoke(message);
         var candidates = await registry.DiscoverAsync(request, ct);
         if (candidates.Count == 0)
@@ -573,11 +569,7 @@ public sealed class IsoBuildService
         var resourceType = PackageCompatibilityService.IsServer(productFamily)
             ? LanguageResourceType.ServerLanguagePack : LanguageResourceType.ClientLanguagePack;
         var request = PackageCompatibilityService.CreateRequest(image, resourceType);
-        using var w10Mui = new W10MuiCatalogProvider();
-        using var osBuilder = new OsBuilderCatalogProvider();
-        var registry = new ResourceSourceRegistry();
-        registry.Register(w10Mui);
-        registry.Register(osBuilder);
+        using var registry = LanguageSourceFactory.CreateDefault();
         registry.Diagnostic += message => Log?.Invoke(message);
         var discovered = await registry.DiscoverAsync(request, ct);
         Log?.Invoke($"Legacy providers: найдено кандидатов Microsoft-hosted metadata — {discovered.Count}.");

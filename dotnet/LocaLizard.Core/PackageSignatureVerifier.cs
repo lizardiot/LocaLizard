@@ -138,6 +138,14 @@ public sealed class LegacyPackageDownloader(HttpClient? httpClient = null)
                 if (total != size) throw new InvalidDataException("Legacy package size differs from Content-Length.");
             }
 
+            if (!string.IsNullOrWhiteSpace(candidate.Sha1))
+            {
+                await using var sha1Stream = File.OpenRead(temporary);
+                var actualSha1 = Convert.ToHexString(await SHA1.HashDataAsync(sha1Stream, ct));
+                if (!actualSha1.Equals(candidate.Sha1, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidDataException("Downloaded package SHA-1 differs from the catalog metadata.");
+            }
+
             var signature = await signatureVerifier.VerifyMicrosoftAsync(temporary, ct);
             if (!signature.IsValid)
                 throw new InvalidDataException("Legacy package did not pass Microsoft Authenticode verification: " + signature.Error);
