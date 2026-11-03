@@ -362,7 +362,8 @@ public sealed class ManualPackageImportForm : Form
                 source.SourceId, [downloadedPath], _packageRoot,
                 expectedDigest.Enabled ? expectedDigest.Text : null,
                 CancellationToken.None,
-                message => sourceDescription.Text = message);
+                message => sourceDescription.Text = message,
+                sourceReferenceUrl: url);
             ApplyImportResult(result);
             MessageBox.Show(this,
                 $"Загружен и импортирован файл: {downloaded.FileName}{Environment.NewLine}" +
