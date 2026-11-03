@@ -565,7 +565,7 @@ var pixeldrainCaptchaRejected = false;
 try
 {
     PixeldrainFileReferenceProvider.ParseFileInfo(
-        pixeldrainFixture.Replace("\"availability\": \"\"", "\"availability\": \"file_rate_limited_captcha_required\""),
+        pixeldrainFixture.Replace("\"availability\":\"\"", "\"availability\":\"file_rate_limited_captcha_required\""),
         "AbCd1234");
 }
 catch (InvalidDataException) { pixeldrainCaptchaRejected = true; }
