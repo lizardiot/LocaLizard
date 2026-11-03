@@ -66,6 +66,7 @@ public static class SecurityPolicy
         IsSafeHttpsUri(uri) &&
         uri.Host.Equals("software-download.microsoft.com", StringComparison.OrdinalIgnoreCase) &&
         uri.AbsolutePath.StartsWith("/download/pr/", StringComparison.OrdinalIgnoreCase) &&
+        uri.AbsolutePath.EndsWith(".iso", StringComparison.OrdinalIgnoreCase) &&
         !uri.AbsolutePath.Contains("..", StringComparison.Ordinal);
 
     public static bool IsTrustedRedirect(Uri initial, Uri next) =>

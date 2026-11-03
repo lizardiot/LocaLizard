@@ -248,8 +248,11 @@ public sealed class ManualPackageImportService
         await using var stream = File.OpenRead(path);
         try
         {
-            return await JsonSerializer.DeserializeAsync<ManualPackageImportManifest>(stream, JsonOptions, ct)
+            var document = await JsonSerializer.DeserializeAsync<ManualPackageImportManifest>(stream, JsonOptions, ct)
                 ?? new ManualPackageImportManifest();
+            if (document.SchemaVersion != 1 || document.Files is null)
+                throw new InvalidDataException("manual-imports.json has an unsupported schema.");
+            return document;
         }
         catch (JsonException ex)
         {

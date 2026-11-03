@@ -150,9 +150,12 @@ public sealed class RgAdguardFileMetadataProvider : IDisposable
             throw new InvalidDataException("RG-Adguard search page exceeds the 2 MiB limit.");
 
         var links = new List<Uri>();
-        foreach (Match match in Regex.Matches(html, @"(?i)(?:https://files\.rg-adguard\.net)?/file/(?<id>[a-f0-9-]{8,64})/?"))
+        foreach (Match match in Regex.Matches(html,
+                     @"(?i)href\s*=\s*['""](?<url>(?:https://files\.rg-adguard\.net)?/file/[a-f0-9-]{8,64}/?)['""]"))
         {
-            var uri = new Uri($"https://files.rg-adguard.net/file/{match.Groups["id"].Value}");
+            var value = match.Groups["url"].Value;
+            var uri = Uri.TryCreate(value, UriKind.Absolute, out var absolute)
+                ? absolute : new Uri("https://files.rg-adguard.net", value);
             if (SecurityPolicy.IsTrustedMetadataUrl(uri) &&
                 !links.Any(x => x.AbsoluteUri.Equals(uri.AbsoluteUri, StringComparison.OrdinalIgnoreCase)))
                 links.Add(uri);
