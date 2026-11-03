@@ -21,7 +21,8 @@ public static class SecurityPolicy
         "raw.githubusercontent.com",
         "gist.githubusercontent.com",
         "store.rg-adguard.net",
-        "files.rg-adguard.net"
+        "files.rg-adguard.net",
+        "pixeldrain.com"
     };
 
     public static bool IsCatalogUrl(Uri uri) =>
@@ -58,6 +59,8 @@ public static class SecurityPolicy
         if (uri.Host.Equals("files.rg-adguard.net", StringComparison.OrdinalIgnoreCase))
             return uri.AbsolutePath.Equals("/search", StringComparison.OrdinalIgnoreCase) ||
                    Regex.IsMatch(uri.AbsolutePath, @"(?i)^/file/[a-f0-9-]{8,64}/?$");
+        if (uri.Host.Equals("pixeldrain.com", StringComparison.OrdinalIgnoreCase))
+            return Regex.IsMatch(uri.AbsolutePath, @"(?i)^/api/file/[a-z0-9_-]{6,32}/info$");
         return uri.Host.Equals("api.uupdump.net", StringComparison.OrdinalIgnoreCase) &&
                uri.AbsolutePath.StartsWith("/", StringComparison.Ordinal);
     }
@@ -77,6 +80,8 @@ public static class SecurityPolicy
     {
         if (sourceId.Equals("what-the-hack", StringComparison.OrdinalIgnoreCase))
             return IsTrustedMicrosoftMediaUrl(uri);
+        if (sourceId.Equals("pixeldrain", StringComparison.OrdinalIgnoreCase))
+            return IsTrustedPixeldrainDownloadUrl(uri);
         if (sourceId is "fydexx-rs5" or "rg-adguard-files")
             return uri.Scheme == Uri.UriSchemeHttps && IsTrustedPackageUrl(uri);
         return IsTrustedCommunityDirectUrl(sourceId, uri);
@@ -84,6 +89,8 @@ public static class SecurityPolicy
 
     public static bool IsTrustedCommunityDirectUrl(string sourceId, Uri uri)
     {
+        if (sourceId.Equals("pixeldrain", StringComparison.OrdinalIgnoreCase))
+            return IsTrustedPixeldrainShareUrl(uri) || IsTrustedPixeldrainDownloadUrl(uri);
         if (!IsSafeHttpsUri(uri) ||
             LanguageSourceCatalog.Find(sourceId) is not { Kind: LanguageSourceKind.ManualImport, InformationUrl: { } informationUrl } ||
             !Uri.TryCreate(informationUrl, UriKind.Absolute, out var sourceUri) ||
@@ -103,11 +110,22 @@ public static class SecurityPolicy
     {
         if (!initial.IsAbsoluteUri || !IsSafeHttpsUri(next))
             return false;
+        if (sourceId.Equals("pixeldrain", StringComparison.OrdinalIgnoreCase))
+            return IsTrustedPixeldrainDownloadUrl(next);
         if (sourceId.Equals("what-the-hack", StringComparison.OrdinalIgnoreCase))
             return IsTrustedMicrosoftMediaUrl(next) || IsTrustedPackageUrl(next) && next.Scheme == Uri.UriSchemeHttps;
         return IsTrustedCommunityDirectUrl(sourceId, next) ||
                IsTrustedPackageUrl(next) && next.Scheme == Uri.UriSchemeHttps;
     }
+
+    public static bool IsTrustedPixeldrainShareUrl(Uri uri) =>
+        IsSafeHttpsUri(uri) && PixeldrainFileReferenceProvider.TryGetFileId(uri, out _);
+
+    public static bool IsTrustedPixeldrainDownloadUrl(Uri uri) =>
+        IsSafeHttpsUri(uri) &&
+        uri.Host.Equals("pixeldrain.com", StringComparison.OrdinalIgnoreCase) &&
+        Regex.IsMatch(uri.AbsolutePath, @"(?i)^/api/file/[a-z0-9_-]{6,32}$") &&
+        (uri.Query.Length == 0 || uri.Query.Equals("?download", StringComparison.OrdinalIgnoreCase));
 
     public static bool IsTrustedRedirect(Uri initial, Uri next) =>
         initial.IsAbsoluteUri && next.IsAbsoluteUri &&
