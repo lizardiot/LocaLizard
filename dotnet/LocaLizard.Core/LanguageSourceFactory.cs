@@ -42,7 +42,7 @@ public static class LanguageSourceCatalog
             "Пользовательские ссылки Mail Cloud; авторизация и временные ссылки выполняются вне приложения.", 105, false,
             "https://cloud.mail.ru/"),
         new("pixeldrain", "Pixeldrain", LanguageSourceKind.ManualImport, "CAB, ESD, ISO",
-            "Внешнее файловое хранилище; файл загружается пользователем и проверяется до применения.", 106, false,
+            "Публичные ссылки /u/{id}: API предоставляет имя, размер и SHA-256; загрузка доступна, только если Pixeldrain не требует CAPTCHA/платного доступа.", 106, false,
             "https://pixeldrain.com/"),
         new("massgrave", "Massgrave", LanguageSourceKind.ManualImport, "Справка / ISO",
             "Справочный community-портал; неподписанные сценарии и исполняемые файлы не импортируются.", 107, false,
