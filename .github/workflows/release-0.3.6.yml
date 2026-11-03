@@ -16,7 +16,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout source
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
 
       - name: Set up .NET SDK 10.0.403
         uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
@@ -112,7 +112,7 @@ jobs:
       contents: write
     steps:
       - name: Checkout release metadata
-        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
 
       - name: Download verified release assets
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131
