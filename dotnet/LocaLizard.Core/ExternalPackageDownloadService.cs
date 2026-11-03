@@ -113,7 +113,8 @@ public sealed class ExternalPackageDownloadService : IDisposable
             long? metadataSize = null;
             if (sourceId.Equals("fydexx-rs5", StringComparison.OrdinalIgnoreCase))
             {
-                var metadata = await new FydexxRs5MetadataProvider().FindAsync(fileName, ct)
+                using var provider = new FydexxRs5MetadataProvider();
+                var metadata = await provider.FindAsync(fileName, ct)
                     ?? throw new InvalidDataException("Точное имя файла отсутствует в закреплённом каталоге fydexx.");
                 if (metadata.BuildFamily != 17763 || metadata.Sha1 is null ||
                     !fileName.Contains("_ru-ru.", StringComparison.OrdinalIgnoreCase) ||
@@ -123,7 +124,8 @@ public sealed class ExternalPackageDownloadService : IDisposable
             }
             else if (sourceId.Equals("rg-adguard-files", StringComparison.OrdinalIgnoreCase))
             {
-                var metadata = await new RgAdguardFileMetadataProvider().FindAsync(fileName, ct)
+                using var provider = new RgAdguardFileMetadataProvider();
+                var metadata = await provider.FindAsync(fileName, ct)
                     ?? throw new InvalidDataException("RG-Adguard не вернул метаданные для точного имени файла.");
                 metadataSha1 = metadata.Sha1;
                 metadataSha256 = metadata.Sha256;
