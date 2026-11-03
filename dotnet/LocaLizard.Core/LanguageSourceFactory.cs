@@ -132,7 +132,7 @@ public static class LanguageSourceFactory
         try
         {
             foreach (var descriptor in LanguageSourceCatalog.AutomaticSources
-                         .Where(configuration.IsEnabled).OrderBy(x => x.Priority))
+                         .Where(source => configuration.IsEnabled(source.SourceId)).OrderBy(x => x.Priority))
             {
                 ILanguageResourceProvider provider = descriptor.SourceId switch
                 {

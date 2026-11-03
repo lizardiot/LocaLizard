@@ -72,7 +72,7 @@ jobs:
           }
           Set-Content -Path "$assets/SHA256.txt" -Value $lines -Encoding ascii
           $changelog = Get-Content -Raw -Encoding UTF8 "CHANGELOG.md"
-          $releaseSection = [regex]::Match($changelog, '(?ms)^## \[0\.7\.2\].*?(?=^## \[|\z)')
+          $releaseSection = [regex]::Match($changelog, '(?ms)^## \[0\.7\.2\.1\].*?(?=^## \[|\z)')
           if (-not $releaseSection.Success) { throw "CHANGELOG.md has no 0.7.2.1 release section." }
           Set-Content -Path "$assets/RELEASE_NOTES.md" -Value ($releaseSection.Value.Trim() + [Environment]::NewLine) -Encoding UTF8
 
