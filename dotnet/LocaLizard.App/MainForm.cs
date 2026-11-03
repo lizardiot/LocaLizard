@@ -38,6 +38,7 @@ public sealed class MainForm : Form
     private readonly Button catalog = new() { Text = "Microsoft Update Catalog…", AutoSize = true };
     private readonly Button uupCheck = new() { Text = "Проверить UUP Dump", AutoSize = true };
     private readonly Button languageSources = new() { Text = "Онлайн-источники", AutoSize = true };
+    private readonly Button manualImport = new() { Text = "Импорт пакетов", AutoSize = true };
     private CancellationTokenSource? cancellation;
     private readonly ElevatedLaunchRequest? launchRequest;
 
@@ -315,7 +316,7 @@ public sealed class MainForm : Form
 
         var toolsTab = CreatePage("Инструменты", "Инструменты и диагностика", "Вспомогательные операции вынесены отдельно, чтобы не перегружать основной сценарий создания ISO.", out var toolsStack);
         var toolButtons = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, WrapContents = true, FlowDirection = FlowDirection.LeftToRight, Padding = new Padding(2), Margin = new Padding(0) };
-        foreach (var button in new[] { preflight, patch, catalog, uupCheck, importProfile, exportProfile, languageSources })
+        foreach (var button in new[] { preflight, patch, catalog, uupCheck, importProfile, exportProfile, languageSources, manualImport })
         {
             button.AutoSize = false;
             button.Width = 250;
@@ -330,6 +331,7 @@ public sealed class MainForm : Form
         importProfile.Text = "Загрузить профиль";
         exportProfile.Text = "Сохранить профиль";
         languageSources.Text = "Онлайн-источники языковых пакетов";
+        manualImport.Text = "Импорт CAB / ESD / ISO / LXP";
         AddSection(toolsStack, "Доступные инструменты", "Для создания обычного ISO достаточно главной вкладки. Здесь находятся отдельные диагностические и сервисные действия.", toolButtons);
         tabs.TabPages.Add(toolsTab);
 
@@ -393,11 +395,34 @@ public sealed class MainForm : Form
         exportProfile.Click += (_, _) => ExportProfile();
         importProfile.Click += (_, _) => ImportProfile();
         languageSources.Click += (_, _) => ManageLanguageSources();
+        manualImport.Click += (_, _) => ImportManualPackages();
         cancel.Click += (_, _) => cancellation?.Cancel();
 
         var appData = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LocaLizard");
         work.Text = Path.Combine(appData, "Work");
         packages.Text = Path.Combine(appData, "Packages");
+    }
+
+    private void ImportManualPackages()
+    {
+        using var dialog = new ManualPackageImportForm(packages.Text);
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        if (!string.IsNullOrWhiteSpace(dialog.ImportedMediaIso))
+        {
+            donor.Text = dialog.ImportedMediaIso;
+            status.Text = "Импортирован ISO-донор: " + Path.GetFileName(dialog.ImportedMediaIso);
+        }
+        if (!string.IsNullOrWhiteSpace(dialog.ImportedFodDirectory))
+        {
+            fod.Text = dialog.ImportedFodDirectory;
+            AppendLog("Импортированные русские FOD доступны: " + dialog.ImportedFodDirectory);
+        }
+        if (!string.IsNullOrWhiteSpace(dialog.ImportedLxpDirectory))
+        {
+            lxp.Text = dialog.ImportedLxpDirectory;
+            AppendLog("Импортированные Store LXP доступны: " + dialog.ImportedLxpDirectory);
+        }
+        AppendLog("Ручной импорт завершён. Все CAB/ESD/LXP всё равно проходят штатную проверку подписи и CBS identity.");
     }
 
     private void ManageLanguageSources()

@@ -168,7 +168,7 @@ public sealed class ManualPackageImportService
                     extension.Equals(".msixbundle", StringComparison.OrdinalIgnoreCase) ||
                     extension.Equals(".xml", StringComparison.OrdinalIgnoreCase))
                     lxpDirectory = Path.Combine(root, "ManualImport", "ImportedLXP");
-                var relative = Path.GetRelativePath(root, destination).Replace('\\', '/');
+                        var relative = Path.GetRelativePath(root, destination).Replace('\\', '/');
                 if (!document.Files.Any(x => x.RelativePath.Equals(relative, StringComparison.OrdinalIgnoreCase) &&
                                              x.Sha256.Equals(copyResult.Sha256, StringComparison.OrdinalIgnoreCase)))
                 {
@@ -268,7 +268,7 @@ public sealed class ManualPackageImportService
         finally { try { if (File.Exists(temporary)) File.Delete(temporary); } catch { } }
     }
 
-    private sealed class ManualPackageImportManifest
+    internal sealed class ManualPackageImportManifest
     {
         [JsonPropertyName("schema_version")] public int SchemaVersion { get; init; } = 1;
         [JsonPropertyName("files")] public List<ManualPackageImportManifestEntry> Files { get; set; } = [];
