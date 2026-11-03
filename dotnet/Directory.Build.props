@@ -1,6 +1,6 @@
 <Project>
   <PropertyGroup>
-    <LocaLizardVersion>0.3.6</LocaLizardVersion>
+    <LocaLizardVersion>0.7.2</LocaLizardVersion>
     <Version>$(LocaLizardVersion)</Version>
     <AssemblyVersion>$(LocaLizardVersion)</AssemblyVersion>
     <FileVersion>$(LocaLizardVersion)</FileVersion>

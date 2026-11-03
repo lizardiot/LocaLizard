@@ -21,6 +21,9 @@ public sealed class MainForm : Form
     private readonly TextBox unattend = new();
     private readonly RichTextBox log = new();
     private readonly Label status = new() { AutoSize = true };
+    private readonly ProgressBar activityProgress = new() { Style = ProgressBarStyle.Marquee, MarqueeAnimationSpeed = 24, Visible = false };
+    private readonly ComboBox themeSelector = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 142 };
+    private string selectedTheme = "System";
     private readonly Button start = new() { Text = "Проверить условия и создать ISO", AutoSize = true };
     private readonly Button cancel = new() { Text = "Отменить", AutoSize = true, Enabled = false };
     private readonly CheckBox keep = new() { Text = "Сохранять рабочие файлы для диагностики", Checked = true, AutoSize = true };
@@ -42,9 +45,13 @@ public sealed class MainForm : Form
         launchRequest = request;
         Text = $"LocaLizard {AppInfo.Version}";
         Icon = System.Drawing.Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Application;
-        Width = 1060; Height = 840; MinimumSize = new Size(860, 680);
+        Width = 1180; Height = 860; MinimumSize = new Size(920, 700);
         StartPosition = FormStartPosition.CenterScreen;
+        AutoScaleMode = AutoScaleMode.Dpi;
+        Font = new Font("Segoe UI", 9F, FontStyle.Regular, GraphicsUnit.Point);
+        selectedTheme = UiThemeManager.Load();
         BuildUi();
+        UiThemeManager.Apply(this, selectedTheme);
         AttachIsoDrop(source, false);
         AttachIsoDrop(donor, true);
         Load += (_, _) => LoadSettings();
@@ -64,74 +71,318 @@ public sealed class MainForm : Form
 
     private void BuildUi()
     {
-        var root = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(12), ColumnCount = 1, RowCount = 5, AutoScroll = true };
-        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        Controls.Add(root);
+        Text = $"LocaLizard {AppInfo.Version}";
 
-        root.Controls.Add(new Label
+        TabPage CreatePage(string tabTitle, string heading, string description, out TableLayoutPanel stack)
         {
-            Text = "Подготовка Windows IoT Enterprise LTSC с русским языком",
-            Font = new Font(Font, FontStyle.Bold), AutoSize = true, Padding = new Padding(0, 0, 0, 8)
-        });
+            var page = new TabPage(tabTitle) { AutoScroll = true, Padding = new Padding(10) };
+            stack = new TableLayoutPanel
+            {
+                Dock = DockStyle.Top,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                ColumnCount = 1,
+                RowCount = 0,
+                Padding = new Padding(8),
+                Margin = new Padding(0)
+            };
+            stack.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            var headingPanel = new TableLayoutPanel
+            {
+                Dock = DockStyle.Top,
+                AutoSize = true,
+                ColumnCount = 1,
+                RowCount = 2,
+                Margin = new Padding(4, 2, 4, 12)
+            };
+            headingPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            headingPanel.Controls.Add(new Label
+            {
+                Text = heading,
+                AutoSize = true,
+                Font = new Font("Segoe UI Semibold", 16F, FontStyle.Bold),
+                Margin = new Padding(0, 0, 0, 4)
+            }, 0, 0);
+            headingPanel.Controls.Add(new Label
+            {
+                Text = description,
+                AutoSize = true,
+                ForeColor = Color.DimGray,
+                Margin = new Padding(0, 0, 0, 4),
+                Tag = "muted"
+            }, 0, 1);
+            stack.RowCount++;
+            stack.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            stack.Controls.Add(headingPanel, 0, 0);
+            page.Controls.Add(stack);
+            return page;
+        }
 
-        var paths = new TableLayoutPanel { Dock = DockStyle.Top, ColumnCount = 3, AutoSize = true };
-        paths.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 260));
-        paths.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        paths.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 115));
-        AddPath(paths, 0, "Входной Windows ISO:", source, false, false);
-        AddPath(paths, 1, "Русский ISO-донор:", donor, false, false);
-        AddPath(paths, 2, "Выходной ISO:", output, false, true);
-        AddPath(paths, 3, "Рабочая папка:", work, true, false);
-        AddPath(paths, 4, "Кэш языковых пакетов:", packages, true, false);
-        AddPath(paths, 5, "FOD / Language and Optional Features:", fod, true, false);
-        AddPath(paths, 6, "Каталог обновлений (updates.json):", updates, true, false);
-        AddPath(paths, 7, "Каталог INF-драйверов для install.wim:", drivers, true, false);
-        AddPath(paths, 8, "Файл автоматической установки (unattend.xml):", unattend, false, false,
-            "Unattend XML (*.xml)|*.xml|Все файлы (*.*)|*.*");
-        AddPath(paths, 9, "Каталог русских Store LXP (APPX/MSIX + License XML):", lxp, true, false);
-        paths.RowCount++;
-        paths.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        paths.Controls.Add(new Label { Text = "Microsoft Store Product ID для ru-RU LXP:", AutoSize = true, Anchor = AnchorStyles.Left, Padding = new Padding(0, 8, 8, 0) }, 0, 10);
-        storeProductId.Dock = DockStyle.Fill;
-        storeProductId.PlaceholderText = "Необязательно: ID продукта Microsoft Store";
-        paths.Controls.Add(storeProductId, 1, 10);
-        paths.SetColumnSpan(storeProductId, 2);
-        root.Controls.Add(paths);
+        void AddSection(TableLayoutPanel stack, string title, string description, Control content)
+        {
+            var inner = new TableLayoutPanel
+            {
+                Dock = DockStyle.Top,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                ColumnCount = 1,
+                RowCount = string.IsNullOrWhiteSpace(description) ? 1 : 2,
+                Padding = new Padding(12, 8, 12, 12),
+                Margin = new Padding(0)
+            };
+            inner.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            if (!string.IsNullOrWhiteSpace(description))
+            {
+                inner.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+                inner.Controls.Add(new Label
+                {
+                    Text = description,
+                    AutoSize = true,
+                    ForeColor = Color.DimGray,
+                    Margin = new Padding(0, 0, 0, 8),
+                    Tag = "muted"
+                }, 0, 0);
+            }
+            inner.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            content.Dock = DockStyle.Top;
+            content.Margin = new Padding(0);
+            inner.Controls.Add(content, 0, inner.RowCount - 1);
 
-        var options = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(0, 8, 0, 8) };
-        options.Controls.Add(keep);
-        options.Controls.Add(setup);
-        options.Controls.Add(split);
-        options.Controls.Add(hyperv);
-        options.Controls.Add(allowPartial);
-        root.Controls.Add(options);
+            var section = new GroupBox
+            {
+                Text = title,
+                Dock = DockStyle.Top,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                Padding = new Padding(10),
+                Margin = new Padding(4, 4, 4, 10),
+                Tag = "card"
+            };
+            section.Controls.Add(inner);
+            stack.RowCount++;
+            stack.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            stack.Controls.Add(section, 0, stack.RowCount - 1);
+        }
 
-        var workspace = new SplitContainer
+        TableLayoutPanel MakePathTable(params (string Caption, TextBox Field, bool Folder, bool Save, string? Filter)[] rows)
+        {
+            var table = new TableLayoutPanel
+            {
+                Dock = DockStyle.Top,
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                ColumnCount = 3,
+                RowCount = 0,
+                Margin = new Padding(0)
+            };
+            table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 220));
+            table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 112));
+            var index = 0;
+            foreach (var row in rows)
+                AddPath(table, index++, row.Caption, row.Field, row.Folder, row.Save, row.Filter);
+            return table;
+        }
+
+        var root = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
-            Orientation = Orientation.Horizontal,
-            SplitterDistance = 74,
-            Panel1MinSize = 48,
-            Panel2MinSize = 140,
-            BorderStyle = BorderStyle.FixedSingle
+            Padding = new Padding(18, 14, 18, 14),
+            ColumnCount = 1,
+            RowCount = 3,
+            BackColor = SystemColors.Control
         };
-        workspace.Panel1.Controls.Add(new Label
-        {
-            Dock = DockStyle.Fill, AutoSize = false, ForeColor = Color.DarkSlateGray,
-            TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(6),
-            Text = "Setup/WinPE и WinRE используют официальные ресурсы Windows ADK / WinPE Add-on или совместимый русский ISO-донор. " +
-                   "Разделение SWM создаёт части до 3800 MiB. Hyper-V проверка необязательна; при её запуске сеть отключается, а экран Setup подтверждает оператор. " +
-                   "Перемещайте разделитель, чтобы изменить высоту журнала."
-        });
-        log.Dock = DockStyle.Fill; log.ReadOnly = true; log.Font = new Font("Consolas", 9);
-        workspace.Panel2.Controls.Add(log);
-        root.Controls.Add(workspace);
+        root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 72));
+        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 66));
+        Controls.Add(root);
 
-        var footer = new FlowLayoutPanel { Dock = DockStyle.Bottom, AutoSize = true };
+        var header = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 3,
+            RowCount = 1,
+            Margin = new Padding(0, 0, 0, 8)
+        };
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 54));
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 164));
+        var brand = new Label
+        {
+            Text = "LL",
+            Dock = DockStyle.Fill,
+            TextAlign = ContentAlignment.MiddleCenter,
+            Font = new Font("Segoe UI", 15F, FontStyle.Bold),
+            ForeColor = Color.White,
+            BackColor = Color.FromArgb(35, 139, 82),
+            Margin = new Padding(0, 5, 12, 5),
+            Tag = "brand"
+        };
+        header.Controls.Add(brand, 0, 0);
+
+        var brandText = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, Margin = new Padding(0, 4, 0, 4) };
+        brandText.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        brandText.Controls.Add(new Label
+        {
+            Text = "LocaLizard",
+            AutoSize = true,
+            Font = new Font("Segoe UI Semibold", 19F, FontStyle.Bold),
+            Margin = new Padding(0, 0, 0, 0)
+        }, 0, 0);
+        brandText.Controls.Add(new Label
+        {
+            Text = "Подготовка Windows IoT Enterprise LTSC · ru-RU",
+            AutoSize = true,
+            ForeColor = Color.DimGray,
+            Tag = "muted",
+            Margin = new Padding(1, 0, 0, 0)
+        }, 0, 1);
+        header.Controls.Add(brandText, 1, 0);
+
+        themeSelector.Items.Clear();
+        themeSelector.Items.AddRange(["Система", "Светлая", "Тёмная"]);
+        themeSelector.SelectedIndex = selectedTheme switch { "Light" => 1, "Dark" => 2, _ => 0 };
+        themeSelector.Anchor = AnchorStyles.Right;
+        themeSelector.Margin = new Padding(4, 18, 2, 0);
+        themeSelector.SelectedIndexChanged += (_, _) =>
+        {
+            selectedTheme = themeSelector.SelectedIndex switch { 1 => "Light", 2 => "Dark", _ => "System" };
+            UiThemeManager.Save(selectedTheme);
+            UiThemeManager.Apply(this, selectedTheme);
+        };
+        header.Controls.Add(themeSelector, 2, 0);
+        root.Controls.Add(header, 0, 0);
+
+        var tabs = new TabControl { Dock = DockStyle.Fill, Padding = new Point(18, 7), HotTrack = true };
+        root.Controls.Add(tabs, 0, 1);
+
+        source.PlaceholderText = "Перетащите ISO сюда или выберите файл";
+        donor.PlaceholderText = "Необязательно: ISO с русскими компонентами";
+        output.PlaceholderText = "Путь для итогового ISO";
+        packages.PlaceholderText = "Каталог локального кэша пакетов";
+        fod.PlaceholderText = "Каталог FOD / Languages and Optional Features";
+        lxp.PlaceholderText = "Каталог APPX/MSIX и License XML";
+        updates.PlaceholderText = "Каталог с updates.json";
+        work.PlaceholderText = "Рабочая папка";
+        drivers.PlaceholderText = "Каталог INF-драйверов";
+        unattend.PlaceholderText = "Файл unattend.xml";
+
+        var createTab = CreatePage("Создание ISO", "Создание установочного ISO", "Выберите исходный образ и место сохранения. Остальные настройки можно оставить по умолчанию.", out var createStack);
+        AddSection(createStack, "Исходные образы и результат", "Исходный ISO не изменяется. Русский ISO-донор нужен только тогда, когда дополнительные компоненты отсутствуют в онлайн-источниках.",
+            MakePathTable(
+                ("Исходный Windows ISO", source, false, false, null),
+                ("Русский ISO-донор", donor, false, false, null),
+                ("Выходной ISO", output, false, true, null)));
+        var localizationOptions = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, FlowDirection = FlowDirection.TopDown, WrapContents = false, Padding = new Padding(2), Margin = new Padding(0) };
+        localizationOptions.Controls.Add(setup);
+        localizationOptions.Controls.Add(allowPartial);
+        AddSection(createStack, "Локализация", "Полная локализация Setup / WinPE включена по умолчанию. Частичная локализация требует отдельного явного разрешения.", localizationOptions);
+        tabs.TabPages.Add(createTab);
+
+        var componentsTab = CreatePage("Компоненты", "Источники языковых компонентов", "Все дополнительные источники необязательны. Программа проверяет язык, архитектуру, семейство сборки и подписи пакетов.", out var componentsStack);
+        AddSection(componentsStack, "Языковые пакеты и обновления", "Укажите локальные каталоги, когда хотите использовать заранее подготовленные ресурсы.",
+            MakePathTable(
+                ("Кэш языковых пакетов", packages, true, false, null),
+                ("FOD / Language Features", fod, true, false, null),
+                ("Каталог обновлений", updates, true, false, null),
+                ("Store LXP", lxp, true, false, null)));
+        var productIdRow = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 3, RowCount = 1, Margin = new Padding(0) };
+        productIdRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 220));
+        productIdRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        productIdRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 112));
+        productIdRow.Controls.Add(new Label { Text = "Microsoft Store Product ID", AutoSize = true, Anchor = AnchorStyles.Left, Padding = new Padding(0, 8, 8, 0) }, 0, 0);
+        storeProductId.Dock = DockStyle.Fill;
+        storeProductId.PlaceholderText = "Необязательно: идентификатор продукта LXP";
+        productIdRow.Controls.Add(storeProductId, 1, 0);
+        productIdRow.SetColumnSpan(storeProductId, 2);
+        AddSection(componentsStack, "Дополнительный источник LXP", "Используется для необязательной установки русского Language Experience Pack.", productIdRow);
+        tabs.TabPages.Add(componentsTab);
+
+        var advancedTab = CreatePage("Параметры", "Расширенные настройки", "Эти параметры нужны не для каждой сборки. Сохранённые значения продолжают использоваться в следующих запусках.", out var advancedStack);
+        AddSection(advancedStack, "Рабочая среда и пользовательские файлы", "Рабочие файлы можно сохранить для последующей диагностики.",
+            MakePathTable(
+                ("Рабочая папка", work, true, false, null),
+                ("INF-драйверы для install.wim", drivers, true, false, null),
+                ("Файл автоматической установки", unattend, false, false, "Unattend XML (*.xml)|*.xml|Все файлы (*.*)|*.*")));
+        var advancedOptions = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, FlowDirection = FlowDirection.TopDown, WrapContents = false, Padding = new Padding(2), Margin = new Padding(0) };
+        advancedOptions.Controls.Add(keep);
+        advancedOptions.Controls.Add(split);
+        advancedOptions.Controls.Add(hyperv);
+        AddSection(advancedStack, "Параметры обслуживания", "Hyper-V-проверка необязательна и выполняется только после создания ISO.", advancedOptions);
+        tabs.TabPages.Add(advancedTab);
+
+        var toolsTab = CreatePage("Инструменты", "Инструменты и диагностика", "Вспомогательные операции вынесены отдельно, чтобы не перегружать основной сценарий создания ISO.", out var toolsStack);
+        var toolButtons = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, WrapContents = true, FlowDirection = FlowDirection.LeftToRight, Padding = new Padding(2), Margin = new Padding(0) };
+        foreach (var button in new[] { preflight, patch, catalog, uupCheck, importProfile, exportProfile })
+        {
+            button.AutoSize = false;
+            button.Width = 250;
+            button.Height = 42;
+            button.Margin = new Padding(4);
+            toolButtons.Controls.Add(button);
+        }
+        preflight.Text = "Проверить условия сборки";
+        patch.Text = "Обработать существующий WIM";
+        catalog.Text = "Microsoft Update Catalog";
+        uupCheck.Text = "Проверить UUP Dump";
+        importProfile.Text = "Загрузить профиль";
+        exportProfile.Text = "Сохранить профиль";
+        AddSection(toolsStack, "Доступные инструменты", "Для создания обычного ISO достаточно главной вкладки. Здесь находятся отдельные диагностические и сервисные действия.", toolButtons);
+        tabs.TabPages.Add(toolsTab);
+
+        var logTab = new TabPage("Журнал") { Padding = new Padding(12) };
+        var logLayout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, Padding = new Padding(6) };
+        logLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        logLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        var logToolbar = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, FlowDirection = FlowDirection.LeftToRight };
+        var clearLog = new Button { Text = "Очистить журнал", AutoSize = true };
+        clearLog.Click += (_, _) => log.Clear();
+        logToolbar.Controls.Add(new Label { Text = "Технические подробности выполнения операций", AutoSize = true, Padding = new Padding(4, 8, 14, 0), Tag = "muted" });
+        logToolbar.Controls.Add(clearLog);
+        log.Dock = DockStyle.Fill;
+        log.ReadOnly = true;
+        log.WordWrap = false;
+        log.Font = new Font("Consolas", 9F);
+        log.Margin = new Padding(0, 8, 0, 0);
+        logLayout.Controls.Add(logToolbar, 0, 0);
+        logLayout.Controls.Add(log, 0, 1);
+        logTab.Controls.Add(logLayout);
+        tabs.TabPages.Add(logTab);
+
+        start.Text = "Проверить и создать ISO";
+        start.AutoSize = false;
+        start.Width = 252;
+        start.Height = 42;
+        start.Margin = new Padding(6, 8, 0, 8);
+        start.AccessibleName = "primary";
+        cancel.Text = "Отменить";
+        cancel.AutoSize = false;
+        cancel.Width = 112;
+        cancel.Height = 42;
+        cancel.Margin = new Padding(6, 8, 0, 8);
+        cancel.Enabled = false;
+        cancel.AccessibleName = "secondary";
+
+        var footer = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 4, RowCount = 1, Margin = new Padding(0, 8, 0, 0) };
+        footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 116));
+        footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 124));
+        footer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 266));
+        status.AutoSize = false;
+        status.Dock = DockStyle.Fill;
+        status.Text = "Готово к настройке";
+        status.TextAlign = ContentAlignment.MiddleLeft;
+        status.AutoEllipsis = true;
+        status.Padding = new Padding(4, 0, 8, 0);
+        activityProgress.Dock = DockStyle.Fill;
+        activityProgress.Margin = new Padding(8, 23, 8, 23);
+        footer.Controls.Add(status, 0, 0);
+        footer.Controls.Add(activityProgress, 1, 0);
+        footer.Controls.Add(cancel, 2, 0);
+        footer.Controls.Add(start, 3, 0);
+        root.Controls.Add(footer, 0, 2);
+
         start.Click += async (_, _) => await StartAsync();
         patch.Click += async (_, _) => await PatchExistingWimAsync();
         catalog.Click += async (_, _) => await SearchCatalogAsync();
@@ -140,16 +391,10 @@ public sealed class MainForm : Form
         exportProfile.Click += (_, _) => ExportProfile();
         importProfile.Click += (_, _) => ImportProfile();
         cancel.Click += (_, _) => cancellation?.Cancel();
-        footer.Controls.Add(preflight); footer.Controls.Add(exportProfile); footer.Controls.Add(importProfile);
-        footer.Controls.Add(start); footer.Controls.Add(patch); footer.Controls.Add(catalog); footer.Controls.Add(uupCheck); footer.Controls.Add(cancel);
-        status.Padding = new Padding(10, 8, 0, 0);
-        footer.Controls.Add(status);
-        root.Controls.Add(footer);
 
         var appData = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LocaLizard");
         work.Text = Path.Combine(appData, "Work");
         packages.Text = Path.Combine(appData, "Packages");
-        status.Text = "Готово к настройке.";
     }
 
     private void AddPath(TableLayoutPanel panel, int row, string caption, TextBox field, bool folder, bool save, string? openFilter = null)
@@ -162,7 +407,7 @@ public sealed class MainForm : Form
         panel.Controls.Add(captionLabel, 0, row);
         field.Dock = DockStyle.Fill;
         panel.Controls.Add(field, 1, row);
-        var button = new Button { Text = "Выбрать…", AutoSize = true };
+        var button = new Button { Text = "Обзор…", AutoSize = true };
         button.Click += (_, _) =>
         {
             if (folder)
@@ -239,6 +484,7 @@ public sealed class MainForm : Form
         }
 
         cancellation = new CancellationTokenSource();
+        SetBusy(true);
         start.Enabled = false; patch.Enabled = false; catalog.Enabled = false; uupCheck.Enabled = false; preflight.Enabled = false; cancel.Enabled = true; log.Clear();
         SaveSettings();
         try
@@ -276,6 +522,7 @@ public sealed class MainForm : Form
         finally
         {
             cancellation.Dispose(); cancellation = null;
+            SetBusy(false);
             start.Enabled = true; patch.Enabled = true; catalog.Enabled = true; uupCheck.Enabled = true; preflight.Enabled = true; cancel.Enabled = false;
         }
     }
@@ -405,6 +652,7 @@ public sealed class MainForm : Form
         }
 
         cancellation = new CancellationTokenSource();
+        SetBusy(true);
         start.Enabled = false; patch.Enabled = false; catalog.Enabled = false; cancel.Enabled = true; log.Clear();
         SaveSettings();
         var service = new IsoBuildService();
@@ -427,6 +675,7 @@ public sealed class MainForm : Form
         finally
         {
             cancellation.Dispose(); cancellation = null;
+            SetBusy(false);
             start.Enabled = true; patch.Enabled = true; catalog.Enabled = true; cancel.Enabled = false;
         }
     }
@@ -435,6 +684,7 @@ public sealed class MainForm : Form
     {
         if (cancellation is not null) return;
         cancellation = new CancellationTokenSource();
+        SetBusy(true);
         start.Enabled = false; patch.Enabled = false; catalog.Enabled = false; uupCheck.Enabled = false; cancel.Enabled = true;
         status.Text = "Проверяю доступность UUP Dump для LTSC…";
         log.Clear();
@@ -460,6 +710,7 @@ public sealed class MainForm : Form
         finally
         {
             cancellation.Dispose(); cancellation = null;
+            SetBusy(false);
             start.Enabled = true; patch.Enabled = true; catalog.Enabled = true; uupCheck.Enabled = true; cancel.Enabled = false;
         }
     }
@@ -530,6 +781,7 @@ public sealed class MainForm : Form
         }
 
         cancellation = new CancellationTokenSource();
+        SetBusy(true);
         start.Enabled = false; patch.Enabled = false; catalog.Enabled = false; cancel.Enabled = true;
         SaveSettings();
         using var client = new MicrosoftUpdateCatalogClient();
@@ -584,6 +836,7 @@ public sealed class MainForm : Form
         finally
         {
             cancellation.Dispose(); cancellation = null;
+            SetBusy(false);
             start.Enabled = true; patch.Enabled = true; catalog.Enabled = true; cancel.Enabled = false;
         }
     }
@@ -755,6 +1008,7 @@ public sealed class MainForm : Form
         }
 
         cancellation = new CancellationTokenSource();
+        SetBusy(true);
         preflight.Enabled = false; start.Enabled = false; patch.Enabled = false;
         catalog.Enabled = false; uupCheck.Enabled = false; cancel.Enabled = true;
         try
@@ -779,6 +1033,7 @@ public sealed class MainForm : Form
         finally
         {
             cancellation.Dispose(); cancellation = null;
+            SetBusy(false);
             preflight.Enabled = true; start.Enabled = true; patch.Enabled = true;
             catalog.Enabled = true; uupCheck.Enabled = true; cancel.Enabled = false;
         }
@@ -841,6 +1096,13 @@ public sealed class MainForm : Form
                 AppInfo.Name, MessageBoxButtons.OK, MessageBoxIcon.Error);
             return false;
         }
+    }
+
+    private void SetBusy(bool busy)
+    {
+        if (IsDisposed) return;
+        activityProgress.Visible = busy;
+        activityProgress.MarqueeAnimationSpeed = busy ? 24 : 0;
     }
 
     private void AppendLog(string message)
