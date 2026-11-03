@@ -43,9 +43,20 @@ public sealed class ExternalPackageDownloadService : IDisposable
     {
         var source = LanguageSourceCatalog.Find(sourceId)
             ?? throw new InvalidDataException("Неизвестный источник загрузки.");
-        if (!Uri.TryCreate(sourceUrl?.Trim(), UriKind.Absolute, out var initialUri) ||
-            !SecurityPolicy.IsPermittedExternalDownloadUrl(sourceId, initialUri))
+        if (!Uri.TryCreate(sourceUrl?.Trim(), UriKind.Absolute, out var initialUri))
+            throw new InvalidDataException("Некорректный URL загрузки.");
+
+        PixeldrainFileReference? pixeldrainMetadata = null;
+        if (sourceId.Equals("pixeldrain", StringComparison.OrdinalIgnoreCase))
+        {
+            using var provider = new PixeldrainFileReferenceProvider();
+            pixeldrainMetadata = await provider.ResolveAsync(initialUri, ct);
+            initialUri = pixeldrainMetadata.DownloadUri;
+        }
+        else if (!SecurityPolicy.IsPermittedExternalDownloadUrl(sourceId, initialUri))
+        {
             throw new InvalidDataException("URL не разрешён для выбранного источника. Нужна прямая HTTPS-ссылка с доверенного домена.");
+        }
 
         if (!string.IsNullOrWhiteSpace(expectedDigest))
         {
@@ -94,6 +105,7 @@ public sealed class ExternalPackageDownloadService : IDisposable
 
             var rawName = response.Content.Headers.ContentDisposition?.FileNameStar
                 ?? response.Content.Headers.ContentDisposition?.FileName
+                ?? pixeldrainMetadata?.FileName
                 ?? Path.GetFileName(finalUri.AbsolutePath);
             var fileName = Path.GetFileName(Uri.UnescapeDataString((rawName ?? "").Trim().Trim('"')));
             if (string.IsNullOrWhiteSpace(fileName))
@@ -109,9 +121,15 @@ public sealed class ExternalPackageDownloadService : IDisposable
                 throw new InvalidDataException("Размер загрузки не указан или превышает допустимый предел.");
 
             string? metadataSha1 = null;
-            string? metadataSha256 = null;
-            long? metadataSize = null;
-            if (sourceId.Equals("fydexx-rs5", StringComparison.OrdinalIgnoreCase))
+            string? metadataSha256 = pixeldrainMetadata?.Sha256;
+            long? metadataSize = pixeldrainMetadata?.Size;
+            if (sourceId.Equals("pixeldrain", StringComparison.OrdinalIgnoreCase))
+            {
+                // The public Pixeldrain file-info endpoint supplies independent SHA-256 and size.
+                if (metadataSha256 is null || metadataSize is null)
+                    throw new InvalidDataException("Pixeldrain metadata did not contain an integrity hash and file size.");
+            }
+            else if (sourceId.Equals("fydexx-rs5", StringComparison.OrdinalIgnoreCase))
             {
                 using var provider = new FydexxRs5MetadataProvider();
                 var metadata = await provider.FindAsync(fileName, ct)
@@ -133,7 +151,9 @@ public sealed class ExternalPackageDownloadService : IDisposable
                 if (metadataSha1 is null && metadataSha256 is null)
                     throw new InvalidDataException("RG-Adguard не предоставил контрольную сумму.");
             }
-            else if (source.Kind == LanguageSourceKind.ManualImport && string.IsNullOrWhiteSpace(expectedDigest))
+            else if (source.Kind == LanguageSourceKind.ManualImport &&
+                     !sourceId.Equals("pixeldrain", StringComparison.OrdinalIgnoreCase) &&
+                     string.IsNullOrWhiteSpace(expectedDigest))
             {
                 throw new InvalidDataException("Для прямой загрузки с community-источника обязательно укажите SHA-1 или SHA-256 из независимого каталога.");
             }
