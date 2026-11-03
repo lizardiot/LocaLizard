@@ -524,6 +524,32 @@ Check(whatTheHackMedia.All(x => SecurityPolicy.IsTrustedMicrosoftMediaUrl(x.Down
     "WhatTheHack source script and resulting Microsoft ISO links pass their exact allow-lists");
 Check(!SecurityPolicy.IsTrustedMicrosoftMediaUrl(new Uri("https://software-download.microsoft.com.evil.example/download/pr/19041.1/test.iso")),
     "WhatTheHack parser rejects lookalike Microsoft download hosts");
+Check(SecurityPolicy.IsPermittedExternalDownloadUrl("what-the-hack",
+        new Uri("https://software-download.microsoft.com/download/pr/19041.1.test.iso")) &&
+      !SecurityPolicy.IsPermittedExternalDownloadUrl("what-the-hack",
+        new Uri("https://evil.example/download/pr/19041.1.test.iso")),
+    "direct WhatTheHack downloads are restricted to the exact Microsoft media host and ISO path");
+Check(SecurityPolicy.IsTrustedCommunityDirectUrl("pcportal",
+        new Uri("https://pcportal.org/files/ru-ru-language-pack.cab")) &&
+      !SecurityPolicy.IsTrustedCommunityDirectUrl("pcportal",
+        new Uri("https://evil.example/files/ru-ru-language-pack.cab")) &&
+      !SecurityPolicy.IsTrustedCommunityDirectUrl("pcportal",
+        new Uri("http://pcportal.org/files/ru-ru-language-pack.cab")),
+    "community direct downloads require HTTPS and the selected source's exact host");
+Check(SecurityPolicy.IsPermittedExternalDownloadRedirect("what-the-hack",
+        new Uri("https://software-download.microsoft.com/download/pr/19041.1.test.iso"),
+        new Uri("https://download.microsoft.com/download/test.iso")) &&
+      !SecurityPolicy.IsPermittedExternalDownloadRedirect("what-the-hack",
+        new Uri("https://software-download.microsoft.com/download/pr/19041.1.test.iso"),
+        new Uri("https://evil.example/test.iso")),
+    "external download redirects remain on Microsoft package hosts");
+Check(TorrentDownloadService.IsValidMagnetUri(
+        "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=Windows%20LP") &&
+      TorrentDownloadService.IsValidTorrentInput(
+        "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=Windows%20LP") &&
+      !TorrentDownloadService.IsValidMagnetUri("magnet:?xt=urn:btih:not-a-valid-infohash") &&
+      !TorrentDownloadService.IsValidTorrentInput("https://evil.example/file.torrent"),
+    "torrent downloader accepts only valid BitTorrent info-hash magnets or local .torrent files");
 
 Check(LanguageSourceCatalog.ManualSources.Any(x => x.SourceId == "pcportal") &&
       LanguageSourceCatalog.ManualSources.Any(x => x.SourceId == "fydexx-rs5") &&
