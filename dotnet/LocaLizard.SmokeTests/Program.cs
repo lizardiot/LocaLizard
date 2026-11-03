@@ -469,9 +469,100 @@ Check(!reloadedSourceSettings.IsEnabled("dexit-gist") && reloadedSourceSettings.
 using (var defaultSourceRegistry = LanguageSourceFactory.CreateDefault(reloadedSourceSettings))
     Check(defaultSourceRegistry.Sources.SequenceEqual(new[] { "osbuilder-public", "w10mui" }),
         "central source factory registers enabled providers only");
-Check(LanguageSourceCatalog.ManualSources.Any(x => x.SourceId == "community-import") &&
+var fydexxHashX64 = new string('a', 40);
+var fydexxHashX86 = new string('b', 40);
+var fydexxFixture = string.Join("\n", new[]
+{
+    " | x64\\langpacks\\Microsoft-Windows-Client-Language-Pack_x64_ru-ru.cab SHA-1: " + fydexxHashX64,
+    " | x86\\langpacks\\Microsoft-Windows-Client-Language-Pack_x86_ru-ru.cab SHA-1: " + fydexxHashX86,
+    " | https://mirrorace.com/m/abc123 | Microsoft-Windows-Client-Language-Pack_x64_ru-ru.cab"
+});
+var fydexxEntries = FydexxRs5MetadataProvider.ParseCatalog(fydexxFixture);
+Check(fydexxEntries.Count == 2 && fydexxEntries.All(x => x.BuildFamily == 17763 && x.ProductFamily == "Client"),
+    "pinned fydexx RS5 catalog parser extracts only build 17763 client package rows");
+Check(fydexxEntries.Single(x => x.Architecture == "x64").Sha1 == fydexxHashX64 &&
+      fydexxEntries.Single(x => x.Architecture == "x86").Sha1 == fydexxHashX86,
+    "fydexx parser preserves architecture-specific SHA-1 values");
+Check(SecurityPolicy.IsTrustedMetadataUrl(new Uri(FydexxRs5MetadataProvider.CatalogUrl)),
+    "pinned fydexx raw Gist path is allow-listed");
+Check(!SecurityPolicy.IsTrustedPackageUrl(new Uri("https://mirrorace.com/m/abc123")),
+    "fydexx mirror links are not trusted package download URLs");
+
+var rgAdguardId = "12345678-abcd-1234-abcd-1234567890ab";
+var rgAdguardPath = new Uri($"https://files.rg-adguard.net/file/{rgAdguardId}");
+var rgAdguardName = "Microsoft-Windows-Client-Language-Pack_x64_ru-ru.cab";
+var rgAdguardSha1 = new string('c', 40);
+var rgAdguardSha256 = new string('d', 64);
+var rgSearchLinks = RgAdguardFileMetadataProvider.ParseDetailsLinks(
+    $"<a href='/file/{rgAdguardId}'>CAB details</a><a href='https://evil.example/file/{rgAdguardId}'>bad</a>");
+Check(rgSearchLinks.Count == 1 && rgSearchLinks[0] == rgAdguardPath,
+    "RG-Adguard search parser extracts only local file-detail links");
+var rgMetadata = RgAdguardFileMetadataProvider.ParseDetailsPage(
+    $"<h1>{rgAdguardName}</h1><p>Size: 123456 bytes</p><p>SHA-1: {rgAdguardSha1}</p><p>SHA-256: {rgAdguardSha256}</p>",
+    rgAdguardName, rgAdguardPath);
+Check(rgMetadata is { Sha1: not null, Sha256: not null, Size: 123456 } &&
+      rgMetadata.Sha1 == rgAdguardSha1 && rgMetadata.Sha256 == rgAdguardSha256,
+    "RG-Adguard details parser returns exact filename hashes and size");
+Check(SecurityPolicy.IsTrustedMetadataUrl(new Uri(RgAdguardFileMetadataProvider.SearchUrl)) &&
+      SecurityPolicy.IsTrustedMetadataUrl(rgAdguardPath),
+    "RG-Adguard search and file detail metadata paths are allow-listed");
+Check(!SecurityPolicy.IsTrustedMetadataUrl(new Uri("https://files.rg-adguard.net/api/other")),
+    "RG-Adguard metadata allow-list rejects unrelated paths");
+
+var whatTheHackFixture = string.Join("\n", new[]
+{
+    "# $inboxAppsIsoUrl = 'https://evil.example/inbox.iso'",
+    "$langIsoUrl = 'https://software-download.microsoft.com/download/pr/19041.1.191206-1406.vb_release_CLIENTLANGPACKDVD_OEM_MULTI.iso'",
+    "$fodIsoUrl = 'https://software-download.microsoft.com/download/pr/19041.1.191206-1406.vb_release_amd64fre_FOD-PACKAGES_OEM_PT1_amd64fre_MULTI.iso'",
+    "$inboxAppsIsoUrl = 'https://evil.example/active.iso'"
+});
+var whatTheHackMedia = WhatTheHackMediaReferenceProvider.ParseScript(whatTheHackFixture);
+Check(whatTheHackMedia.Count == 2 && whatTheHackMedia.All(x => x.BuildLabel.Contains("20H2", StringComparison.Ordinal)),
+    "WhatTheHack parser extracts only the two active Windows 10 20H2 media references");
+Check(whatTheHackMedia.All(x => SecurityPolicy.IsTrustedMicrosoftMediaUrl(x.DownloadUri)) &&
+      SecurityPolicy.IsTrustedMetadataUrl(new Uri(WhatTheHackMediaReferenceProvider.ScriptUrl)),
+    "WhatTheHack source script and resulting Microsoft ISO links pass their exact allow-lists");
+Check(!SecurityPolicy.IsTrustedMicrosoftMediaUrl(new Uri("https://software-download.microsoft.com.evil.example/download/pr/19041.1/test.iso")),
+    "WhatTheHack parser rejects lookalike Microsoft download hosts");
+
+Check(LanguageSourceCatalog.ManualSources.Any(x => x.SourceId == "pcportal") &&
+      LanguageSourceCatalog.ManualSources.Any(x => x.SourceId == "fydexx-rs5") &&
+      LanguageSourceCatalog.ReferenceSources.Any(x => x.SourceId == "rg-adguard-files") &&
       LanguageSourceCatalog.ReferenceSources.Any(x => x.SourceId == "m417z-language-files"),
-    "manual community imports and extracted reference files are separated from automatic providers");
+    "community import sources, pinned hash references and extracted resource references are separated");
+
+Check(ManualPackageImportService.IsSupportedImportExtension("License.xml") &&
+      ManualPackageImportService.IsSupportedImportExtension("install.iso") &&
+      !ManualPackageImportService.IsSupportedImportExtension("payload.ps1") &&
+      !ManualPackageImportService.IsSupportedImportExtension("setup.exe") &&
+      !ManualPackageImportService.IsSupportedImportExtension("archive.zip"),
+    "manual import extension allow-list excludes scripts, executables and arbitrary archives");
+
+var manualImportRoot = Path.Combine(folder, "manual-import");
+var manualFixture = Path.Combine(folder, "Microsoft-Windows-Client-Language-Pack_x64_ru-ru.cab");
+await File.WriteAllTextAsync(manualFixture, "manual import CAB fixture");
+string manualSha256;
+await using (var manualStream = File.OpenRead(manualFixture))
+    manualSha256 = Convert.ToHexString(await System.Security.Cryptography.SHA256.HashDataAsync(manualStream)).ToLowerInvariant();
+var manualImporter = new ManualPackageImportService();
+var manualResult = await manualImporter.ImportAsync("pcportal", [manualFixture], manualImportRoot,
+    manualSha256, CancellationToken.None);
+Check(manualResult.ImportedFiles.Count == 1 && File.Exists(manualResult.ImportedFiles[0]) &&
+      manualResult.ImportedFiles[0].Contains(Path.Combine("ManualImport", "LanguagePacks", "ru-ru"), StringComparison.OrdinalIgnoreCase) &&
+      File.Exists(manualResult.ManifestPath),
+    "manual package import copies a local ru-RU CAB into the package cache and writes a provenance manifest");
+var manualDuplicate = await manualImporter.ImportAsync("pcportal", [manualFixture], manualImportRoot,
+    manualSha256, CancellationToken.None);
+Check(manualDuplicate.SkippedFiles.Count == 1 && manualDuplicate.ImportedFiles.Count == 0,
+    "manual package import is idempotent when the same content is imported twice");
+var manualBadDigestRejected = false;
+try
+{
+    await manualImporter.ImportAsync("pcportal", [manualFixture], manualImportRoot,
+        new string('0', 64), CancellationToken.None);
+}
+catch (InvalidDataException) { manualBadDigestRejected = true; }
+Check(manualBadDigestRejected, "manual package import rejects a supplied digest mismatch");
 
     var payload = Path.Combine(folder, "LCU.msu");
     await File.WriteAllTextAsync(payload, "test update payload");
