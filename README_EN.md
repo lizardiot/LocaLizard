@@ -19,9 +19,9 @@
 - Centralized source registry with parallel W10MUI/OSBuilder/Dexit discovery; pinned fydexx RS5 provides exact filename/architecture/SHA-1 metadata, and RG-Adguard provides exact-file hash/size cross-checks.
 - WhatTheHack exposes two pinned historical Microsoft ISO URLs for Windows 10 20H2; the wizard can download and import them directly without executing the PowerShell script.
 - W10MUI Windows 11 26H1 build 28000 LP/FoD catalogs are supported for the client family; Windows IoT compatibility is deliberately not inferred.
-- The import wizard supports local files and direct HTTPS downloads for CAB/ESD/ISO/APPX/MSIX and License.xml, computes SHA-1/SHA-256, and writes a provenance manifest. Community URLs are restricted to the selected source's own HTTPS host and require an independent checksum.
+- The import wizard supports local files and direct HTTPS downloads for CAB/ESD/ISO/APPX/MSIX and License.xml, computes SHA-1/SHA-256, and writes a provenance manifest. Community URLs are restricted to the selected source's own HTTPS host and require an independent checksum; Pixeldrain uses its public API and verifies its metadata SHA-256 and size.
 
-- BitTorrent hand-off is available through a locally installed aria2c: users provide a magnet URI or a .torrent file, and only supported package/media file types are offered to the normal import checks.
+- Pixeldrain public `/u/{id}` links are resolved through the official download API. File name, supported type, size, SHA-256 and availability are checked before transfer; CAPTCHA, rate limits and API blocks stop the download and leave browser/local import as the fallback.\n- BitTorrent hand-off is available through a locally installed aria2c: users provide a magnet URI or a .torrent file, and only supported package/media file types are offered to the normal import checks.
 - Russian `ru-RU` is the only target language; no other language support or language selection is being added.
 - The base UUP Client Language Pack ESD is extracted with native DISM and installed directly from `update.mum`, avoiding an unnecessary CAB rebuild. HTTP Microsoft Delivery CDN responses are permitted only for the exact CDN hosts/path and only with the SHA-1 and file size supplied by UUP Dump.
 
