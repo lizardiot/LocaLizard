@@ -38,7 +38,7 @@
 - Supports WIM/ESD and input split-WIM `.swm` files; optionally splits the output WIM into SWM parts for FAT32 and processes an existing WIM into a new file.
 - Static result validation, logging, and a JSON audit report.
 - Resize the log panel vertically by dragging its upper or lower horizontal sash; the interface width is unaffected.
-- Two independent drag-and-drop zones accept the target Windows ISO and an optional Russian donor ISO, filling their corresponding fields.
+- A single drag-and-drop zone accepts the input Windows ISO and fills the input image field.
 - Optional interactive Hyper-V ISO boot test using a temporary VM without network access, VMConnect, visual confirmation of the Setup screen, and VM cleanup.
 
 ## Limitations and environment requirements
