@@ -154,8 +154,11 @@ public sealed class RgAdguardFileMetadataProvider : IDisposable
                      @"(?i)href\s*=\s*['""](?<url>(?:https://files\.rg-adguard\.net)?/file/[a-f0-9-]{8,64}/?)['""]"))
         {
             var value = match.Groups["url"].Value;
-            var uri = Uri.TryCreate(value, UriKind.Absolute, out var absolute)
-                ? absolute : new Uri("https://files.rg-adguard.net", value);
+            Uri uri;
+            if (Uri.TryCreate(value, UriKind.Absolute, out var absolute))
+                uri = absolute;
+            else
+                uri = new Uri(new Uri("https://files.rg-adguard.net"), value);
             if (SecurityPolicy.IsTrustedMetadataUrl(uri) &&
                 !links.Any(x => x.AbsoluteUri.Equals(uri.AbsoluteUri, StringComparison.OrdinalIgnoreCase)))
                 links.Add(uri);
