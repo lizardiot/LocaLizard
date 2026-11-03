@@ -16,7 +16,7 @@ Check(WindowsLifecycle.GetInfo(10240, new DateOnly(2026, 10, 31)) is { IsSupport
 Check(WindowsLifecycle.GetInfo(26100, new DateOnly(2026, 10, 31)) is { IsSupported: true },
     "IoT Enterprise LTSC 2024 remains supported");
 Check(WindowsLifecycle.GetInfo(99999) is null, "unknown build has no guessed lifecycle");
-Check(AppInfo.Version == "0.3.6", "AppInfo version comes from centralized assembly metadata");
+Check(AppInfo.Version == "0.7.2", "AppInfo version comes from centralized assembly metadata");
 
 static IEnumerable<string> SimulatedDeniedDirectoryEntries()
 {
