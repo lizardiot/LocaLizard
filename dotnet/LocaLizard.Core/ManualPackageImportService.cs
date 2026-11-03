@@ -128,6 +128,8 @@ public sealed class ManualPackageImportService
             var copyResult = await CopyAndHashAsync(input, temporary, ct);
             try
             {
+                if (copyResult.Size != info.Length)
+                    throw new InvalidDataException("Размер файла изменился во время импорта.");
                 if (!string.IsNullOrWhiteSpace(catalogSha1) &&
                     !copyResult.Sha1.Equals(catalogSha1, StringComparison.OrdinalIgnoreCase))
                     throw new InvalidDataException("Импортируемый файл не совпадает с SHA-1 из каталога.");
@@ -188,7 +190,7 @@ public sealed class ManualPackageImportService
         return new ManualPackageImportResult(imported, skipped, mediaIso, fodDirectory, lxpDirectory, manifestPath);
     }
 
-    internal static bool IsSupportedImportExtension(string fileName)
+    public static bool IsSupportedImportExtension(string fileName)
     {
         var extension = Path.GetExtension(fileName);
         return SupportedExtensions.Contains(extension) &&
@@ -268,13 +270,13 @@ public sealed class ManualPackageImportService
         finally { try { if (File.Exists(temporary)) File.Delete(temporary); } catch { } }
     }
 
-    internal sealed class ManualPackageImportManifest
+    public sealed class ManualPackageImportManifest
     {
         [JsonPropertyName("schema_version")] public int SchemaVersion { get; init; } = 1;
         [JsonPropertyName("files")] public List<ManualPackageImportManifestEntry> Files { get; set; } = [];
     }
 
-    private sealed record ManualPackageImportManifestEntry(
+    public sealed record ManualPackageImportManifestEntry(
         [property: JsonPropertyName("source_id")] string SourceId,
         [property: JsonPropertyName("source_name")] string SourceName,
         [property: JsonPropertyName("file_name")] string FileName,

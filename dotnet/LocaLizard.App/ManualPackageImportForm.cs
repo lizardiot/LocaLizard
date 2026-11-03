@@ -100,17 +100,13 @@ public sealed class ManualPackageImportForm : Form
         digestPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         digestPanel.Controls.Add(new Label { Text = "Дополнительный хеш", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 0);
         digestPanel.Controls.Add(expectedDigest, 1, 0);
-        digestPanel.SetColumnSpan(new Label
+        var digestNote = new Label
         {
             Text = "Для fydexx и RG-Adguard хеш запрашивается из закреплённого каталога автоматически. Для остальных community-источников можно ввести известный SHA-1/SHA-256.",
             AutoSize = true, MaximumSize = new Size(820, 0), ForeColor = SystemColors.GrayText
-        }, 2);
-        digestPanel.Controls.Add(new Label
-        {
-            Text = "Для fydexx и RG-Adguard хеш запрашивается из закреплённого каталога автоматически. Для остальных community-источников можно ввести известный SHA-1/SHA-256.",
-            AutoSize = true, MaximumSize = new Size(820, 0), ForeColor = SystemColors.GrayText
-        }, 0, 1);
-        digestPanel.SetColumnSpan(digestPanel.GetControlFromPosition(0, 1)!, 2);
+        };
+        digestPanel.Controls.Add(digestNote, 0, 1);
+        digestPanel.SetColumnSpan(digestNote, 2);
         root.Controls.Add(digestPanel, 0, 3);
 
         var actions = new FlowLayoutPanel
