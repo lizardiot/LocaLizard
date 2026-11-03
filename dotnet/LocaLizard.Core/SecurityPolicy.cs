@@ -69,6 +69,46 @@ public static class SecurityPolicy
         uri.AbsolutePath.EndsWith(".iso", StringComparison.OrdinalIgnoreCase) &&
         !uri.AbsolutePath.Contains("..", StringComparison.Ordinal);
 
+    /// <summary>
+    /// Direct downloads are allowed only from the selected source's own HTTPS host,
+    /// Microsoft package CDN hosts, or the pinned WhatTheHack Microsoft ISO endpoints.
+    /// </summary>
+    public static bool IsPermittedExternalDownloadUrl(string sourceId, Uri uri)
+    {
+        if (sourceId.Equals("what-the-hack", StringComparison.OrdinalIgnoreCase))
+            return IsTrustedMicrosoftMediaUrl(uri);
+        if (sourceId is "fydexx-rs5" or "rg-adguard-files")
+            return uri.Scheme == Uri.UriSchemeHttps && IsTrustedPackageUrl(uri);
+        return IsTrustedCommunityDirectUrl(sourceId, uri);
+    }
+
+    public static bool IsTrustedCommunityDirectUrl(string sourceId, Uri uri)
+    {
+        if (!IsSafeHttpsUri(uri) ||
+            LanguageSourceCatalog.Find(sourceId) is not { Kind: LanguageSourceKind.ManualImport, InformationUrl: { } informationUrl } ||
+            !Uri.TryCreate(informationUrl, UriKind.Absolute, out var sourceUri) ||
+            !IsSafeHttpsUri(sourceUri))
+            return false;
+
+        static string CanonicalHost(string host) =>
+            host.StartsWith("www.", StringComparison.OrdinalIgnoreCase) ? host[4..] : host;
+
+        if (!CanonicalHost(uri.Host).Equals(CanonicalHost(sourceUri.Host), StringComparison.OrdinalIgnoreCase))
+            return false;
+        var fileName = Path.GetFileName(Uri.UnescapeDataString(uri.AbsolutePath));
+        return ManualPackageImportService.IsSupportedImportExtension(fileName);
+    }
+
+    public static bool IsPermittedExternalDownloadRedirect(string sourceId, Uri initial, Uri next)
+    {
+        if (!initial.IsAbsoluteUri || !IsSafeHttpsUri(next))
+            return false;
+        if (sourceId.Equals("what-the-hack", StringComparison.OrdinalIgnoreCase))
+            return IsTrustedMicrosoftMediaUrl(next) || IsTrustedPackageUrl(next) && next.Scheme == Uri.UriSchemeHttps;
+        return IsTrustedCommunityDirectUrl(sourceId, next) ||
+               IsTrustedPackageUrl(next) && next.Scheme == Uri.UriSchemeHttps;
+    }
+
     public static bool IsTrustedRedirect(Uri initial, Uri next) =>
         initial.IsAbsoluteUri && next.IsAbsoluteUri &&
         initial.Scheme == Uri.UriSchemeHttps && next.Scheme == Uri.UriSchemeHttps &&
