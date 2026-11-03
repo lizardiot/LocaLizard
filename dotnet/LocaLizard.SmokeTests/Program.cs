@@ -551,6 +551,64 @@ Check(TorrentDownloadService.IsValidMagnetUri(
       !TorrentDownloadService.IsValidTorrentInput("https://evil.example/file.torrent"),
     "torrent downloader accepts only valid BitTorrent info-hash magnets or local .torrent files");
 
+var pixeldrainShare = new Uri("https://pixeldrain.com/u/AbCd1234");
+var pixeldrainDownload = new Uri("https://pixeldrain.com/api/file/AbCd1234?download");
+var pixeldrainInfo = new Uri("https://pixeldrain.com/api/file/AbCd1234/info");
+var pixeldrainHash = new string('e', 64);
+Check(PixeldrainFileReferenceProvider.TryGetFileId(pixeldrainShare, out var pixeldrainId) &&
+      pixeldrainId == "AbCd1234" &&
+      PixeldrainFileReferenceProvider.TryGetFileId(
+          new Uri("https://pixeldrain.com/api/file/AbCd1234"), out var pixeldrainApiId) &&
+      pixeldrainApiId == "AbCd1234" &&
+      !PixeldrainFileReferenceProvider.TryGetFileId(new Uri("https://pixeldrain.com.evil.example/u/AbCd1234"), out _),
+    "Pixeldrain share link parser accepts only the official HTTPS host and supported file routes");
+Check(SecurityPolicy.IsTrustedMetadataUrl(pixeldrainInfo) &&
+      SecurityPolicy.IsPermittedExternalDownloadUrl("pixeldrain", pixeldrainDownload) &&
+      SecurityPolicy.IsPermittedExternalDownloadRedirect("pixeldrain", pixeldrainDownload,
+          new Uri("https://pixeldrain.com/api/file/AbCd1234?download")) &&
+      !SecurityPolicy.IsPermittedExternalDownloadUrl("pixeldrain",
+          new Uri("https://pixeldrain.com/api/file/AbCd1234.zip?download")) &&
+      !SecurityPolicy.IsPermittedExternalDownloadRedirect("pixeldrain", pixeldrainDownload,
+          new Uri("https://evil.example/payload.cab")),
+    "Pixeldrain API metadata, download endpoint and redirects use exact route/host allow-lists");
+var pixeldrainFixture = $"""
+{
+  "success": true,
+  "id": "AbCd1234",
+  "name": "Microsoft-Windows-Client-Language-Pack_x64_ru-ru.cab",
+  "size": 123456,
+  "mime_type": "application/vnd.ms-cab-compressed",
+  "hash_sha256": "{{pixeldrainHash}}",
+  "availability": "",
+  "can_download": true
+}
+""";
+var pixeldrainMetadata = PixeldrainFileReferenceProvider.ParseFileInfo(pixeldrainFixture, "AbCd1234");
+Check(pixeldrainMetadata.FileName == "Microsoft-Windows-Client-Language-Pack_x64_ru-ru.cab" &&
+      pixeldrainMetadata.Size == 123456 && pixeldrainMetadata.Sha256 == pixeldrainHash &&
+      pixeldrainMetadata.DownloadUri == pixeldrainDownload,
+    "Pixeldrain metadata parser returns exact installable filename, size, SHA-256 and API download URL");
+var pixeldrainCaptchaRejected = false;
+try
+{
+    PixeldrainFileReferenceProvider.ParseFileInfo(
+        pixeldrainFixture.Replace("\"availability\": \"\"", "\"availability\": \"file_rate_limited_captcha_required\""),
+        "AbCd1234");
+}
+catch (InvalidDataException) { pixeldrainCaptchaRejected = true; }
+Check(pixeldrainCaptchaRejected,
+    "Pixeldrain file metadata is rejected when download requires CAPTCHA or is rate-limited");
+var pixeldrainInvalidTypeRejected = false;
+try
+{
+    PixeldrainFileReferenceProvider.ParseFileInfo(
+        pixeldrainFixture.Replace("Microsoft-Windows-Client-Language-Pack_x64_ru-ru.cab", "payload.exe"),
+        "AbCd1234");
+}
+catch (InvalidDataException) { pixeldrainInvalidTypeRejected = true; }
+Check(pixeldrainInvalidTypeRejected,
+    "Pixeldrain API refuses files whose names do not have a supported installer extension");
+
 Check(LanguageSourceCatalog.ManualSources.Any(x => x.SourceId == "pcportal") &&
       LanguageSourceCatalog.ManualSources.Any(x => x.SourceId == "fydexx-rs5") &&
       LanguageSourceCatalog.ReferenceSources.Any(x => x.SourceId == "rg-adguard-files") &&
