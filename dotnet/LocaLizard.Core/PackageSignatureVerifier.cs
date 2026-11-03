@@ -52,6 +52,16 @@ public sealed class LegacyPackageDownloader(HttpClient? httpClient = null)
         Timeout = TimeSpan.FromMinutes(20)
     };
 
+    internal static async Task<bool> MatchesCatalogSha1Async(
+        string filePath, string? expectedSha1, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(expectedSha1)) return true;
+        if (!File.Exists(filePath)) return false;
+        await using var stream = File.OpenRead(filePath);
+        var actualSha1 = Convert.ToHexString(await SHA1.HashDataAsync(stream, cancellationToken));
+        return actualSha1.Equals(expectedSha1, StringComparison.OrdinalIgnoreCase);
+    }
+
     public async Task<LanguageResourceCandidate> DownloadVerifiedAsync(
         LanguageResourceCandidate candidate, LanguageResourceRequest request, string repositoryRoot,
         PackageSignatureVerifier signatureVerifier, ManagedRepositoryService manifest,
@@ -71,8 +81,11 @@ public sealed class LegacyPackageDownloader(HttpClient? httpClient = null)
         var destination = Path.Combine(repositoryRoot, effectiveFileName);
         if (File.Exists(destination))
         {
+            var existingHashMatches = await MatchesCatalogSha1Async(destination, candidate.Sha1, ct);
+            if (!existingHashMatches)
+                log?.Invoke("Существующий файл не совпадает с SHA-1 каталога; выполняется повторная загрузка.");
             var existingSignature = await signatureVerifier.VerifyMicrosoftAsync(destination, ct);
-            if (existingSignature.IsValid)
+            if (existingSignature.IsValid && existingHashMatches)
             {
                 var inspector = new DismPackageIdentityInspector(runner);
                 var normalized = await inspector.NormalizeFileNameAsync(destination, request, ct);
@@ -138,13 +151,8 @@ public sealed class LegacyPackageDownloader(HttpClient? httpClient = null)
                 if (total != size) throw new InvalidDataException("Legacy package size differs from Content-Length.");
             }
 
-            if (!string.IsNullOrWhiteSpace(candidate.Sha1))
-            {
-                await using var sha1Stream = File.OpenRead(temporary);
-                var actualSha1 = Convert.ToHexString(await SHA1.HashDataAsync(sha1Stream, ct));
-                if (!actualSha1.Equals(candidate.Sha1, StringComparison.OrdinalIgnoreCase))
-                    throw new InvalidDataException("Downloaded package SHA-1 differs from the catalog metadata.");
-            }
+            if (!await MatchesCatalogSha1Async(temporary, candidate.Sha1, ct))
+                throw new InvalidDataException("Downloaded package SHA-1 differs from the catalog metadata.");
 
             var signature = await signatureVerifier.VerifyMicrosoftAsync(temporary, ct);
             if (!signature.IsValid)

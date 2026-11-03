@@ -514,6 +514,10 @@ Check(LanguageSourceCatalog.ManualSources.Any(x => x.SourceId == "community-impo
     string cachedSha1;
     await using (var cachedStream = File.OpenRead(cachedPackage))
         cachedSha1 = Convert.ToHexString(await System.Security.Cryptography.SHA1.HashDataAsync(cachedStream)).ToLowerInvariant();
+    Check(await LegacyPackageDownloader.MatchesCatalogSha1Async(cachedPackage, cachedSha1, CancellationToken.None),
+        "catalog SHA-1 matches an existing cached file");
+    Check(!await LegacyPackageDownloader.MatchesCatalogSha1Async(cachedPackage, new string('0', 40), CancellationToken.None),
+        "catalog SHA-1 mismatch prevents reusing an existing cached file");
     var cacheManifest = new
     {
         schema_version = 1,
