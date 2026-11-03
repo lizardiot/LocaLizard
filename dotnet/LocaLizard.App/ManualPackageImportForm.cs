@@ -199,13 +199,19 @@ public sealed class ManualPackageImportForm : Form
         sourceDescription.Text = $"{source.Kind}: {source.ResourceTypes}. {source.Description}";
         whatTheHack.Enabled = source.SourceId == "what-the-hack";
         openSource.Enabled = !string.IsNullOrWhiteSpace(source.InformationUrl);
-        var hasCatalogDigest = source.SourceId is "fydexx-rs5" or "rg-adguard-files";
-        expectedDigest.Enabled = !hasCatalogDigest;
-        expectedDigest.PlaceholderText = hasCatalogDigest
-            ? "SHA-1/SHA-256 будет получен из закреплённого каталога"
-            : source.SourceId == "what-the-hack"
-                ? "Необязательно: SHA-1 (40) или SHA-256 (64)"
-                : "Обязательно для прямой community-загрузки: SHA-1 или SHA-256";
+        var hasVerifiedMetadata = source.SourceId is "fydexx-rs5" or "rg-adguard-files" or "pixeldrain";
+        expectedDigest.Enabled = !hasVerifiedMetadata;
+        expectedDigest.PlaceholderText = source.SourceId == "pixeldrain"
+            ? "SHA-256 и размер будут получены из Pixeldrain API"
+            : hasVerifiedMetadata
+                ? "SHA-1/SHA-256 будет получен из закреплённого каталога"
+                : source.SourceId == "what-the-hack"
+                    ? "Необязательно: SHA-1 (40) или SHA-256 (64)"
+                    : "Обязательно для прямой community-загрузки: SHA-1 или SHA-256";
+        if (source.SourceId == "pixeldrain")
+            directUrl.PlaceholderText = "Публичная ссылка Pixeldrain: https://pixeldrain.com/u/FILE_ID";
+        else
+            directUrl.PlaceholderText = "Прямая HTTPS-ссылка на CAB / ESD / ISO / APPX / MSIX";
         downloadDirect.Enabled = source.Kind == LanguageSourceKind.ManualImport ||
                                  source.SourceId is "what-the-hack" or "rg-adguard-files";
         downloadTorrent.Enabled = source.Kind == LanguageSourceKind.ManualImport;
