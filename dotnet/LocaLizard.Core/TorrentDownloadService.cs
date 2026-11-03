@@ -13,6 +13,7 @@ public sealed record TorrentDownloadResult(string DownloadDirectory, IReadOnlyLi
 public sealed class TorrentDownloadService
 {
     private const long MaximumTorrentMetadataBytes = 20L * 1024 * 1024;
+    private const long MaximumTorrentPayloadBytes = 48L * 1024 * 1024 * 1024;
 
     public static bool IsValidMagnetUri(string? value)
     {
@@ -112,7 +113,19 @@ public sealed class TorrentDownloadService
         var stderrTask = PumpOutputAsync(process.StandardError, log, ct);
         try
         {
-            await process.WaitForExitAsync(ct);
+            var exitTask = process.WaitForExitAsync(ct);
+            while (!exitTask.IsCompleted)
+            {
+                await Task.WhenAny(exitTask, Task.Delay(TimeSpan.FromSeconds(2), ct));
+                if (exitTask.IsCompleted) break;
+                if (GetSafeTreeSize(directory, MaximumTorrentPayloadBytes) > MaximumTorrentPayloadBytes)
+                {
+                    try { if (!process.HasExited) process.Kill(entireProcessTree: true); } catch { }
+                    await process.WaitForExitAsync(CancellationToken.None);
+                    throw new InvalidDataException("BitTorrent payload exceeded the 48 GiB safety limit.");
+                }
+            }
+            await exitTask;
             await Task.WhenAll(stdoutTask, stderrTask);
         }
         catch (OperationCanceledException)
@@ -126,20 +139,34 @@ public sealed class TorrentDownloadService
             throw new InvalidOperationException($"aria2c завершился с кодом {process.ExitCode}. Проверьте раздачу и доступность трекеров.");
 
         var packages = new List<string>();
-        foreach (var file in Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories))
+        var pendingDirectories = new Stack<string>();
+        pendingDirectories.Push(directory);
+        while (pendingDirectories.Count > 0)
         {
             ct.ThrowIfCancellationRequested();
-            try
+            var currentDirectory = pendingDirectories.Pop();
+            IEnumerable<string> entries;
+            try { entries = Directory.EnumerateFileSystemEntries(currentDirectory).ToArray(); }
+            catch (IOException) { continue; }
+            catch (UnauthorizedAccessException) { continue; }
+
+            foreach (var entry in entries)
             {
-                var attributes = File.GetAttributes(file);
-                if ((attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != 0)
-                    continue;
-                if (ManualPackageImportService.IsSupportedImportExtension(Path.GetFileName(file)))
-                    packages.Add(file);
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-            {
-                // A single inaccessible/unusable torrent entry does not abort discovery.
+                try
+                {
+                    var attributes = File.GetAttributes(entry);
+                    if ((attributes & FileAttributes.ReparsePoint) != 0)
+                        continue;
+                    if ((attributes & FileAttributes.Directory) != 0)
+                    {
+                        pendingDirectories.Push(entry);
+                        continue;
+                    }
+                    if (ManualPackageImportService.IsSupportedImportExtension(Path.GetFileName(entry)))
+                        packages.Add(entry);
+                }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
             }
         }
 
@@ -147,6 +174,39 @@ public sealed class TorrentDownloadService
             throw new InvalidDataException("Раздача завершилась, но не содержит поддерживаемых CAB/ESD/ISO/APPX/MSIX/License.xml.");
         log?.Invoke($"BitTorrent: найдено поддерживаемых файлов: {packages.Count}. Они ещё не импортированы и должны пройти общую проверку LocaLizard.");
         return new TorrentDownloadResult(directory, packages);
+    }
+
+    private static long GetSafeTreeSize(string root, long stopAfterBytes)
+    {
+        var total = 0L;
+        var pending = new Stack<string>();
+        pending.Push(root);
+        while (pending.Count > 0)
+        {
+            string[] entries;
+            try { entries = Directory.GetFileSystemEntries(pending.Pop()); }
+            catch (IOException) { continue; }
+            catch (UnauthorizedAccessException) { continue; }
+            foreach (var entry in entries)
+            {
+                try
+                {
+                    var attributes = File.GetAttributes(entry);
+                    if ((attributes & FileAttributes.ReparsePoint) != 0)
+                        continue;
+                    if ((attributes & FileAttributes.Directory) != 0)
+                    {
+                        pending.Push(entry);
+                        continue;
+                    }
+                    total = checked(total + new FileInfo(entry).Length);
+                    if (total > stopAfterBytes) return total;
+                }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
+            }
+        }
+        return total;
     }
 
     private static async Task PumpOutputAsync(
