@@ -15,6 +15,7 @@ internal static class Program
     [STAThread]
     private static void Main(string[] args)
     {
+        Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
         ApplicationConfiguration.Initialize();
         ElevatedLaunchRequest? request = null;
         try

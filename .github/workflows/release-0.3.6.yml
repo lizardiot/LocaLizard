@@ -1,18 +1,9 @@
 name: Publish LocaLizard 0.3.6 Russian servicing
 
+# Archived release workflow. Version 0.3.6 remains immutable; new C# releases use release-0.7.2.yml.
 on:
   push:
-    branches: [main]
-    paths:
-      - "global.json"
-      - "dotnet/**"
-      - "assets/LocaLizard.ico"
-      - "README.md"
-      - "README_EN.md"
-      - "CHANGELOG.md"
-      - ".github/workflows/build-csharp.yml"
-      - ".github/workflows/release-0.3.6.yml"
-  workflow_dispatch:
+    tags: ["0.3.6"]
 
 permissions:
   contents: read
