@@ -298,10 +298,10 @@ var dexitHashX64 = new string('b', 40);
 var dexitCatalog = $"""
  | LangPacks for Windows 10 build 10.0.14393.0 (rs1_release)
  | x86
- | ru-RU http://download.windowsupdate.com/c/msdownload/update/software/updt/2016/07/lp_{{dexitHashX86}}.cab
- | en-US http://download.windowsupdate.com/c/msdownload/update/software/updt/2016/07/lp_{{new string('c', 40)}}.cab
+ | ru-RU http://download.windowsupdate.com/c/msdownload/update/software/updt/2016/07/lp_{dexitHashX86}.cab
+ | en-US http://download.windowsupdate.com/c/msdownload/update/software/updt/2016/07/lp_{new string('c', 40)}.cab
  | x64
- | ru-RU http://download.windowsupdate.com/c/msdownload/update/software/updt/2016/07/lp_{{dexitHashX64}}.cab
+ | ru-RU http://download.windowsupdate.com/c/msdownload/update/software/updt/2016/07/lp_{dexitHashX64}.cab
 """;
 var dexitX64 = DexitGistProvider.ParseCatalog(dexitCatalog,
     new LanguageResourceRequest(14393, "x64", "ru-RU", "Client", LanguageResourceType.ClientLanguagePack));

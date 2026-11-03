@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using LocaLizard.Core;
 
 namespace LocaLizard.App;
 
