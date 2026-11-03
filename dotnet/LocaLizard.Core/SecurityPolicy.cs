@@ -16,6 +16,7 @@ public static class SecurityPolicy
     private static readonly HashSet<string> MetadataHosts = new(StringComparer.OrdinalIgnoreCase)
     {
         "api.uupdump.net",
+        "api.github.com",
         "raw.githubusercontent.com",
         "store.rg-adguard.net"
     };
@@ -39,6 +40,10 @@ public static class SecurityPolicy
     public static bool IsTrustedMetadataUrl(Uri uri)
     {
         if (!IsSafeHttpsUri(uri) || !MetadataHosts.Contains(uri.Host)) return false;
+        if (uri.Host.Equals("api.github.com", StringComparison.OrdinalIgnoreCase))
+            return uri.AbsoluteUri.Equals(
+                "https://api.github.com/gists/87f30cffa70ea6899177f536a8dc788f/c9ec1ecb985a62b7610263254fb2e2ccb2c968c1",
+                StringComparison.OrdinalIgnoreCase);
         if (uri.Host.Equals("raw.githubusercontent.com", StringComparison.OrdinalIgnoreCase))
             return uri.AbsolutePath.StartsWith("/abbodi1406/BatUtil/master/W10MUI/", StringComparison.Ordinal) ||
                    uri.AbsolutePath.StartsWith("/OSDeploy/OSBuilder.Public/master/Content/Updates/", StringComparison.Ordinal);

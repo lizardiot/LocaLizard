@@ -37,6 +37,7 @@ public sealed class MainForm : Form
     private readonly Button patch = new() { Text = "Обработать существующий WIM…", AutoSize = true };
     private readonly Button catalog = new() { Text = "Microsoft Update Catalog…", AutoSize = true };
     private readonly Button uupCheck = new() { Text = "Проверить UUP Dump", AutoSize = true };
+    private readonly Button languageSources = new() { Text = "Онлайн-источники", AutoSize = true };
     private CancellationTokenSource? cancellation;
     private readonly ElevatedLaunchRequest? launchRequest;
 
@@ -314,7 +315,7 @@ public sealed class MainForm : Form
 
         var toolsTab = CreatePage("Инструменты", "Инструменты и диагностика", "Вспомогательные операции вынесены отдельно, чтобы не перегружать основной сценарий создания ISO.", out var toolsStack);
         var toolButtons = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, WrapContents = true, FlowDirection = FlowDirection.LeftToRight, Padding = new Padding(2), Margin = new Padding(0) };
-        foreach (var button in new[] { preflight, patch, catalog, uupCheck, importProfile, exportProfile })
+        foreach (var button in new[] { preflight, patch, catalog, uupCheck, importProfile, exportProfile, languageSources })
         {
             button.AutoSize = false;
             button.Width = 250;
@@ -328,6 +329,7 @@ public sealed class MainForm : Form
         uupCheck.Text = "Проверить UUP Dump";
         importProfile.Text = "Загрузить профиль";
         exportProfile.Text = "Сохранить профиль";
+        languageSources.Text = "Онлайн-источники языковых пакетов";
         AddSection(toolsStack, "Доступные инструменты", "Для создания обычного ISO достаточно главной вкладки. Здесь находятся отдельные диагностические и сервисные действия.", toolButtons);
         tabs.TabPages.Add(toolsTab);
 
@@ -390,11 +392,20 @@ public sealed class MainForm : Form
         preflight.Click += async (_, _) => await RunPreflightAsync();
         exportProfile.Click += (_, _) => ExportProfile();
         importProfile.Click += (_, _) => ImportProfile();
+        languageSources.Click += (_, _) => ManageLanguageSources();
         cancel.Click += (_, _) => cancellation?.Cancel();
 
         var appData = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LocaLizard");
         work.Text = Path.Combine(appData, "Work");
         packages.Text = Path.Combine(appData, "Packages");
+    }
+
+    private void ManageLanguageSources()
+    {
+        using var dialog = new LanguageSourcesForm();
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        status.Text = $"Автоматические источники включены: {dialog.EnabledAutomaticSourceCount}.";
+        AppendLog($"Настройки онлайн-источников сохранены ({dialog.EnabledAutomaticSourceCount} включено).");
     }
 
     private void AddPath(TableLayoutPanel panel, int row, string caption, TextBox field, bool folder, bool save, string? openFilter = null)

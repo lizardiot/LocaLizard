@@ -82,6 +82,7 @@ public sealed class W10MuiCatalogProvider : ILanguageResourceProvider, IDisposab
         22621 => 22621,
         22631 => 22621,
         26100 => 26100,
+        28000 => 28000,
         _ => null
     };
 

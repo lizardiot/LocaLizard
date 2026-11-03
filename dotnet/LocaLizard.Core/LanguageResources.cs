@@ -13,7 +13,8 @@ public enum LanguageResourceType
     WinRELanguagePack,
     LanguageFont,
     LanguageCapability,
-    LanguageUpdate
+    LanguageUpdate,
+    LocalizedOptionalComponent
 }
 
 public enum ResourceTrustLevel
@@ -67,7 +68,8 @@ public static class PackageCompatibilityService
             [22000] = "Windows 11 21H2",
             [22621] = "Windows 11 22H2",
             [22631] = "Windows 11 23H2 (22621 enablement family)",
-            [26100] = "Windows 11 IoT Enterprise LTSC 2024"
+            [26100] = "Windows 11 IoT Enterprise LTSC 2024",
+            [28000] = "Windows 11 26H1"
         };
 
     private static readonly IReadOnlyDictionary<int, string> ServerReleaseNames =
@@ -101,6 +103,9 @@ public static class PackageCompatibilityService
     {
         var architecture = image.NormalizedArchitecture;
         var productFamily = ProductFamily(image);
+        if (image.BuildFamily == 28000 && image.Name.Contains("IoT", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException(
+                "Для Windows IoT с build 28000 совместимость языковых пакетов 26H1 ещё не подтверждена; автоматический подбор запрещён.");
         if (image.BuildFamily == 0 || !BuildNumbers.IsSupportedArchitecture(architecture))
             throw new InvalidDataException($"Нельзя определить совместимость для {image.Name}, {image.Version}, {image.Architecture}.");
         if (!IsKnownBuildFamily(image.BuildFamily, productFamily))
@@ -131,6 +136,7 @@ public static class PackageCompatibilityService
             LanguageResourceType.LocalExperiencePack => IsLxpPackage(candidate.FileName),
             LanguageResourceType.WinPELanguagePack or LanguageResourceType.WinRELanguagePack =>
                 IsWinPeOrWinRePackage(candidate.FileName),
+            LanguageResourceType.LocalizedOptionalComponent => IsLocalizedOptionalComponent(candidate.FileName),
             _ => true
         };
     }
@@ -152,6 +158,19 @@ public static class PackageCompatibilityService
                name.Contains("winocr", StringComparison.OrdinalIgnoreCase);
     }
 
+    public static bool IsLocalizedOptionalComponent(string? value)
+    {
+        var name = value ?? "";
+        return new[]
+        {
+            "microsoft-windows-mediaplayer", "microsoft-windows-notepad",
+            "microsoft-windows-paint", "microsoft-windows-powershell-ise",
+            "microsoft-windows-snippingtool", "microsoft-windows-stepsrecorder",
+            "microsoft-windows-terminalservices", "microsoft-windows-vbscript",
+            "microsoft-windows-wmic", "microsoft-windows-wordpad", "microsoft-windows-print"
+        }.Any(token => name.Contains(token, StringComparison.OrdinalIgnoreCase));
+    }
+
     public static bool IsLxpPackage(string? value) =>
         (value ?? "").Contains("languageexperiencepack", StringComparison.OrdinalIgnoreCase) ||
         (value ?? "").Contains("language-experience-pack", StringComparison.OrdinalIgnoreCase);
@@ -165,7 +184,7 @@ public static class PackageCompatibilityService
     }
 }
 
-public sealed class ResourceSourceRegistry
+public sealed class ResourceSourceRegistry : IDisposable
 {
     private readonly Dictionary<string, ILanguageResourceProvider> _providers =
         new(StringComparer.OrdinalIgnoreCase);
@@ -187,32 +206,51 @@ public sealed class ResourceSourceRegistry
     {
         if (!string.Equals(request.Language, "ru-RU", StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("LocaLizard поддерживает только ru-RU.");
-        var results = new List<LanguageResourceCandidate>();
-        foreach (var provider in _providers.Values)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            try
-            {
-                var found = await provider.DiscoverAsync(request, cancellationToken);
-                results.AddRange(found.Where(x => PackageCompatibilityService.IsCompatible(x, request)));
-            }
-            catch (OperationCanceledException) { throw; }
-            catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidDataException or
-                                      UnauthorizedAccessException or System.Xml.XmlException or TimeoutException)
-            {
-                Diagnostic?.Invoke($"Источник {provider.SourceId} пропущен: {ex.Message}");
-                // A source outage must not prevent other independent providers from being queried.
-            }
-        }
-
-        return results
+        var providers = _providers.Values.ToArray();
+        var sourceResults = await Task.WhenAll(providers.Select(provider =>
+            DiscoverFromProviderAsync(provider, request, cancellationToken)));
+        foreach (var result in sourceResults.Where(x => x.Error is not null))
+            Diagnostic?.Invoke($"Источник {result.SourceId} пропущен: {result.Error}");
+        return sourceResults.SelectMany(x => x.Candidates)
             .GroupBy(x => (x.ResourceType, x.FileName, x.LocalPath, Url: x.DownloadUri?.AbsoluteUri),
                 StringTupleComparer.Instance)
             .Select(g => g.OrderBy(x => x.TrustLevel).First())
             .OrderBy(x => x.TrustLevel)
             .ThenBy(x => x.SourceId, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(x => x.FileName, StringComparer.OrdinalIgnoreCase)
             .ToArray();
     }
+
+    private static async Task<ProviderDiscoveryResult> DiscoverFromProviderAsync(
+        ILanguageResourceProvider provider, LanguageResourceRequest request, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var found = await provider.DiscoverAsync(request, cancellationToken);
+            return new ProviderDiscoveryResult(provider.SourceId,
+                found.Where(x => PackageCompatibilityService.IsCompatible(x, request)).ToArray(), null);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (OperationCanceledException ex)
+        {
+            return new ProviderDiscoveryResult(provider.SourceId, [], ex.Message);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidDataException or
+                                  UnauthorizedAccessException or System.Xml.XmlException or TimeoutException)
+        {
+            return new ProviderDiscoveryResult(provider.SourceId, [], ex.Message);
+        }
+    }
+
+    public void Dispose()
+    {
+        foreach (var provider in _providers.Values.OfType<IDisposable>().Distinct())
+            provider.Dispose();
+        _providers.Clear();
+    }
+
+    private sealed record ProviderDiscoveryResult(
+        string SourceId, IReadOnlyList<LanguageResourceCandidate> Candidates, string? Error);
 
     private sealed class StringTupleComparer : IEqualityComparer<(LanguageResourceType ResourceType, string FileName, string? LocalPath, string? Url)>
     {
@@ -286,6 +324,8 @@ public sealed class LocalRepositoryProvider(string root, string sourceId = "loca
         if (name.Contains("winre", StringComparison.OrdinalIgnoreCase) ||
             path.Contains("/WinRE/", StringComparison.OrdinalIgnoreCase))
             return LanguageResourceType.WinRELanguagePack;
+        if (PackageCompatibilityService.IsLocalizedOptionalComponent(name))
+            return LanguageResourceType.LocalizedOptionalComponent;
         if (PackageCompatibilityService.PackageNameLooksServer(name)) return LanguageResourceType.ServerLanguagePack;
         if (WindowsImageService.IsClientLp(name, "x64") ||
             WindowsImageService.IsClientLp(name, "x86") ||
@@ -315,7 +355,7 @@ public sealed class LocalRepositoryProvider(string root, string sourceId = "loca
     private static int? InferBuildFamily(string file)
     {
         var text = file.Replace('\\', '/');
-        var match = Regex.Match(text, @"(?<!\d)(10240|14393|17763|19041|19044|20348|22000|22621|22631|26100)(?:_|\D)");
+        var match = Regex.Match(text, @"(?<!\d)(10240|14393|17763|19041|19044|20348|22000|22621|22631|26100|28000)(?:_|\D)");
         if (!match.Success) return null;
         var value = int.Parse(match.Groups[1].Value);
         return value switch { 19041 => 19044, _ => value };
