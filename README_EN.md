@@ -54,7 +54,7 @@
 - Static validation checks the ISO structure and whether images can be read, but cannot guarantee installation on every hardware configuration. An additional test in a separate VM or on a test device is recommended, but is not a build or release requirement. OOBE can affect the preferred UI language of the first user.
 ## Run
 
-1. Download `LocaLizard.exe` from the [0.3.6 release](https://github.com/lizardiot/LocaLizard/releases/tag/0.3.6).
+1. Download `LocaLizard.exe` from the [0.7.2 release](https://github.com/lizardiot/LocaLizard/releases/tag/0.7.2).
 2. Run the application. The main window runs without elevation: drag the target ISO into the first drop zone and the Russian donor ISO into the separate zone in the language-components section. Approve the UAC prompt when the application starts an operation that requires administrator privileges.
 3. Select the source Windows ISO, output ISO path, and working directory.
 4. If needed, specify a Russian ISO source, FOD / Language and Optional Features sources, and an update catalog.
@@ -64,7 +64,11 @@ You do not need to install Python or development tools manually. The source ISO 
 
 ## Version history
 
-### [0.3.6](https://github.com/lizardiot/LocaLizard/releases/tag/0.3.6) — current release
+### [0.7.2](https://github.com/lizardiot/LocaLizard/releases/tag/0.7.2) — current release
+Redesigned the Windows Forms interface: the main ISO creation workflow is separated from components, advanced settings, tools, and the technical log. Added light, dark, and system themes with persisted selection, a bottom status bar, more compact field layout, Segoe UI, and PerMonitorV2 DPI support. Auxiliary actions—including preflight checks, existing-WIM servicing, Microsoft Update Catalog, UUP Dump diagnostics, and profile management—are grouped in the Tools section. Existing ISO creation, DISM/WIM, UUP Dump, FOD/LXP, update, UAC, cancellation, logging, and profile import/export workflows are retained. CI successfully completed the .NET 10 build, smoke/regression tests, Windows DISM/WIM integration tests, and self-contained Windows x64 publishing.
+
+
+### [0.3.6](https://github.com/lizardiot/LocaLizard/releases/tag/0.3.6) — previous release
 Language discovery now includes independent W10MUI and OSBuilder providers for Russian Client/Server LP and FOD candidates, with exact build/architecture filtering, Microsoft CDN URL policy, redirect validation, Authenticode and CBS identity checks. A typed resource model, compatibility matrix, and local/Microsoft ISO/ADK WinPE/WinRE providers were added. The managed repository records source, resource type, `ru-RU`, architecture, build family, signer, SHA-1, and SHA-256 provenance. FOD capability state is inventoried through DISM; monolithic language CABs are used as direct sources, while satellite packages use `/Export-Source`. Optional Store/LXP discovery and provisioning validates APPX/MSIX manifests, Microsoft Publisher, architecture, dependencies, and matching license XML. Hyper-V remains optional and is not run in CI. No additional languages were added.
 
 ### [0.2.7.6](https://github.com/lizardiot/LocaLizard/releases/tag/0.2.7.6) — previous release
