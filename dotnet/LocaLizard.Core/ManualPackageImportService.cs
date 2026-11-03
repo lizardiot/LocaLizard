@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Text.RegularExpressions;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -161,7 +162,11 @@ public sealed class ManualPackageImportService
                 if (extension.Equals(".cab", StringComparison.OrdinalIgnoreCase) &&
                     PackageCompatibilityService.IsFodPackage(name))
                     fodDirectory = destinationDirectory;
-                if (extension is ".appx" or ".msix" or ".appxbundle" or ".msixbundle" or ".xml")
+                if (extension.Equals(".appx", StringComparison.OrdinalIgnoreCase) ||
+                    extension.Equals(".msix", StringComparison.OrdinalIgnoreCase) ||
+                    extension.Equals(".appxbundle", StringComparison.OrdinalIgnoreCase) ||
+                    extension.Equals(".msixbundle", StringComparison.OrdinalIgnoreCase) ||
+                    extension.Equals(".xml", StringComparison.OrdinalIgnoreCase))
                     lxpDirectory = Path.Combine(root, "ManualImport", "ImportedLXP");
                 var relative = Path.GetRelativePath(root, destination).Replace('\\', '/');
                 if (!document.Files.Any(x => x.RelativePath.Equals(relative, StringComparison.OrdinalIgnoreCase) &&
