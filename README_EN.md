@@ -21,7 +21,8 @@
 - W10MUI Windows 11 26H1 build 28000 LP/FoD catalogs are supported for the client family; Windows IoT compatibility is deliberately not inferred.
 - The import wizard supports local files and direct HTTPS downloads for CAB/ESD/ISO/APPX/MSIX and License.xml, computes SHA-1/SHA-256, and writes a provenance manifest. Community URLs are restricted to the selected source's own HTTPS host and require an independent checksum.
 
-- BitTorrent hand-off is available through a locally installed aria2c: users provide a magnet URI or a .torrent file, and only supported package/media file types are offered to the normal import checks.\n- Russian `ru-RU` is the only target language; no other language support or language selection is being added.
+- BitTorrent hand-off is available through a locally installed aria2c: users provide a magnet URI or a .torrent file, and only supported package/media file types are offered to the normal import checks.
+- Russian `ru-RU` is the only target language; no other language support or language selection is being added.
 - The base UUP Client Language Pack ESD is extracted with native DISM and installed directly from `update.mum`, avoiding an unnecessary CAB rebuild. HTTP Microsoft Delivery CDN responses are permitted only for the exact CDN hosts/path and only with the SHA-1 and file size supplied by UUP Dump.
 
 - Before servicing, the application preflights the ISO, editions, indexes, architecture, build family, update sources and available disk space.
@@ -46,7 +47,12 @@
 - Drag-and-drop is supported for both ISO fields: the input Windows ISO and the optional Russian ISO donor. Drop each file onto its corresponding field; the input ISO can also be dropped onto the main window.
 - Optional interactive Hyper-V ISO boot test using a temporary VM without network access, VMConnect, visual confirmation of the Setup screen, and VM cleanup.
 
-## Limitations and environment\n\n- BitTorrent requires `aria2c.exe` in PATH or beside the application. LocaLizard does not bypass authentication, CAPTCHAs, or browser sessions; protected .torrent files must first be obtained by the user in a browser.\n- Direct community downloads work only with a direct HTTPS file URL on the selected source's own host (or a trusted Microsoft CDN redirect) and require an independent SHA-1/SHA-256. Search pages, expiring links, cloud folders, and unsupported external mirrors must be downloaded in a browser and imported locally.\n- WhatTheHack downloads use official historical Microsoft URLs and calculate SHA-256 after transfer, but that source does not publish an independent checksum; compatibility of its Windows 10 20H2 media with the selected image is checked separately.\n- m417z remains a reference for source MUI/RC resources. Those resources are not installable CAB/ESD packages and are not automatically converted into a Windows Language Pack. requirements
+## Limitations and environment
+
+- BitTorrent requires `aria2c.exe` in PATH or beside the application. LocaLizard does not bypass authentication, CAPTCHAs, or browser sessions; protected .torrent files must first be obtained by the user in a browser.
+- Direct community downloads work only with a direct HTTPS file URL on the selected source's own host (or a trusted Microsoft CDN redirect) and require an independent SHA-1/SHA-256. Search pages, expiring links, cloud folders, and unsupported external mirrors must be downloaded in a browser and imported locally.
+- WhatTheHack downloads use official historical Microsoft URLs and calculate SHA-256 after transfer, but that source does not publish an independent checksum; compatibility of its Windows 10 20H2 media with the selected image is checked separately.
+- m417z remains a reference for source MUI/RC resources. Those resources are not installable CAB/ESD packages and are not automatically converted into a Windows Language Pack. requirements
 
 - The base ru-RU Client Language Pack supports both CAB and UUP ESD sources. ESD is extracted by DISM and serviced through `update.mum`; local CAB packages and donor ISO packages remain supported.
 
