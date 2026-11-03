@@ -602,12 +602,15 @@ string manualSha256;
 await using (var manualStream = File.OpenRead(manualFixture))
     manualSha256 = Convert.ToHexString(await System.Security.Cryptography.SHA256.HashDataAsync(manualStream)).ToLowerInvariant();
 var manualImporter = new ManualPackageImportService();
+var manualSourceReference = "https://pcportal.org/files/Microsoft-Windows-Client-Language-Pack_x64_ru-ru.cab";
 var manualResult = await manualImporter.ImportAsync("pcportal", [manualFixture], manualImportRoot,
-    manualSha256, CancellationToken.None);
+    manualSha256, CancellationToken.None, sourceReferenceUrl: manualSourceReference);
+var manualManifestText = await File.ReadAllTextAsync(manualResult.ManifestPath);
 Check(manualResult.ImportedFiles.Count == 1 && File.Exists(manualResult.ImportedFiles[0]) &&
       manualResult.ImportedFiles[0].Contains(Path.Combine("ManualImport", "LanguagePacks", "ru-ru"), StringComparison.OrdinalIgnoreCase) &&
-      File.Exists(manualResult.ManifestPath),
-    "manual package import copies a local ru-RU CAB into the package cache and writes a provenance manifest");
+      File.Exists(manualResult.ManifestPath) &&
+      manualManifestText.Contains(manualSourceReference, StringComparison.Ordinal),
+    "manual package import copies a local ru-RU CAB, records the exact source URL and writes a provenance manifest");
 var manualDuplicate = await manualImporter.ImportAsync("pcportal", [manualFixture], manualImportRoot,
     manualSha256, CancellationToken.None);
 Check(manualDuplicate.SkippedFiles.Count == 1 && manualDuplicate.ImportedFiles.Count == 0,
