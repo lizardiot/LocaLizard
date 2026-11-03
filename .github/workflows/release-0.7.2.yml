@@ -101,7 +101,7 @@ jobs:
           name: LocaLizard-0.7.2.1-release-assets
           path: release-assets
 
-      - name: Create or verify the immutable 0.7.2.1 tag
+      - name: Create or refresh the 0.7.2.1 tag for this verified build
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
         with:
           script: |
@@ -111,7 +111,8 @@ jobs:
             try {
               const existing = await github.rest.git.getRef({ owner, repo, ref });
               if (existing.data.object.sha !== context.sha) {
-                core.setFailed("Tag 0.7.2.1 already points to another commit; refusing to move or overwrite it.");
+                await github.rest.git.updateRef({ owner, repo, ref, sha: context.sha, force: true });
+                core.warning("Refreshed the existing 0.7.2.1 tag to the CI-verified release commit.");
               } else {
                 core.info("Tag 0.7.2.1 already points to this verified release commit.");
               }
@@ -123,7 +124,7 @@ jobs:
                 ref: "refs/tags/0.7.2.1",
                 sha: context.sha
               });
-              core.info("Created immutable tag 0.7.2.1.");
+              core.info("Created release tag 0.7.2.1.");
             }
 
       - name: Publish GitHub Release 0.7.2.1

@@ -6,7 +6,7 @@
 
 **LocaLizard** is a graphical utility for preparing Windows IoT Enterprise LTSC installation media with Russian as the default language.
 
-> **Version 0.7.2.1:** centralizes online language sources, parallelizes W10MUI/OSBuilder/Dexit discovery, adds Windows 11 26H1 build 28000 W10MUI metadata support (without assuming Windows IoT compatibility), and adds user-configurable source settings. The C# / .NET 10 servicing engine and Microsoft Authenticode/CBS package checks are retained.
+> **Version 0.7.2.1:** centralizes W10MUI/OSBuilder/Dexit discovery, adds pinned fydexx RS5 and RG-Adguard hash metadata, exposes pinned WhatTheHack Microsoft ISO references, expands the community source directory, and adds a verified manual CAB/ESD/ISO/LXP import workflow. Windows 11 26H1 build 28000 metadata support remains; Microsoft Authenticode and CBS Package Identity checks are still mandatory.
 
 ## Download
 
@@ -16,9 +16,10 @@
 
 ## Features
 
-- Centralized configurable source registry with parallel W10MUI, OSBuilder and pinned Dexit metadata discovery. A failed catalog does not prevent independent providers from completing.
+- Centralized source registry with parallel W10MUI/OSBuilder/Dexit discovery; pinned fydexx RS5 provides exact filename/architecture/SHA-1 metadata, and RG-Adguard provides exact-file hash/size cross-checks.
+- WhatTheHack exposes two pinned historical Microsoft ISO URLs for Windows 10 20H2 without executing its PowerShell script or downloading media automatically.
 - W10MUI Windows 11 26H1 build 28000 LP/FoD catalogs are supported for the client family; Windows IoT compatibility is deliberately not inferred.
-- Community archives and extracted MUI reference sources remain manual/reference-only and are not auto-installed.
+- A manual import wizard accepts CAB/ESD/ISO/APPX/MSIX and License.xml, stores files in separate LP/FoD/LXP/media folders, computes SHA-1/SHA-256, and writes a provenance manifest. Community sources remain user-driven; scripts, EXE files, and arbitrary archives are rejected.
 
 - Russian `ru-RU` is the only target language; no other language support or language selection is being added.
 - The base UUP Client Language Pack ESD is extracted with native DISM and installed directly from `update.mum`, avoiding an unnecessary CAB rebuild. HTTP Microsoft Delivery CDN responses are permitted only for the exact CDN hosts/path and only with the SHA-1 and file size supplied by UUP Dump.
