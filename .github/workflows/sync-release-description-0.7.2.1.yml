@@ -1,0 +1,55 @@
+name: Sync 0.7.2.1 release description
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/sync-release-description-0.7.2.1.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  sync-release-description:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Copy the changelog section into the published release
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const tag = "0.7.2.1";
+            const workflowPath = ".github/workflows/sync-release-description-0.7.2.1.yml";
+            const file = await github.rest.repos.getContent({
+              owner, repo, path: "CHANGELOG.md", ref: context.sha
+            });
+            if (Array.isArray(file.data) || !file.data.content) {
+              throw new Error("CHANGELOG.md was not returned as a file.");
+            }
+            const changelog = Buffer.from(file.data.content, file.data.encoding || "base64").toString("utf8");
+            const heading = `## [${tag}]`;
+            const start = changelog.indexOf(heading);
+            if (start < 0) throw new Error(`Missing ${heading} in CHANGELOG.md.`);
+            const next = changelog.indexOf("\\n## [", start + heading.length);
+            const body = changelog.slice(start, next < 0 ? changelog.length : next).trim();
+            if (!body || /### Дополнение/.test(body) || !body.includes("### Обновление источников и загрузки")) {
+              throw new Error("Release notes section is missing the new heading or contains obsolete addendum headings.");
+            }
+            const release = await github.rest.repos.getReleaseByTag({ owner, repo, tag });
+            await github.rest.repos.updateRelease({
+              owner, repo, release_id: release.data.id, body
+            });
+            core.notice(`Updated published release ${tag} from CHANGELOG.md.`);
+            try {
+              const workflow = await github.rest.repos.getContent({
+                owner, repo, path: workflowPath, ref: context.sha
+              });
+              await github.rest.repos.deleteFile({
+                owner, repo, path: workflowPath, sha: workflow.data.sha,
+                message: "chore: remove one-time release description sync",
+                branch: context.ref.replace("refs/heads/", "")
+              });
+              core.notice("Removed temporary workflow.");
+            } catch (error) {
+              core.warning(`Release updated; temporary workflow cleanup failed: ${error.message}`);
+            }
