@@ -44,7 +44,7 @@ jobs:
               throw new Error(`CHANGELOG.md does not contain the ${heading} section.`);
             }
 
-            const nextSection = changelog.indexOf("\\n## [", start + heading.length);
+            const nextSection = changelog.indexOf("\n## [", start + heading.length);
             const releaseNotes = changelog
               .slice(start, nextSection < 0 ? changelog.length : nextSection)
               .trim();
