@@ -1,0 +1,90 @@
+name: One-time sync release notes 0.7.2.1
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/sync-release-notes-0.7.2.1.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  sync-release-notes:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Sync published release description from CHANGELOG.md
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const tag = "0.7.2.1";
+            const changelogPath = "CHANGELOG.md";
+            const workflowPath = ".github/workflows/sync-release-notes-0.7.2.1.yml";
+
+            const changelogResponse = await github.rest.repos.getContent({
+              owner,
+              repo,
+              path: changelogPath,
+              ref: context.sha
+            });
+
+            if (Array.isArray(changelogResponse.data) || !changelogResponse.data.content) {
+              throw new Error("CHANGELOG.md was not returned as a file.");
+            }
+
+            const changelog = Buffer.from(
+              changelogResponse.data.content,
+              changelogResponse.data.encoding || "base64"
+            ).toString("utf8");
+
+            const heading = `## [${tag}]`;
+            const start = changelog.indexOf(heading);
+            if (start < 0) {
+              throw new Error(`CHANGELOG.md does not contain the ${heading} section.`);
+            }
+
+            const nextSection = changelog.indexOf("\n## [", start + heading.length);
+            const releaseNotes = changelog
+              .slice(start, nextSection < 0 ? changelog.length : nextSection)
+              .trim();
+
+            if (!releaseNotes || /### Дополнение/.test(releaseNotes)) {
+              throw new Error("Release notes are empty or still contain an addendum heading.");
+            }
+
+            const releaseResponse = await github.rest.repos.getReleaseByTag({
+              owner,
+              repo,
+              tag
+            });
+
+            await github.rest.repos.updateRelease({
+              owner,
+              repo,
+              release_id: releaseResponse.data.id,
+              body: releaseNotes
+            });
+
+            core.notice(`Updated release ${tag} description from CHANGELOG.md.`);
+
+            // This workflow is temporary; remove its own file after the release update.
+            try {
+              const workflowResponse = await github.rest.repos.getContent({
+                owner,
+                repo,
+                path: workflowPath,
+                ref: context.sha
+              });
+              await github.rest.repos.deleteFile({
+                owner,
+                repo,
+                path: workflowPath,
+                sha: workflowResponse.data.sha,
+                message: "chore: remove one-time release notes sync workflow",
+                branch: context.ref.replace("refs/heads/", "")
+              });
+              core.notice("Removed the one-time workflow file.");
+            } catch (error) {
+              core.warning(`Release description was updated, but automatic workflow cleanup failed: ${error.message}`);
+            }
