@@ -63,9 +63,9 @@
 - Setup/WinPE and WinRE are serviced separately using compatible donor resources or the official ADK WinPE Add-on, with signature and architecture validation. If no compatible package is available, that image component is left unchanged and the result is recorded; the base Client Language Pack is not rolled back.
 - The Hyper-V ISO boot check is optional and is not required to build or release an ISO. When selected, it requires Windows with Hyper-V enabled, administrator privileges, and VMConnect. The temporary VM has no network adapter, and the user confirms that the Setup screen appeared. This manual step is not run in GitHub Actions.
 - Static validation checks the ISO structure and whether images can be read, but cannot guarantee installation on every hardware configuration. An additional test in a separate VM or on a test device is recommended, but is not a build or release requirement. OOBE can affect the preferred UI language of the first user.
-## Run
+## Running the application
 
-1. Download `LocaLizard.exe` from the [0.7.2 release](https://github.com/lizardiot/LocaLizard/releases/tag/0.7.2).
+1. Download `LocaLizard.exe` from the [0.7.2.1 release](https://github.com/lizardiot/LocaLizard/releases/tag/0.7.2.1).
 2. Run the application. The main window runs without elevation: drag the target ISO into the first drop zone and the Russian donor ISO into the separate zone in the language-components section. Approve the UAC prompt when the application starts an operation that requires administrator privileges.
 3. Select the source Windows ISO, output ISO path, and working directory.
 4. If needed, specify a Russian ISO source, FOD / Language and Optional Features sources, and an update catalog.
@@ -73,9 +73,12 @@
 
 You do not need to install Python or development tools manually. The source ISO remains unchanged.
 
-## Version history
+## Release history
 
-### [0.7.2](https://github.com/lizardiot/LocaLizard/releases/tag/0.7.2) — current release
+### [0.7.2.1](https://github.com/lizardiot/LocaLizard/releases/tag/0.7.2.1) — current release
+Expanded Russian language-resource discovery with pinned fydexx RS5 and RG-Adguard metadata, historical Microsoft Language/FoD ISO references from WhatTheHack, and a broader community-source directory. Added verified CAB/ESD/ISO/LXP import, controlled HTTPS streaming, BitTorrent hand-off through aria2c, and public Pixeldrain API downloads with filename, size, availability, and SHA-256 checks. Source URLs and integrity hashes are retained in the provenance manifest. Microsoft Authenticode and CBS Package Identity checks remain mandatory; sources protected by CAPTCHA, authentication, or expiring browser sessions require manual download. CI successfully completed the .NET 10 build, regression and DISM/WIM integration tests, and self-contained Windows x64 publishing.
+
+### [0.7.2](https://github.com/lizardiot/LocaLizard/releases/tag/0.7.2) — previous release
 Redesigned the Windows Forms interface: the main ISO creation workflow is separated from components, advanced settings, tools, and the technical log. Added light, dark, and system themes with persisted selection, a bottom status bar, more compact field layout, Segoe UI, and PerMonitorV2 DPI support. Auxiliary actions—including preflight checks, existing-WIM servicing, Microsoft Update Catalog, UUP Dump diagnostics, and profile management—are grouped in the Tools section. Existing ISO creation, DISM/WIM, UUP Dump, FOD/LXP, update, UAC, cancellation, logging, and profile import/export workflows are retained. CI successfully completed the .NET 10 build, smoke/regression tests, Windows DISM/WIM integration tests, and self-contained Windows x64 publishing.
 
 
