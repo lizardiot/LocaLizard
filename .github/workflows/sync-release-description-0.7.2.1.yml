@@ -30,7 +30,7 @@ jobs:
             const heading = `## [${tag}]`;
             const start = changelog.indexOf(heading);
             if (start < 0) throw new Error(`Missing ${heading} in CHANGELOG.md.`);
-            const next = changelog.indexOf("\\n## [", start + heading.length);
+            const next = changelog.indexOf("\n## [", start + heading.length);
             const body = changelog.slice(start, next < 0 ? changelog.length : next).trim();
             if (!body || /### Дополнение/.test(body) || !body.includes("### Обновление источников и загрузки")) {
               throw new Error("Release notes section is missing the new heading or contains obsolete addendum headings.");
